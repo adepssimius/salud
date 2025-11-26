@@ -3,7 +3,7 @@
 ## API persistence
 - Use Drizzle ORM for all database access in the API.
 - Database configuration must be provided via environment variables (e.g., connection URL/credentials); default to SQLite when no env overrides are set.
-- The code should make it easy to swap databases (e.g., Postgres later) by changing env vars without code changes.
+- Supported DB clients: SQLite (default), PostgreSQL, MySQL. Switching should be done via env vars without code changes.
 - Any changes to the DB schema must be acompanied by a migration script to ensure no data loss occurs because of the change.
 
 ## File storage
