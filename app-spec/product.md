@@ -14,8 +14,8 @@
 ## MVP goals (Phase 1)
 1. **Care timeline**
    - Continuous timeline per patient.
-   - Derived “episodes” are manual frames defined by a start event and an end event (a frame must be defined by logged observations).
-   - Episode resolves when an observation is marked as resolving it; observations/interventions can be tagged with multiple episodes.
+   - Derived “episodes” are manual frames defined by a start event and an end event (a frame must be defined by logged observations or interventions).
+   - Episode resolves when an observation or intervention is explicitly marked as resolving it; observations/interventions can be tagged with multiple episodes.
    - Per-episode timeline view showing only events tagged to that episode.
 2. **Observations**
    - Support structured vitals: temperature, heart rate, respiratory rate, oxygen saturation, pain score, weight, height, lesion size.
@@ -29,6 +29,7 @@
    - Will be expanded in the future.
 4. **Medication management**
    - Pre-seeded common home medications stored in DB with details: name, formulation (tablets, syrup, etc.), strength/embodiment, tags (e.g., antipyretic, NSAID).
+   - **Scheduled interventions**: caregivers can set recurring or one-off schedules (e.g., “give amoxicillin 400 mg every 8 h for 10 doses” or “change dressing nightly”). Schedules can optionally tie to an episode (e.g., the ear infection being treated). Scheduled items appear on the caregiver dashboard with clear “upcoming action” notifications. From a schedule card, caregivers can jump straight into creating the corresponding intervention entry automatically linked back to the schedule—and by extension the episode—for auditing.
    - Medications support arbitrary tags; timeline graphs can filter by tags or individual meds.
    - Medication dosing guidelines include:
      - Weight-based rules: mg/kg, max mg per dose, max mg per day, min interval hours, applicable age range, guideline source.
