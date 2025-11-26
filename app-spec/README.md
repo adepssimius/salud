@@ -5,6 +5,7 @@ You are building the Salud app strictly from the specs under app-spec/. Treat th
 Spec files
 - repo-structure.md: Nx monorepo layout with separate NestJS API and Angular UI projects, each with their own test suites.
 - security.md: Security requirements (auth, hashing, storage, future encryption for sharing).
+- development.md: Local dev instructions (tooling, migrations, seeding test user).
 - Add any other specs you need (product, data model, API, UX, etc.); follow them exactly once present.
 
 Rules:
