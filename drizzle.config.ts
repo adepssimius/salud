@@ -8,9 +8,11 @@ const client = (process.env.DB_CLIENT ??
 const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), 'data');
 const sqliteFile = process.env.DATABASE_FILE ?? path.join(dataDir, 'salud.db');
 
+const outDir = `./apps/api/src/db/migrations/${client}`;
+
 const base = {
   schema: './apps/api/src/db/schema.ts',
-  out: './apps/api/src/db/migrations',
+  out: outDir,
 } as const;
 
 const config =
