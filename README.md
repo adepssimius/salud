@@ -1,11 +1,13 @@
 # Salud Monorepo
 
 - Nx workspace with separate NestJS API and Angular UI projects, each with their own tests (see `app-spec/` for spec instructions).
-- Node version is pinned via `.tool-versions` (Node 22.13.0 with npm 10).
+- Node version is pinned via `.tool-versions` (`22.13.0`); ensure your shell picks it up before running Yarn.
 
 ## Getting Started
-- Install runtime: `asdf install` (or use your preferred Node 22.13+ install).
-- Install dependencies: `npm install`.
+- Install runtime and pick the right Node:
+  - `asdf install` then `asdf shell nodejs 22.13.0` (or ensure `~/.asdf/shims` is first on `PATH` so `.tool-versions` is honored).
+  - Confirm with `node -v` → `v22.13.0` before running Yarn.
+- Install dependencies: `yarn install`.
 - Review specs and LLM usage notes in `app-spec/README.md` before coding.
 
 ## Project Layout
@@ -14,12 +16,12 @@
 - `libs/` — shared code goes here (currently empty).
 
 ## Common Commands
-- `npm run start:api` / `npm run start:web`
-- `npm run build:api` / `npm run build:web`
-- `npm run test:api` / `npm run test:web`
-- `npm run e2e:api` / `npm run e2e:web`
-- `npm run lint:api` / `npm run lint:web`
-- `npx nx graph` to visualize the workspace.
+- `yarn start:api` / `yarn start:web`
+- `yarn build:api` / `yarn build:web`
+- `yarn test:api` / `yarn test:web`
+- `yarn e2e:api` / `yarn e2e:web`
+- `yarn lint:api` / `yarn lint:web`
+- `yarn nx graph` to visualize the workspace.
 
 ## Notes
 - The web dev server proxies API calls using `apps/web/proxy.conf.json`.
