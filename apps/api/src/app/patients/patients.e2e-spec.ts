@@ -149,6 +149,118 @@ describe('Patients (e2e)', () => {
       .expect(400);
   });
 
+  it('rejects access to patients belonging to another user (list/get/patch/delete)', async () => {
+    const owner = await registerAndLogin(app);
+    const other = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'No Access',
+        dateOfBirth: '2013-03-03',
+        sexAtBirth: 'female',
+        myRole: 'parent',
+      })
+      .expect(201);
+    const patientId = createRes.body.id;
+
+    // list under other user should not include
+    const listRes = await request(app.getHttpServer())
+      .get(`/api/users/${other.userId}/patients`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(200);
+    expect(listRes.body.find((p: any) => p.id === patientId)).toBeUndefined();
+
+    // get/patch/delete under other user should 404
+    await request(app.getHttpServer())
+      .get(`/api/users/${other.userId}/patients/${patientId}`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/users/${other.userId}/patients/${patientId}`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .send({ fullName: 'Should Fail' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete(`/api/users/${other.userId}/patients/${patientId}`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(404);
+  });
+
+  it('rejects valid-but-nonexistent patient id with 404', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const nonexistent = '00000000-0000-4000-8000-000000000000';
+    await request(app.getHttpServer())
+      .get(`/api/users/${userId}/patients/${nonexistent}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+  });
+
+  it('allows specifying non-default roles including self', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const roles = ['self', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'];
+    for (const role of roles) {
+      const res = await request(app.getHttpServer())
+        .post(`/api/users/${userId}/patients`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          fullName: `Role ${role}`,
+          dateOfBirth: '2012-01-01',
+          sexAtBirth: 'male',
+          myRole: role,
+        })
+        .expect(201);
+      expect(res.body.myRole).toBe(role);
+    }
+  });
+
+  it('list returns myRole and includes multiple patients', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    await request(app.getHttpServer())
+      .post(`/api/users/${userId}/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'List A',
+        dateOfBirth: '2011-01-01',
+        sexAtBirth: 'male',
+        myRole: 'parent',
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/users/${userId}/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'List B',
+        dateOfBirth: '2010-02-02',
+        sexAtBirth: 'female',
+        myRole: 'co-parent',
+      })
+      .expect(201);
+
+    const listRes = await request(app.getHttpServer())
+      .get(`/api/users/${userId}/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(listRes.body.length).toBeGreaterThanOrEqual(2);
+    expect(listRes.body.every((p: any) => p.myRole)).toBeTruthy();
+  });
+
+  it('rejects creation under another userId', async () => {
+    const owner = await registerAndLogin(app);
+    const other = await registerAndLogin(app);
+    await request(app.getHttpServer())
+      .post(`/api/users/${other.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'Wrong Path',
+        dateOfBirth: '2014-04-04',
+        sexAtBirth: 'female',
+        myRole: 'parent',
+      })
+      .expect(403);
+  });
+
   it('deletes a patient', async () => {
     const { token, userId } = await registerAndLogin(app);
 

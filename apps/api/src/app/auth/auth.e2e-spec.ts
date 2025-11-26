@@ -98,4 +98,51 @@ describe('Auth (e2e)', () => {
         expect(res.body.user.preferredLengthUnit).toBe('in');
       });
   });
+
+  it('requires auth for /users/me', async () => {
+    await request(app.getHttpServer()).get('/api/users/me').expect(401);
+    await request(app.getHttpServer()).patch('/api/users/me').send({ displayName: 'Nope' }).expect(401);
+  });
+
+  it('keeps profile changes isolated per user', async () => {
+    const aEmail = `iso-a-${Date.now()}@example.com`;
+    const bEmail = `iso-b-${Date.now()}@example.com`;
+    const password = 'password123';
+
+    const regA = await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({ email: aEmail, password, displayName: 'User A' })
+      .expect(201);
+    const tokenA = regA.body.token;
+
+    await request(app.getHttpServer())
+      .patch('/api/users/me')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ displayName: 'User A Updated' })
+      .expect(200);
+
+    const regB = await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({ email: bEmail, password, displayName: 'User B' })
+      .expect(201);
+    const tokenB = regB.body.token;
+
+    // User B should still see their own profile unchanged
+    await request(app.getHttpServer())
+      .get('/api/users/me')
+      .set('Authorization', `Bearer ${tokenB}`)
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.user.displayName).toBe('User B');
+      });
+
+    // User A profile remains as updated
+    await request(app.getHttpServer())
+      .get('/api/users/me')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.user.displayName).toBe('User A Updated');
+      });
+  });
 });
