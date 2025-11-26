@@ -20,5 +20,6 @@ Deliverables:
 - Propose a plan before coding.
 - Generate code, configuration, tests, and scripts necessary to satisfy the current phase of the specs.
 - Provide a brief summary of what was built and how it maps to the spec sections you implemented.
+- Do not create commits without explicit user consent.
 
 We are not yet building phase 2, but keep it in mind so that moving in that direction will be easier later.
