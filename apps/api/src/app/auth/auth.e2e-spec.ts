@@ -5,6 +5,8 @@ import os from 'os';
 import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
+import { DatabaseService } from '../persistence/database.service';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
@@ -21,6 +23,11 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
+    const dbService = app.get(DatabaseService);
+    await migrate((dbService as any).db, {
+      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
+    });
     await app.init();
   });
 

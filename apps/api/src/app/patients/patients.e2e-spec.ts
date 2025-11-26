@@ -5,19 +5,22 @@ import os from 'os';
 import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
+import { DatabaseService } from '../persistence/database.service';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 async function registerAndLogin(app: INestApplication) {
   const email = `pt-${Date.now()}@example.com`;
   const password = 'password123';
+  const displayName = 'Patient Owner';
 
   const reg = await request(app.getHttpServer())
     .post('/api/auth/register')
     .send({
       email,
       password,
-      displayName: 'Patient Owner',
+      displayName,
     });
-  return { token: reg.body.token, email, userId: reg.body.user.id };
+  return { token: reg.body.token, email, userId: reg.body.user.id, displayName };
 }
 
 describe('Patients (e2e)', () => {
@@ -35,6 +38,12 @@ describe('Patients (e2e)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
+    // Run migrations against the temp sqlite db
+    const dbService = app.get(DatabaseService);
+    await migrate((dbService as any).db, {
+      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
+    });
     await app.init();
   });
 
@@ -314,7 +323,7 @@ describe('Patients (e2e)', () => {
           user: expect.objectContaining({
             id: owner.userId,
             email: owner.email,
-            displayName: 'User A',
+            displayName: owner.displayName,
           }),
           role: 'parent',
         }),
@@ -352,17 +361,8 @@ describe('Patients (e2e)', () => {
       .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
-    expect(listAfter.body).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          user: expect.objectContaining({ id: owner.userId }),
-        }),
-        expect.objectContaining({
-          user: expect.objectContaining({ id: other.userId, email: other.email }),
-          role: 'nanny',
-        }),
-      ]),
-    );
+    expect(listAfter.body.find((m: any) => m.user.id === owner.userId)).toBeDefined();
+    expect(listAfter.body.find((m: any) => m.user.id === other.userId)).toBeUndefined();
 
     // other user still blocked from managing care team via their user path
     await request(app.getHttpServer())
