@@ -26,7 +26,7 @@ export const patients = sqliteTable('patients', {
   dateOfBirth: text('date_of_birth').notNull(), // ISO date
   sexAtBirth: text('sex_at_birth', { enum: ['female', 'male'] }).notNull(),
   notes: text('notes'),
-  latestWeightKg: real('latest_weight_kg', { mode: 'number' }),
+  latestWeightKg: real('latest_weight_kg'),
   latestWeightRecordedAt: integer('latest_weight_recorded_at', { mode: 'timestamp' }),
   createdByUserId: text('created_by_user_id')
     .notNull()

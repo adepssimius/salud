@@ -1,0 +1,25 @@
+meta {
+  name: Update Me
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/me
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "displayName": "Updated Name",
+    "preferredTempUnit": "C",
+    "preferredLengthUnit": "in",
+    "preferredWeightUnit": "kg"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

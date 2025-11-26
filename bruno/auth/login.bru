@@ -1,0 +1,36 @@
+meta {
+  name: Login
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "test@example.com",
+    "password": "testpassword"
+  }
+}
+
+assert {
+  token: isNotEmpty
+}
+
+script:post-response {
+  const body = res.getBody();
+  
+  const token = body.token;
+  if (token) {
+    bru.setVar("token", token);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "name": "Salud API",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"],
+  "environments": {
+    "Local Dev": {
+      "protocol": "http",
+      "host": "localhost",
+      "port": 3000,
+      "apiPrefix": "api/",
+      "token": ""
+    }
+  }
+}
