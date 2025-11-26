@@ -148,10 +148,10 @@ CREATE TABLE `patients` (
 	`notes` text,
 	`latest_weight_kg` real,
 	`latest_weight_recorded_at` integer,
-	`created_by_user_id` text NOT NULL,
+	`owned_by_user_id` text NOT NULL,
 	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`owned_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `symptom_tags` (

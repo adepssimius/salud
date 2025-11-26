@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Request, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Query, Request, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt.guard';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -18,5 +18,10 @@ export class UsersController {
   async updateMe(@Request() req: any, @Body() dto: UpdateUserDto) {
     const user = await this.users.updateProfile(req.user.userId, dto);
     return { user };
+  }
+
+  @Get('search')
+  async search(@Query('email') email: string) {
+    return await this.users.searchByEmail(email);
   }
 }

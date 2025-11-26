@@ -28,7 +28,7 @@ export const patients = sqliteTable('patients', {
   notes: text('notes'),
   latestWeightKg: real('latest_weight_kg'),
   latestWeightRecordedAt: integer('latest_weight_recorded_at', { mode: 'timestamp' }),
-  createdByUserId: text('created_by_user_id')
+  ownedByUserId: text('owned_by_user_id')
     .notNull()
     .references(() => users.id),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
@@ -43,7 +43,9 @@ export const careTeamMemberships = sqliteTable('care_team_memberships', {
   userId: text('user_id')
     .notNull()
     .references(() => users.id),
-  role: text('role', { enum: ['self', 'parent', 'co-parent', 'nanny', 'other'] }).notNull(),
+  role: text('role', {
+    enum: ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'],
+  }).notNull(),
   permissions: text('permissions', { enum: ['full'] }).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),

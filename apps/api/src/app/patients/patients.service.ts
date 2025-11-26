@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
-import { careTeamMemberships, patients } from '../../db/schema';
+import { careTeamMemberships, patients, users } from '../../db/schema';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 
@@ -21,7 +21,7 @@ export class PatientsService {
       dateOfBirth: dto.dateOfBirth,
       sexAtBirth: dto.sexAtBirth,
       notes: dto.notes,
-      createdByUserId: userId,
+      ownedByUserId: userId,
     }).returning();
 
     await db.insert(careTeamMemberships).values({
@@ -82,9 +82,36 @@ export class PatientsService {
     if (dto.dateOfBirth) updates.dateOfBirth = dto.dateOfBirth;
     if (dto.sexAtBirth) updates.sexAtBirth = dto.sexAtBirth;
     if (dto.notes !== undefined) updates.notes = dto.notes;
+    let newOwnerId: string | undefined;
+    if (dto.ownedById) {
+      const userRow = await db.select().from(users).where(eq(users.id, dto.ownedById)).limit(1);
+      if (!userRow.length) {
+        throw new NotFoundException('USER_NOT_FOUND');
+      }
+      updates.ownedByUserId = dto.ownedById;
+      newOwnerId = dto.ownedById;
+    }
 
     if (Object.keys(updates).length > 0) {
       await db.update(patients).set(updates).where(eq(patients.id, id));
+    }
+
+    if (newOwnerId) {
+      // ensure new owner is on care team
+      const existing = await db
+        .select()
+        .from(careTeamMemberships)
+        .where(and(eq(careTeamMemberships.patientId, id), eq(careTeamMemberships.userId, newOwnerId)))
+        .limit(1);
+      if (!existing.length) {
+        await db.insert(careTeamMemberships).values({
+          id: randomUUID(),
+          patientId: id,
+          userId: newOwnerId,
+          role: 'parent',
+          permissions: 'full',
+        });
+      }
     }
 
     const row = await this.getAuthorizedPatientRow(id, userId);
@@ -98,7 +125,7 @@ export class PatientsService {
       dateOfBirth: patient.dateOfBirth,
       sexAtBirth: patient.sexAtBirth,
       notes: patient.notes,
-      createdByUserId: patient.createdByUserId,
+      ownedById: patient.ownedByUserId,
       latestWeightKg: patient.latestWeightKg,
       latestWeightRecordedAt: patient.latestWeightRecordedAt,
       myRole: myRole ?? null,

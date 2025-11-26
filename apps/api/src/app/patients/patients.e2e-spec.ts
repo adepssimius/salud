@@ -286,4 +286,225 @@ describe('Patients (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
   });
+
+  it('lists initial care team and allows adding another caregiver', async () => {
+    const owner = await registerAndLogin(app);
+    const other = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'Care Team Patient',
+        dateOfBirth: '2013-05-05',
+        sexAtBirth: 'female',
+        myRole: 'parent',
+      })
+      .expect(201);
+
+    const patientId = createRes.body.id;
+
+    const listInitial = await request(app.getHttpServer())
+      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(listInitial.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({
+            id: owner.userId,
+            email: owner.email,
+            displayName: 'User A',
+          }),
+          role: 'parent',
+        }),
+      ]),
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ userId: other.userId, role: 'nanny' })
+      .expect(201);
+
+    // remove caregiver
+    await request(app.getHttpServer())
+      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${other.userId}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.deleted).toBe(true);
+      });
+
+    const listAfterRemoval = await request(app.getHttpServer())
+      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(listAfterRemoval.body.find((m: any) => m.user.id === other.userId)).toBeUndefined();
+
+    // cannot remove owner
+    await request(app.getHttpServer())
+      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${owner.userId}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(400);
+
+    const listAfter = await request(app.getHttpServer())
+      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(listAfter.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ id: owner.userId }),
+        }),
+        expect.objectContaining({
+          user: expect.objectContaining({ id: other.userId, email: other.email }),
+          role: 'nanny',
+        }),
+      ]),
+    );
+
+    // other user still blocked from managing care team via their user path
+    await request(app.getHttpServer())
+      .get(`/api/users/${other.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(404);
+  });
+
+  it('prevents removing the owner from the care team', async () => {
+    const owner = await registerAndLogin(app);
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'Owner Protected',
+        dateOfBirth: '2014-06-06',
+        sexAtBirth: 'male',
+        myRole: 'parent',
+      })
+      .expect(201);
+    const patientId = createRes.body.id;
+
+    await request(app.getHttpServer())
+      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${owner.userId}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(400);
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(list.body.find((m: any) => m.user.id === owner.userId)).toBeDefined();
+  });
+
+  it('allows changing the owner and blocks deleting the new owner', async () => {
+    const owner = await registerAndLogin(app);
+    const newOwner = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'Transfer Patient',
+        dateOfBirth: '2012-08-08',
+        sexAtBirth: 'female',
+        myRole: 'parent',
+      })
+      .expect(201);
+    const patientId = createRes.body.id;
+
+    // add new owner to care team first
+    await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ userId: newOwner.userId, role: 'parent' })
+      .expect(201);
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/api/users/${owner.userId}/patients/${patientId}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ ownedById: newOwner.userId })
+      .expect(200);
+    expect(updated.body.ownedById).toBe(newOwner.userId);
+
+    // new owner remains protected from deletion
+    await request(app.getHttpServer())
+      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${newOwner.userId}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(400);
+  });
+
+  it('prevents multiple self relationships on a care team', async () => {
+    const owner = await registerAndLogin(app);
+    const self1 = await registerAndLogin(app);
+    const self2 = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({
+        fullName: 'Single Self Patient',
+        dateOfBirth: '2013-05-05',
+        sexAtBirth: 'female',
+        myRole: 'parent',
+      })
+      .expect(201);
+
+    const patientId = createRes.body.id;
+
+    await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ userId: self1.userId, role: 'self' })
+      .expect(201)
+      .expect((res) => {
+        expect(res.body.role).toBe('self');
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ userId: self2.userId, role: 'self' })
+      .expect(400);
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+
+    const selfCount = list.body.filter((m: any) => m.role === 'self').length;
+    expect(selfCount).toBe(1);
+  });
+
+  it('blocks a second self when patient was created with self role', async () => {
+    const selfOwner = await registerAndLogin(app);
+    const anotherSelf = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/users/${selfOwner.userId}/patients`)
+      .set('Authorization', `Bearer ${selfOwner.token}`)
+      .send({
+        fullName: 'Self Created',
+        dateOfBirth: '2011-02-02',
+        sexAtBirth: 'male',
+        myRole: 'self',
+      })
+      .expect(201);
+    const patientId = createRes.body.id;
+
+    // second self should be rejected
+    await request(app.getHttpServer())
+      .post(`/api/users/${selfOwner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${selfOwner.token}`)
+      .send({ userId: anotherSelf.userId, role: 'self' })
+      .expect(400);
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/users/${selfOwner.userId}/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${selfOwner.token}`)
+      .expect(200);
+    const selfCount = list.body.filter((m: any) => m.role === 'self').length;
+    expect(selfCount).toBe(1);
+    expect(list.body.find((m: any) => m.user.id === selfOwner.userId)?.role).toBe('self');
+  });
 });

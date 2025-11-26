@@ -1,0 +1,15 @@
+meta {
+  name: List Care Team
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/{{patientId}}/care-team
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/jwt.guard';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { CareTeamService } from './care-team.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     }),
   ],
   controllers: [PatientsController],
-  providers: [PatientsService, JwtAuthGuard, JwtStrategy],
-  exports: [PatientsService],
+  providers: [PatientsService, CareTeamService, JwtAuthGuard, JwtStrategy],
+  exports: [PatientsService, CareTeamService],
 })
 export class PatientsModule {}

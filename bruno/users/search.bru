@@ -1,0 +1,16 @@
+meta {
+  name: Search User by Email
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/search
+  params: email={{searchEmail}}
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -20,7 +20,7 @@
 - `notes: text`
 - `latestWeightKg: decimal(5,2)` (denormalized helper)
 - `latestWeightRecordedAt: datetime`
-- `createdByUserId: uuid` (creator auto-added as caregiver)
+- `ownedByUserId: uuid` (owner auto-added as caregiver)
 - `createdAt`, `updatedAt`
 
 ### CareTeamMembership
@@ -32,6 +32,8 @@
 - Constraints:
   - Patient creator auto-inserted with role `self` if they are the patient or `parent` otherwise.
   - Every patient must have at least one membership where `userId` equals a user flagged as the patient (self-care).
+  - Only one `self` role is allowed per patient; attempts to add a second `self` membership should be rejected.
+  - Care team owner (`ownedByUserId`) membership cannot be deleted; owner changes must be explicit via patient update.
 
 ### Episode
 - `id: uuid`

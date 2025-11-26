@@ -145,4 +145,27 @@ describe('Auth (e2e)', () => {
         expect(res.body.user.displayName).toBe('User A Updated');
       });
   });
+
+  it('searches users by email', async () => {
+    const email = `search-${Date.now()}@example.com`;
+    const password = 'password123';
+
+    const registerRes = await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({ email, password, displayName: 'Search User' })
+      .expect(201);
+    const token = registerRes.body.token;
+
+    const searchRes = await request(app.getHttpServer())
+      .get('/api/users/search')
+      .query({ email })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(searchRes.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ email, displayName: 'Search User' }),
+      ]),
+    );
+  });
 });

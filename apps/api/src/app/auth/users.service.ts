@@ -12,7 +12,7 @@ export class UsersService {
     const db = this.db.db as any;
     const found = await db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!found.length) throw new NotFoundException('USER_NOT_FOUND');
-    return this.pickUser(found[0]);
+    return this.pickProfile(found[0]);
   }
 
   async updateProfile(userId: string, dto: UpdateUserDto) {
@@ -28,10 +28,19 @@ export class UsersService {
     }
 
     await db.update(users).set(updates).where(eq(users.id, userId));
-    return this.getProfile(userId);
+    const updated = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    return this.pickProfile(updated[0]);
   }
 
   private pickUser(user: any) {
+    return {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+    };
+  }
+
+  private pickProfile(user: any) {
     return {
       id: user.id,
       email: user.email,
@@ -40,5 +49,11 @@ export class UsersService {
       preferredLengthUnit: user.preferredLengthUnit,
       preferredWeightUnit: user.preferredWeightUnit,
     };
+  }
+
+  async searchByEmail(email: string) {
+    const db = this.db.db as any;
+    const results = await db.select().from(users).where(eq(users.email, email)).limit(5);
+    return results.map((u: any) => this.pickUser(u));
   }
 }

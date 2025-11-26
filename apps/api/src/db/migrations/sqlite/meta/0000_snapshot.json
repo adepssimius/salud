@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "79295288-2ade-4660-94b1-66e593af37a2",
+  "id": "64f97966-3b8b-404c-93ed-1e73ce4c0dea",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "care_team_memberships": {
@@ -1067,8 +1067,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
+        "owned_by_user_id": {
+          "name": "owned_by_user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -1093,12 +1093,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "patients_created_by_user_id_users_id_fk": {
-          "name": "patients_created_by_user_id_users_id_fk",
+        "patients_owned_by_user_id_users_id_fk": {
+          "name": "patients_owned_by_user_id_users_id_fk",
           "tableFrom": "patients",
           "tableTo": "users",
           "columnsFrom": [
-            "created_by_user_id"
+            "owned_by_user_id"
           ],
           "columnsTo": [
             "id"

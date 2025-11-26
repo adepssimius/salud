@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 export class UpdatePatientDto {
   @IsOptional()
@@ -17,4 +17,8 @@ export class UpdatePatientDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  ownedById?: string;
 }

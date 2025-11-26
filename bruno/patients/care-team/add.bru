@@ -1,0 +1,23 @@
+meta {
+  name: Add Caregiver
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/{{patientId}}/care-team
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "userId": "{{caregiverUserId}}",
+    "role": "nanny"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
