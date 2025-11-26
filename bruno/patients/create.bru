@@ -1,0 +1,30 @@
+meta {
+  name: Create Patient
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "fullName": "Fred Smith",
+    "dateOfBirth": "2018-01-01",
+    "sexAtBirth": "male",
+    "notes": "Initial notes",
+    "myRole": "parent"
+  }
+}
+
+assert {
+  id: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

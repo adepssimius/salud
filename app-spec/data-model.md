@@ -27,7 +27,7 @@
 - `id: uuid`
 - `patientId: uuid`
 - `userId: uuid`
-- `role: enum('self','parent','co-parent','nanny','other')`
+- `role: enum('self','parent','co-parent','nanny','grandparent','babysitter','other')`
 - `permissions: enum('full')` (placeholder for future granular roles)
 - Constraints:
   - Patient creator auto-inserted with role `self` if they are the patient or `parent` otherwise.

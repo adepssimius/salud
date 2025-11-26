@@ -12,21 +12,12 @@ post {
 
 body:json {
   {
-    "email": "test@example.com",
+    "email": "test1@example.com",
     "password": "testpassword",
     "displayName": "Test User",
     "preferredTempUnit": "F",
     "preferredLengthUnit": "cm",
     "preferredWeightUnit": "kg"
-  }
-}
-
-script:post-response {
-  const body = res.getBody();
-  
-  const token = body.token;
-  if (token) {
-    bru.setVar("token", token);
   }
 }
 

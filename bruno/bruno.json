@@ -9,7 +9,8 @@
       "host": "localhost",
       "port": 3000,
       "apiPrefix": "api/",
-      "token": ""
+      "token": "",
+      "userId": ""
     }
   }
 }

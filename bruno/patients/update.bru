@@ -1,0 +1,38 @@
+meta {
+  name: Update Patient
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/{{patientId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "notes": "Updated notes"
+  }
+}
+
+vars:pre-request {
+  patientId: 56724eb6-29c3-4c28-9f8c-49aa0142ec9a
+}
+
+script:pre-request {
+  // if (!bru.getVar("patientId")) {
+  //   console.log("No patientId set. Getting a random one.");
+  //   const patientsReq = await bru.runRequest("patients/list");
+  //   const patients = patientsReq.data;
+  //   const patient = patients[Math.floor(Math.random()*patients.length)];
+  //   bru.setVar('patientId', patient.id);
+  // }
+  const patientId = bru.getRequestVar('patientId')
+  bru.setVar('patientId', patientId)
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

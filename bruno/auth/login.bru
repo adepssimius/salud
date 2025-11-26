@@ -21,15 +21,6 @@ assert {
   token: isNotEmpty
 }
 
-script:post-response {
-  const body = res.getBody();
-  
-  const token = body.token;
-  if (token) {
-    bru.setVar("token", token);
-  }
-}
-
 settings {
   encodeUrl: true
   timeout: 0

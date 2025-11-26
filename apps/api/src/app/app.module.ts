@@ -4,9 +4,10 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PersistenceModule } from './persistence/persistence.module';
 import { AuthModule } from './auth/auth.module';
+import { PatientsModule } from './patients/patients.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PersistenceModule, AuthModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PersistenceModule, AuthModule, PatientsModule],
   controllers: [AppController],
   providers: [AppService],
 })

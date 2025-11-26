@@ -1,0 +1,37 @@
+meta {
+  name: Get Patient
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/6b389c6d-84a5-4e78-8fff-867e7caa50f4
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  if (!const patientId = bru.getRequestVar('patientId')) {
+    console.log("No patientId set. Getting a random one.");
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    const patient = patients[Math.floor(Math.random()*patients.length)];
+    console.log("got patient " + patient.id);
+    bru.setVar('patientId', patient.id);
+  } else {
+    bru.setVar('patientId', patientId);
+  }
+}
+
+script:post-response {
+  // bru.setVar('patientId', null);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  You must call list patients or pass a patient ID before this will work.
+}

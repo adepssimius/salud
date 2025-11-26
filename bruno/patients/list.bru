@@ -1,0 +1,26 @@
+meta {
+  name: List Patients
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  const body = res.getBody();
+  
+  
+  
+  const patient = body[Math.floor(Math.random()*body.length)];
+  if(!patient) return;
+  bru.setVar('randPatientId', patient.id);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

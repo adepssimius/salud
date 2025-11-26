@@ -12,12 +12,23 @@ Base stack: NestJS REST API. All routes require authenticated user (email/passwo
 - `GET /api/auth/me`
   - Returns current user profile.
 
-## Patients
+## Patients (all nested under `/api/users/:userId/patients`)
+- `POST /api/users/:userId/patients`
+  - Body: `{ fullName, dateOfBirth, sexAtBirth, notes?, myRole? }` where `myRole` ∈ `['self','parent','co-parent','nanny','grandparent','babysitter','other']`.
+  - Creator is added to care team with provided `myRole` (defaults to `parent`; choose `self` to mark self-care).
+- `GET /api/users/:userId/patients`
+  - Returns patients where requester is on care team, including `myRole` for the requester.
+- `GET /api/users/:userId/patients/:patientId`
+  - Returns patient details including `myRole` for requester; patientId must be UUID.
+- `PATCH /api/users/:userId/patients/:patientId`
+  - Update demographics/notes; access limited to care team; patientId must be UUID.
+- `DELETE /api/users/:userId/patients/:patientId`
+  - Only accessible to caregivers on the care team; returns 404 if not found, 403 if caller is not on the care team; patientId must be UUID.
 - `POST /api/patients`
   - Body: `{ fullName, dateOfBirth, sexAtBirth, notes? }` where `sexAtBirth` ∈ `['female','male']`.
   - Behavior:
     - Creator automatically added to care team.
-    - Patient also auto-linked as self-caregiver (patient = user) when `fullName` matches or when explicit `isSelf: true`.
+  - Patient also auto-linked as self-caregiver (patient = user) when the creator sets `myRole: 'self'`.
   - Response: `PatientDto`.
 - `GET /api/patients`
   - Returns patients where requester is on the care team.

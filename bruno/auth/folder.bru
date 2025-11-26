@@ -1,8 +1,20 @@
 meta {
   name: Auth
-  type: folder
   seq: 1
 }
+
 auth {
   mode: none
+}
+
+script:post-response {
+  const body = res.getBody();
+  
+  const token = body.token;
+  if (token) {
+    bru.setVar("token", token);
+  }
+  
+  const userId = body.user.id;
+  bru.setVar("userId", userId);
 }

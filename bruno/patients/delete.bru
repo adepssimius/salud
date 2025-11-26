@@ -1,0 +1,34 @@
+meta {
+  name: Delete Patient
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/{{patientId}}
+  body: none
+  auth: inherit
+}
+
+vars:pre-request {
+  patientId: d85d5367-ce33-4d91-a955-9345f67dec99
+}
+
+script:pre-request {
+  const patientId = bru.getRequestVar('patientId')
+  
+  if (patientId) return bru.setVar('patientId', patientId);
+  
+  console.log("No patientId set. Getting a random one.");
+  const patientsReq = await bru.runRequest("patients/list");
+  const patients = patientsReq.data;
+  const patient = patients[Math.floor(Math.random()*patients.length)];
+  console.log("got patient " + patient.id);
+  bru.setVar('patientId', patient.id);
+  
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
