@@ -7,4 +7,5 @@
   - Honors DB env config (SQLite by default; `DB_CLIENT`/`DATABASE_URL` for Postgres/MySQL).
 - API testing with Bruno:
   - Bruno request definitions live under `bruno/`.
-  - Use the provided `auth` collection (`register`, `login`, `me`) against `http://localhost:3000/api` (adjust base URL in Bruno as needed).
+- Use the provided `auth` collection (`register`, `login`, `me`) against `http://localhost:3000/api` (adjust base URL in Bruno as needed).
+- Always validate critical flows with real API calls (curl/Bruno) using the running server; do not rely solely on automated tests to confirm behavior.
