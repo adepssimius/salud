@@ -15,8 +15,8 @@
 - Use Bruno collections under `bruno/` to document and exercise APIs.
 - Each area/folder should include:
   - `folder.bru` to define the folder.
-  - Request `.bru` files using `{{baseUrl}}` (from `bruno/bruno.json` environments) and inheriting auth where applicable (bearer tokens).
-- Root `bruno/bruno.json` defines environments and variables (e.g., `baseUrl`, `token`). The current `bruno/` layout is the reference format.
+  - Request `.bru` files using `{{protocol}}://{{host}}:{{port}}/{{apiPrefix}}` (from `bruno/bruno.json` environments) and inheriting auth where applicable (bearer tokens).
+- Root `bruno/bruno.json` defines environments and variables (e.g., `host`, `port`, `token`). The current `bruno/` layout is the reference format.
 - When implementing new API endpoints, add:
   - Automated tests (Jest/supertest) covering happy/error paths per spec.
   - Bruno requests under the appropriate folder using env vars and token capture when applicable.
