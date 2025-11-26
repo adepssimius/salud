@@ -12,6 +12,7 @@ Rules:
 - Follow repo-structure.md and any stack/layout specs provided. If something is absent or incomplete, ask which stack to use.
 - Keep changes aligned with the specs; if code and spec diverge, update the spec first (with user approval) or ask for direction.
 - Use security/validation/error contracts exactly as defined in the specs.
+- Use Yarn for tooling commands (e.g., `yarn <bin> ...`) instead of `npx`.
 
 Deliverables:
 - Propose a plan before coding.
