@@ -1,6 +1,12 @@
 import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  RegisterDto as RegisterDtoShape,
+  TempUnit,
+  LengthUnit,
+  WeightUnit,
+} from '@salud/shared/types';
 
-export class RegisterDto {
+export class RegisterDto implements RegisterDtoShape {
   @IsEmail()
   email!: string;
 
@@ -14,13 +20,13 @@ export class RegisterDto {
 
   @IsOptional()
   @IsIn(['C', 'F'])
-  preferredTempUnit?: 'C' | 'F';
+  preferredTempUnit?: TempUnit;
 
   @IsOptional()
   @IsIn(['cm', 'in'])
-  preferredLengthUnit?: 'cm' | 'in';
+  preferredLengthUnit?: LengthUnit;
 
   @IsOptional()
   @IsIn(['kg', 'lb', 'st'])
-  preferredWeightUnit?: 'kg' | 'lb' | 'st';
+  preferredWeightUnit?: WeightUnit;
 }

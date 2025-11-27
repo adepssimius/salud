@@ -1,6 +1,7 @@
 import { IsEmail, IsString, MinLength } from 'class-validator';
+import { LoginDto as LoginDtoShape } from '@salud/shared/types';
 
-export class LoginDto {
+export class LoginDto implements LoginDtoShape {
   @IsEmail()
   email!: string;
 

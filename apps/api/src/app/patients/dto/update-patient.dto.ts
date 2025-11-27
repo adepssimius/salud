@@ -1,6 +1,11 @@
 import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import {
+  UpdatePatientDto as UpdatePatientDtoShape,
+  SexAtBirth,
+  CareTeamRole,
+} from '@salud/shared/types';
 
-export class UpdatePatientDto {
+export class UpdatePatientDto implements UpdatePatientDtoShape {
   @IsOptional()
   @IsString()
   @MinLength(1)
@@ -12,7 +17,7 @@ export class UpdatePatientDto {
 
   @IsOptional()
   @IsIn(['female', 'male'])
-  sexAtBirth?: 'female' | 'male';
+  sexAtBirth?: SexAtBirth;
 
   @IsOptional()
   @IsString()
@@ -21,4 +26,8 @@ export class UpdatePatientDto {
   @IsOptional()
   @IsUUID('4')
   ownedById?: string;
+
+  @IsOptional()
+  @IsIn(['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'])
+  myRole?: CareTeamRole;
 }
