@@ -1,6 +1,26 @@
-<main class="app-shell">
+<main class="app-shell" (click)="closeMenu()">
   <header class="app-header">
     <div class="brand">Salud</div>
+    <nav class="nav-actions">
+      <ng-container *ngIf="isAuthed(); else loggedOut">
+        <a routerLink="/dashboard">Dashboard</a>
+        <div
+          class="profile"
+          (click)="$event.stopPropagation(); toggleMenu()"
+          data-testid="profile-toggle"
+        >
+          <span class="avatar">👤</span>
+          <div class="menu" *ngIf="menuOpen()" (click)="$event.stopPropagation()">
+            <a routerLink="/profile" (click)="closeMenu()">Edit profile</a>
+            <button type="button" (click)="logout()">Log out</button>
+          </div>
+        </div>
+      </ng-container>
+      <ng-template #loggedOut>
+        <a *ngIf="!isLoginRoute()" routerLink="/login">Sign In</a>
+        <a *ngIf="!isRegisterRoute()" routerLink="/register">Sign Up</a>
+      </ng-template>
+    </nav>
   </header>
   <section class="app-content">
     <router-outlet></router-outlet>

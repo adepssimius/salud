@@ -11,7 +11,7 @@ import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
   imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
     <div class="card">
-      <h1>Create an account</h1>
+      <h1>Sign Up</h1>
       <p class="subtext">Keep everyone on the same page for meds and observations.</p>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
@@ -54,14 +54,14 @@ import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
         </div>
 
         <button class="primary" type="submit" [disabled]="form.invalid || loading()">
-          {{ loading() ? 'Creating…' : 'Create account' }}
+          {{ loading() ? 'Creating…' : 'Sign Up' }}
         </button>
         <p class="error" *ngIf="error()">{{ error() }}</p>
       </form>
 
       <p class="muted">
         Already have an account?
-        <a routerLink="/login">Sign in</a>
+        <a routerLink="/login">Sign In</a>
       </p>
     </div>
   `,

@@ -10,8 +10,8 @@ import { CommonModule } from '@angular/common';
   imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
     <div class="card">
-      <h1>Sign in</h1>
-      <p class="subtext">Log in to access your family's health dashboard.</p>
+      <h1>Sign In</h1>
+      <p class="subtext">Sign in to access your family's health dashboard.</p>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <label class="field">
@@ -24,14 +24,14 @@ import { CommonModule } from '@angular/common';
         </label>
 
         <button class="primary" type="submit" [disabled]="form.invalid || loading()">
-          {{ loading() ? 'Signing in…' : 'Sign in' }}
+          {{ loading() ? 'Signing in…' : 'Sign In' }}
         </button>
         <p class="error" *ngIf="error()">{{ error() }}</p>
       </form>
 
       <p class="muted">
         Don't have an account?
-        <a routerLink="/register">Create one</a>
+        <a routerLink="/register">Sign Up</a>
       </p>
     </div>
   `,

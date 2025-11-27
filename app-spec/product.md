@@ -40,11 +40,12 @@
      - Compute next allowed dose time based on chosen guideline and current log.
    - Atypical detection: any logged dose or interval that falls outside the stored guideline triggers a warning inline before save. Caregiver can confirm and save anyway.
 5. **Dashboard**
-   - Desktop-friendly view listing active episodes/patients with last observation summaries, last dose per medication, and next allowed dose times.
-   - Mobile-first quick entry for observations, photo capture, and interventions.
+  - Desktop-friendly view listing active episodes/patients with last observation summaries, last dose per medication, and next allowed dose times.
+  - Mobile-first quick entry for observations, photo capture, and interventions.
+  - Global top bar shows brand plus a profile avatar; clicking opens a small menu with “Edit profile” and “Log out”. The Edit Profile page lets a caregiver update display name and unit preferences; Log out clears the session.
 6. **Sharing & identity**
-   - Every action attributed to the caregiver who logged it; other caregivers can view identity per event.
-   - No read-only-only roles yet; all caregivers have full access for shared patients.
+  - Every action attributed to the caregiver who logged it; other caregivers can view identity per event.
+  - No read-only-only roles yet; all caregivers have full access for shared patients.
 7. **Patient relationships**
    - When creating a patient, the caregiver can set their relationship role (self, parent, co-parent, nanny, grandparent, babysitter, other). Default role is parent if not provided; set role to self to mark self-care.
 

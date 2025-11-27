@@ -14,6 +14,7 @@
   max-width: 960px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
+  position: relative;
 }
 
 .app-header {
@@ -27,6 +28,80 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   font-size: 1.25rem;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  position: relative;
+  z-index: 2;
+}
+
+.nav-actions a {
+  color: #e2e8f0;
+  text-decoration: none;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.nav-actions a:hover {
+  color: #38bdf8;
+}
+
+.profile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.avatar {
+  font-size: 1.05rem;
+}
+
+.profile-name {
+  font-weight: 600;
+}
+
+.menu {
+  position: absolute;
+  top: 110%;
+  right: 0;
+  background: #0b1224;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  min-width: 160px;
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+}
+
+.menu a,
+.menu button {
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  text-decoration: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.menu a:hover,
+.menu button:hover {
+  background: rgba(56, 189, 248, 0.1);
+  color: #38bdf8;
 }
 
 .app-content {
