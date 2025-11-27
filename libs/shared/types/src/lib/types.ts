@@ -29,6 +29,11 @@ export interface LoginDto {
   password: string;
 }
 
+export interface AuthResponse {
+  token: string;
+  user: UserProfile;
+}
+
 export interface UpdateUserDto {
   displayName?: string;
   preferredTempUnit?: TempUnit;
