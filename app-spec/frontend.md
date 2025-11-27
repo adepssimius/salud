@@ -15,7 +15,9 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 
 ## Profile experience
 - `/profile` shows a left-side tab list with `My Profile` first (additional tabs can be added later).
+- Tabs include `My Profile` and `Patients`; notifications tab is placeholder/disabled.
 - My Profile lets the caregiver update display name and unit preferences.
+- Patients tab lists the user’s patients with their relationship and whether the signed-in user is the owner. Offers an “Add patient” action; create form routes back to the patients tab after creation. Handle API responses that may return either an array or `{ patients: [...] }`.
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## App shell & routing
