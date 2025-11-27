@@ -42,7 +42,6 @@
 5. **Dashboard**
   - Desktop-friendly view listing active episodes/patients with last observation summaries, last dose per medication, and next allowed dose times.
   - Mobile-first quick entry for observations, photo capture, and interventions.
-  - Global top bar shows brand plus a profile avatar; clicking opens a small menu with “Edit profile” and “Log out”. The Edit Profile page lets a caregiver update display name and unit preferences; Log out clears the session.
 6. **Sharing & identity**
   - Every action attributed to the caregiver who logged it; other caregivers can view identity per event.
   - No read-only-only roles yet; all caregivers have full access for shared patients.
