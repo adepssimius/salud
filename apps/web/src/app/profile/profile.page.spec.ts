@@ -29,7 +29,7 @@ describe('ProfilePage', () => {
     apiMock = {
       get: jest.fn().mockReturnValue(of({ patients: [] })),
     };
-    routerMock = { navigateByUrl: jest.fn() };
+    routerMock = { navigateByUrl: jest.fn(), navigate: jest.fn() };
     const routeMock = {
       snapshot: {
         queryParamMap: {

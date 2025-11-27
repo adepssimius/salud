@@ -54,22 +54,47 @@ export class CareTeamService {
       throw new BadRequestException('USER_NOT_FOUND');
     }
 
+    const finalRole =
+      role && ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'].includes(role)
+        ? role
+        : role
+        ? 'other'
+        : undefined;
+
     const existing = await db
       .select()
       .from(careTeamMemberships)
       .where(and(eq(careTeamMemberships.patientId, patientId), eq(careTeamMemberships.userId, userId)))
       .limit(1);
     if (existing.length) {
+      // If a role change is requested, update it (with self uniqueness guard)
+      if (finalRole && existing[0].role !== finalRole) {
+        if (finalRole === 'self') {
+          const existingSelf = await db
+            .select()
+            .from(careTeamMemberships)
+            .where(and(eq(careTeamMemberships.patientId, patientId), eq(careTeamMemberships.role, 'self')))
+            .limit(1);
+          if (existingSelf.length && existingSelf[0].userId !== userId) {
+            throw new BadRequestException('SELF_RELATIONSHIP_ALREADY_EXISTS');
+          }
+        }
+        await db
+          .update(careTeamMemberships)
+          .set({ role: finalRole })
+          .where(and(eq(careTeamMemberships.patientId, patientId), eq(careTeamMemberships.userId, userId)));
+      }
       const userRow = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-      return { user: this.pickUser(userRow[0], userId), role: existing[0].role };
+      return { user: this.pickUser(userRow[0], userId), role: finalRole ?? existing[0].role };
     }
 
-    const finalRole =
-      role && ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'].includes(role)
+    const validatedRole =
+      finalRole ??
+      (role && ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'].includes(role)
         ? role
-        : 'other';
+        : 'other');
 
-    if (finalRole === 'self') {
+    if (validatedRole === 'self') {
       const existingSelf = await db
         .select()
         .from(careTeamMemberships)
@@ -84,13 +109,13 @@ export class CareTeamService {
       id: randomUUID(),
       patientId,
       userId,
-      role: finalRole,
+      role: validatedRole,
       permissions: 'full',
     });
 
     return {
       user: this.pickUser(found[0], userId),
-      role: finalRole,
+      role: validatedRole,
     };
   }
 

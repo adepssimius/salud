@@ -18,6 +18,11 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 - Tabs include `My Profile` and `Patients`; notifications tab is placeholder/disabled.
 - My Profile lets the caregiver update display name and unit preferences.
 - Patients tab lists the user’s patients with their relationship and whether the signed-in user is the owner. Offers an “Add patient” action; create form routes back to the patients tab after creation. Handle API responses that may return either an array or `{ patients: [...] }`.
+- Patient detail page:
+  - Shows/edit patient info (name, DOB, sex at birth, notes). Save updates via PATCH.
+  - Displays care team list with relationship per caregiver and owner indicator.
+  - Care team actions: add caregiver (search by email, choose role, add), change relationship inline via dropdown, delete caregiver (except owner), and promote a caregiver to owner from the table (updates patient `ownedById`).
+  - Add caregiver uses a modal overlay; care team API responses may be array or `{ careTeam: [...] }`.
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## App shell & routing

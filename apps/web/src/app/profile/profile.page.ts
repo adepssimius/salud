@@ -87,7 +87,7 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         <div *ngIf="patientsError()" class="error">{{ patientsError() }}</div>
 
         <ul class="patient-list" *ngIf="!patientsLoading() && patients().length">
-          <li *ngFor="let patient of patients()">
+          <li *ngFor="let patient of patients()" (click)="goToPatient(patient.id)">
             <div class="patient-name">{{ patient.fullName }}</div>
             <div class="patient-meta">
               <span class="pill">{{ patient.myRole ?? '—' }}</span>
@@ -351,6 +351,10 @@ export class ProfilePage implements OnInit {
   private ensurePatientsLoaded() {
     if (this.patientsLoaded() || !this.currentUserId()) return;
     this.loadPatients(this.currentUserId()!);
+  }
+
+  goToPatient(id: string) {
+    this.router.navigate(['/patients', id]);
   }
 
   private loadPatients(userId: string) {
