@@ -32,7 +32,12 @@ interface UserSearchResult {
             <h1>Patient Details</h1>
             <p class="muted">View and edit patient info.</p>
           </div>
-          <button class="secondary" type="button" (click)="backToProfile()">Back</button>
+          <div class="header-actions">
+            <button class="secondary" type="button" (click)="backToProfile()">Back</button>
+            <button class="danger" type="button" (click)="deletePatient()" [disabled]="deleting()">
+              {{ deleting() ? 'Deleting…' : 'Delete' }}
+            </button>
+          </div>
         </div>
 
         <form [formGroup]="form" (ngSubmit)="savePatient()" novalidate>
@@ -192,6 +197,11 @@ interface UserSearchResult {
         justify-content: space-between;
         gap: 1rem;
       }
+      .header-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+      }
       h1,
       h2 {
         margin: 0;
@@ -234,6 +244,7 @@ interface UserSearchResult {
       }
       .primary,
       .secondary,
+      .danger,
       .tiny {
         border: none;
         border-radius: 10px;
@@ -250,6 +261,12 @@ interface UserSearchResult {
         background: transparent;
         border: 1px solid rgba(255, 255, 255, 0.15);
         color: #e2e8f0;
+      }
+      .danger {
+        padding: 0.55rem 0.9rem;
+        background: rgba(248, 113, 113, 0.12);
+        border: 1px solid rgba(248, 113, 113, 0.6);
+        color: #fecdd3;
       }
       .tiny {
         padding: 0.35rem 0.6rem;
@@ -374,6 +391,7 @@ export class PatientDetailPage implements OnInit {
   patient = signal<Patient | null>(null);
   savingPatient = signal(false);
   saveMessage = signal<string | null>(null);
+  deleting = signal(false);
 
   careTeam = signal<CareTeamMember[]>([]);
   careTeamLoading = signal(false);
@@ -583,5 +601,22 @@ export class PatientDetailPage implements OnInit {
 
   backToProfile() {
     this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
+  }
+
+  deletePatient() {
+    if (!this.currentUserId() || this.deleting()) return;
+    const confirmed = window.confirm('Delete this patient? This cannot be undone.');
+    if (!confirmed) return;
+    this.deleting.set(true);
+    this.api.delete<{ deleted: boolean }>(`/users/${this.currentUserId()}/patients/${this.patientId}`).subscribe({
+      next: () => {
+        this.deleting.set(false);
+        this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
+      },
+      error: () => {
+        this.deleting.set(false);
+        this.careTeamError.set('Could not delete patient.');
+      },
+    });
   }
 }

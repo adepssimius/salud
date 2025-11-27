@@ -98,4 +98,16 @@ describe('PatientDetailPage', () => {
     component.savePatient();
     expect(apiMock.patch).toHaveBeenCalled();
   });
+
+  it('deletes patient and navigates back', () => {
+    apiMock.get.mockReturnValue(of({}));
+    apiMock.delete.mockReturnValue(of({ deleted: true }));
+    const fixture = TestBed.createComponent(PatientDetailPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    jest.spyOn(window, 'confirm').mockReturnValue(true);
+    component.deletePatient();
+    expect(apiMock.delete).toHaveBeenCalledWith('/users/u1/patients/p1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/profile'], { queryParams: { tab: 'patients' } });
+  });
 });
