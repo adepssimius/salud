@@ -2,6 +2,7 @@ import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import {
   CareTeamMember,
   CareTeamRole,
@@ -22,7 +23,7 @@ interface UserSearchResult {
 @Component({
   selector: 'app-patient-detail-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule],
   template: `
     <div class="layout">
       <div class="card">
@@ -95,7 +96,11 @@ interface UserSearchResult {
                 <div class="muted small">{{ member.user.email }}</div>
               </td>
               <td>
-                <select [value]="member.role" (change)="changeRole(member, $any($event.target).value)">
+                <select
+                  name="role-{{ member.user.id }}"
+                  [(ngModel)]="member.role"
+                  (ngModelChange)="changeRole(member, $event)"
+                >
                   <option *ngFor="let role of roles" [value]="role">{{ role }}</option>
                 </select>
               </td>
