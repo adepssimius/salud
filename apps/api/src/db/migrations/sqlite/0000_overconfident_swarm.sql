@@ -1,3 +1,31 @@
+CREATE TABLE `users` (
+	`id` text PRIMARY KEY NOT NULL,
+	`email` text NOT NULL,
+	`password_hash` text NOT NULL,
+	`display_name` text NOT NULL,
+	`preferred_temp_unit` text NOT NULL,
+	`preferred_length_unit` text NOT NULL,
+	`preferred_weight_unit` text NOT NULL,
+	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);
+--> statement-breakpoint
+CREATE TABLE `patients` (
+	`id` text PRIMARY KEY NOT NULL,
+	`full_name` text NOT NULL,
+	`date_of_birth` text NOT NULL,
+	`sex_at_birth` text NOT NULL,
+	`notes` text,
+	`latest_weight_kg` real,
+	`latest_weight_recorded_at` integer,
+	`owned_by_user_id` text NOT NULL,
+	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	FOREIGN KEY (`owned_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
 CREATE TABLE `care_team_memberships` (
 	`id` text PRIMARY KEY NOT NULL,
 	`patient_id` text NOT NULL,
@@ -21,47 +49,30 @@ CREATE TABLE `episodes` (
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE TABLE `file_assets` (
-	`id` text PRIMARY KEY NOT NULL,
-	`bucket` text NOT NULL,
-	`path` text NOT NULL,
-	`content_type` text NOT NULL,
-	`size_bytes` integer NOT NULL,
-	`created_by_user_id` text NOT NULL,
-	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE TABLE `intervention_schedules` (
+CREATE TABLE `observations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`patient_id` text NOT NULL,
-	`type` text NOT NULL,
-	`medication_id` text,
-	`medication_embodiment_id` text,
-	`episode_id` text,
-	`label` text NOT NULL,
-	`dose_mg` real,
-	`dose_ml` real,
-	`pill_count` real,
-	`body_location` text,
-	`side` text,
-	`dressing_type` text,
-	`frequency_hours` real,
-	`explicit_times` text,
-	`start_at` integer NOT NULL,
-	`end_after_occurrences` integer,
-	`end_at` integer,
-	`notes` text,
-	`status` text NOT NULL,
-	`next_due_at` integer,
-	`created_by_user_id` text NOT NULL,
+	`recorded_by_user_id` text NOT NULL,
+	`observed_at` integer NOT NULL,
+	`text` text,
+	`unit_preference_at_entry` text,
+	`symptom_tags` text,
+	`episode_tags` text,
+	`resolves_episode_ids` text,
 	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`medication_id`) REFERENCES `medications`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`medication_embodiment_id`) REFERENCES `medication_embodiments`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`episode_id`) REFERENCES `episodes`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`recorded_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `observation_entries` (
+	`id` text PRIMARY KEY NOT NULL,
+	`observation_id` text NOT NULL,
+	`type` text NOT NULL,
+	`metadata` text,
+	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	FOREIGN KEY (`observation_id`) REFERENCES `observations`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `interventions` (
@@ -78,6 +89,16 @@ CREATE TABLE `interventions` (
 	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`recorded_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `medications` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`description` text,
+	`tags` text,
+	`default_active` integer DEFAULT true NOT NULL,
+	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `medication_embodiments` (
@@ -112,46 +133,36 @@ CREATE TABLE `medication_guidelines` (
 	FOREIGN KEY (`medication_embodiment_id`) REFERENCES `medication_embodiments`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE TABLE `medications` (
-	`id` text PRIMARY KEY NOT NULL,
-	`name` text NOT NULL,
-	`description` text,
-	`tags` text,
-	`default_active` integer DEFAULT true NOT NULL,
-	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE `observations` (
+CREATE TABLE `intervention_schedules` (
 	`id` text PRIMARY KEY NOT NULL,
 	`patient_id` text NOT NULL,
-	`recorded_by_user_id` text NOT NULL,
-	`observed_at` integer NOT NULL,
 	`type` text NOT NULL,
-	`text` text,
-	`unit_preference_at_entry` text,
-	`symptom_tags` text,
-	`episode_tags` text,
-	`metadata` text,
-	`resolves_episode_ids` text,
+	`medication_id` text,
+	`medication_embodiment_id` text,
+	`episode_id` text,
+	`label` text NOT NULL,
+	`dose_mg` real,
+	`dose_ml` real,
+	`pill_count` real,
+	`body_location` text,
+	`side` text,
+	`dressing_type` text,
+	`frequency_hours` real,
+	`explicit_times` text,
+	`start_at` integer NOT NULL,
+	`end_after_occurrences` integer,
+	`end_at` integer,
+	`notes` text,
+	`status` text NOT NULL,
+	`next_due_at` integer,
+	`created_by_user_id` text NOT NULL,
 	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`recorded_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE TABLE `patients` (
-	`id` text PRIMARY KEY NOT NULL,
-	`full_name` text NOT NULL,
-	`date_of_birth` text NOT NULL,
-	`sex_at_birth` text NOT NULL,
-	`notes` text,
-	`latest_weight_kg` real,
-	`latest_weight_recorded_at` integer,
-	`owned_by_user_id` text NOT NULL,
-	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	FOREIGN KEY (`owned_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`medication_id`) REFERENCES `medications`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`medication_embodiment_id`) REFERENCES `medication_embodiments`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`episode_id`) REFERENCES `episodes`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `symptom_tags` (
@@ -160,16 +171,13 @@ CREATE TABLE `symptom_tags` (
 	`category` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `users` (
+CREATE TABLE `file_assets` (
 	`id` text PRIMARY KEY NOT NULL,
-	`email` text NOT NULL,
-	`password_hash` text NOT NULL,
-	`display_name` text NOT NULL,
-	`preferred_temp_unit` text NOT NULL,
-	`preferred_length_unit` text NOT NULL,
-	`preferred_weight_unit` text NOT NULL,
+	`bucket` text NOT NULL,
+	`path` text NOT NULL,
+	`content_type` text NOT NULL,
+	`size_bytes` integer NOT NULL,
+	`created_by_user_id` text NOT NULL,
 	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
-	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL
+	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
---> statement-breakpoint
-CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);

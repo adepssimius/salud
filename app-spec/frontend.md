@@ -23,6 +23,9 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   - Displays care team list with relationship per caregiver and owner indicator.
   - Care team actions: add caregiver (search by email, choose role, add), change relationship inline via dropdown, delete caregiver (except owner), and promote a caregiver to owner from the table (updates patient `ownedById`).
   - Add caregiver uses a modal overlay; care team API responses may be array or `{ careTeam: [...] }`.
+  - Delete patient button present with confirm.
+- Dashboard includes a button/entry point to create an observation.
+- Observation creation form allows multiple measurement entries (type + metadata), sets observed time, optional notes/tags, selects patient, and returns to dashboard on save.
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## App shell & routing

@@ -50,16 +50,21 @@
 - `patientId: uuid`
 - `recordedByUserId: uuid`
 - `observedAt: datetime`
-- `type: enum('temperature','heart_rate','respiratory_rate','oxygen_saturation','pain_score','weight','height','lesion_size','symptom','note','photo')`
 - `text: text` (free-form notes)
 - `unitPreferenceAtEntry: jsonb` (capture original units for conversions)
 - `symptomTags: string[]` (only from predefined set)
 - `episodeTags: uuid[]` (episodes this observation belongs to; can be many)
-- `metadata: jsonb` (type-specific structured data, detailed below)
-- `resolvesEpisodeIds: uuid[]` (episodes resolved by this observation)
+- `resolvesEpisodeIds: uuid[]` (episodes resolved by this observation; must be subset of `episodeTags`)
 - `createdAt`, `updatedAt`
 
-#### Observation structured metadata
+### ObservationEntry (multiple per Observation)
+- `id: uuid`
+- `observationId: uuid`
+- `type: enum('temperature','heart_rate','respiratory_rate','oxygen_saturation','pain_score','weight','height','lesion_size','symptom','note','photo')`
+- `metadata: jsonb` (type-specific structured data, below)
+- `createdAt`, `updatedAt`
+
+#### Observation entry structured metadata
 All numeric values stored in canonical units.
 
 | Type | Metadata fields |

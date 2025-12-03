@@ -72,6 +72,20 @@ export const observations = sqliteTable('observations', {
     .notNull()
     .references(() => users.id),
   observedAt: integer('observed_at', { mode: 'timestamp' }).notNull(),
+  text: text('text'),
+  unitPreferenceAtEntry: text('unit_preference_at_entry'), // JSON string
+  symptomTags: text('symptom_tags'), // JSON array string
+  episodeTags: text('episode_tags'), // JSON array string
+  resolvesEpisodeIds: text('resolves_episode_ids'), // JSON array string
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const observationEntries = sqliteTable('observation_entries', {
+  id: text('id').primaryKey(),
+  observationId: text('observation_id')
+    .notNull()
+    .references(() => observations.id),
   type: text('type', {
     enum: [
       'temperature',
@@ -87,12 +101,7 @@ export const observations = sqliteTable('observations', {
       'photo',
     ],
   }).notNull(),
-  text: text('text'),
-  unitPreferenceAtEntry: text('unit_preference_at_entry'), // JSON string
-  symptomTags: text('symptom_tags'), // JSON array string
-  episodeTags: text('episode_tags'), // JSON array string
   metadata: text('metadata'), // JSON string for structured fields
-  resolvesEpisodeIds: text('resolves_episode_ids'), // JSON array string
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });

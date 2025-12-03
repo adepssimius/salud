@@ -1,7 +1,10 @@
 # Development Guide
 
 - Use Yarn for all tooling commands (no `npx`).
-- Apply migrations before running the API: `yarn drizzle-kit push --config=drizzle.config.ts` (defaults to SQLite at `data/salud.db`).
+- Migrations are flattened (single file) during this proof-of-concept phase. When schema changes:
+  - Update the existing migration to match `apps/api/src/db/schema.ts`.
+  - Delete the local SQLite DB (`rm data/salud.db`).
+  - Re-run migrations: `yarn drizzle-kit migrate --config=drizzle.config.ts`.
 - Seed a test user in development with: `yarn seed:test-user`
   - Creates `test@example.com` with password `test` and default unit prefs.
   - Honors DB env config (SQLite by default; `DB_CLIENT`/`DATABASE_URL` for Postgres/MySQL).

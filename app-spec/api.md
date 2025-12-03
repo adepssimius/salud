@@ -62,26 +62,30 @@ Base stack: NestJS REST API. All routes require authenticated user (email/passwo
     ```json
     {
       "observedAt": "ISO datetime",
-      "type": "temperature|heart_rate|...|photo",
       "text": "optional note",
       "symptomTags": ["cough"],
       "episodeIds": ["uuid"],
       "resolvesEpisodeIds": ["uuid"],
-      "metadata": { ...type specific... }
+      "entries": [
+        { "type": "temperature", "metadata": { "valueC": 38.2, "inputUnit": "C" } },
+        { "type": "heart_rate", "metadata": { "bpm": 120 } }
+      ]
     }
     ```
   - Validation:
-    - `metadata` must match type schema (see data model).
+    - At least one entry required; each entry `type` must match schema (data model).
     - `resolvesEpisodeIds` must be subset of `episodeIds`.
-    - If type = `photo`, `metadata.fileId` required.
-    - Weight observations update patient latest weight + timestamp.
-  - Response: `ObservationDto`.
+    - If any entry type = `photo`, `metadata.fileId` required.
+    - Weight entries update patient latest weight + timestamp.
+  - Response: `ObservationDto` with `entries[]`.
 - `GET /api/patients/:patientId/observations`
   - Query params: `type?`, `episodeId?`, `from?`, `to?`, `limit?`
-  - Returns list, newest first.
+  - If `type` provided, filter observations that include at least one entry of that type.
+  - Returns list, newest first, with entries.
 - `GET /api/observations/:observationId`
+  - Enforce caregiver access; 404 if the observation’s patient is not on the requester’s care team or the patient id in URL (when provided) does not match.
 - `PATCH /api/observations/:observationId`
-  - Allow editing text, tags, metadata (audit with `updatedAt`).
+  - Allow editing text, tags, episode/resolution ids, and replacing entries (entries array replaces existing entries).
 
 ## Interventions
 - `POST /api/patients/:patientId/interventions`

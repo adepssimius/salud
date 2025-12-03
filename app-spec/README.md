@@ -15,6 +15,7 @@ Rules:
 - Keep changes aligned with the specs; if code and spec diverge, update the spec first (with user approval) or ask for direction.
 - Use security/validation/error contracts exactly as defined in the specs.
 - Use Yarn for tooling commands (e.g., `yarn <bin> ...`) instead of `npx`.
+- Verify critical API behaviors with real curl requests in addition to automated tests (especially access control).
 
 Deliverables:
 - Propose a plan before coding.

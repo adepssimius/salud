@@ -14,6 +14,25 @@ export type CareTeamRole =
   | 'babysitter'
   | 'other';
 
+export type ObservationType =
+  | 'temperature'
+  | 'heart_rate'
+  | 'respiratory_rate'
+  | 'oxygen_saturation'
+  | 'pain_score'
+  | 'weight'
+  | 'height'
+  | 'lesion_size'
+  | 'symptom'
+  | 'note'
+  | 'photo';
+
+export interface ObservationEntry {
+  id: string;
+  type: ObservationType;
+  metadata: Record<string, any> | null;
+}
+
 // Auth DTOs
 export interface RegisterDto {
   email: string;
@@ -88,4 +107,43 @@ export interface CareTeamMember {
 export interface AddCaregiverDto {
   userId: string;
   role?: CareTeamRole;
+}
+
+// Observations
+export interface Observation {
+  id: string;
+  patientId: string;
+  recordedByUserId: string;
+  observedAt: number; // epoch seconds
+  text?: string | null;
+  symptomTags: string[];
+  episodeIds: string[];
+  resolvesEpisodeIds: string[];
+  entries: ObservationEntry[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateObservationDto {
+  observedAt: string; // ISO datetime
+  text?: string;
+  symptomTags?: string[];
+  episodeIds?: string[];
+  resolvesEpisodeIds?: string[];
+  entries: Array<{
+    type: ObservationType;
+    metadata?: Record<string, any>;
+  }>;
+}
+
+export interface UpdateObservationDto {
+  text?: string | null;
+  symptomTags?: string[];
+  episodeIds?: string[];
+  resolvesEpisodeIds?: string[];
+  entries?: Array<{
+    id?: string;
+    type: ObservationType;
+    metadata?: Record<string, any>;
+  }>;
 }
