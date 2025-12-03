@@ -14,6 +14,7 @@ import { CommonModule } from '@angular/common';
       </p>
       <div class="actions">
         <button class="primary" type="button" (click)="goToNewObservation()">Create observation</button>
+        <button class="secondary" type="button" (click)="goToNewIntervention()">Log intervention</button>
       </div>
     </div>
   `,
@@ -38,6 +39,8 @@ import { CommonModule } from '@angular/common';
       }
       .actions {
         margin-top: 0.5rem;
+        display: flex;
+        gap: 0.5rem;
       }
       .primary {
         padding: 0.7rem 1.1rem;
@@ -48,6 +51,14 @@ import { CommonModule } from '@angular/common';
         font-weight: 700;
         cursor: pointer;
       }
+      .secondary {
+        padding: 0.7rem 1.1rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: transparent;
+        color: #e2e8f0;
+        cursor: pointer;
+      }
     `,
   ],
 })
@@ -56,5 +67,9 @@ export class DashboardPage {
 
   goToNewObservation() {
     this.router.navigate(['/observations/new']);
+  }
+
+  goToNewIntervention() {
+    this.router.navigate(['/interventions/new']);
   }
 }

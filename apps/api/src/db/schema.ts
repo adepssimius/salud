@@ -116,6 +116,9 @@ export const interventions = sqliteTable('interventions', {
     .references(() => users.id),
   performedAt: integer('performed_at', { mode: 'timestamp' }).notNull(),
   type: text('type', { enum: ['medication_dose', 'dressing_change'] }).notNull(),
+  interventionScheduleId: text('intervention_schedule_id').references(
+    () => interventionSchedules.id,
+  ),
   episodeTags: text('episode_tags'), // JSON array string
   resolvesEpisodeIds: text('resolves_episode_ids'), // JSON array string
   notes: text('notes'),

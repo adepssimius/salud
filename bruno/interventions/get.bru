@@ -1,0 +1,38 @@
+meta {
+  name: Get Intervention
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/interventions/{{interventionId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) {
+      pid = patients[0].id;
+    }
+  }
+  bru.setVar('patientId', pid);
+
+  let iid = bru.getVar('interventionId');
+  if (!iid) {
+    const listReq = await bru.runRequest("interventions/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      iid = list[0].id;
+    }
+  }
+  bru.setVar('interventionId', iid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

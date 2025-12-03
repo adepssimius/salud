@@ -147,3 +147,64 @@ export interface UpdateObservationDto {
     metadata?: Record<string, any>;
   }>;
 }
+
+// Interventions
+export type InterventionType = 'medication_dose' | 'dressing_change';
+
+export interface Intervention {
+  id: string;
+  patientId: string;
+  recordedByUserId: string;
+  performedAt: number; // epoch seconds
+  type: InterventionType;
+  interventionScheduleId?: string | null;
+  episodeIds: string[];
+  resolvesEpisodeIds: string[];
+  notes: string | null;
+  metadata: Record<string, any> | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateInterventionDto {
+  performedAt: string; // ISO datetime
+  type: InterventionType;
+  episodeIds?: string[];
+  resolvesEpisodeIds?: string[];
+  notes?: string;
+  medicationId?: string;
+  medicationEmbodimentId?: string;
+  doseSource?: 'weight_based' | 'age_based' | 'override';
+  amountMg?: number;
+  amountMl?: number | null;
+  pillCount?: number | null;
+  weightKgUsed?: number | null;
+  ageMonthsUsed?: number | null;
+  guidelineId?: string | null;
+  interventionScheduleId?: string | null;
+  bodyLocation?: string;
+  side?: 'left' | 'right' | 'bilateral' | 'n/a';
+  dressingType?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateInterventionDto {
+  episodeIds?: string[];
+  resolvesEpisodeIds?: string[];
+  notes?: string | null;
+  metadata?: Record<string, any>;
+  // type-specific updates allowed; guidelines optional
+  medicationId?: string;
+  medicationEmbodimentId?: string;
+  doseSource?: 'weight_based' | 'age_based' | 'override';
+  amountMg?: number;
+  amountMl?: number | null;
+  pillCount?: number | null;
+  weightKgUsed?: number | null;
+  ageMonthsUsed?: number | null;
+  guidelineId?: string | null;
+  interventionScheduleId?: string | null;
+  bodyLocation?: string;
+  side?: 'left' | 'right' | 'bilateral' | 'n/a';
+  dressingType?: string;
+}

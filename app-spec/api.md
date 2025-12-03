@@ -109,8 +109,8 @@ Base stack: NestJS REST API. All routes require authenticated user (email/passwo
     }
     ```
   - API computes:
-    - `nextAllowedAt`.
-    - `isAtypical` + `atypicalReason` when outside guideline constraints.
+    - `nextAllowedAt` (if guideline data present; null otherwise).
+    - `isAtypical` + `atypicalReason` when outside guideline constraints. Request is accepted; flag only indicates a warning was shown on the client (no confirmation step).
   - Dressing change body:
     ```json
     {
@@ -124,6 +124,11 @@ Base stack: NestJS REST API. All routes require authenticated user (email/passwo
       "notes": ""
     }
     ```
+  - Validation:
+    - `resolvesEpisodeIds` must be subset of `episodeIds`.
+    - `interventionScheduleId` is stored only (no schedule state updates).
+    - `guidelineId` optional; omit if not provided.
+  - Response: `InterventionDto` (201) with computed fields where applicable.
 - `GET /api/patients/:patientId/interventions`
   - Filters: `type`, `medicationId`, `tag`, `episodeId`, `from`, `to`.
 - `GET /api/interventions/:interventionId`

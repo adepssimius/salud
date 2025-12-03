@@ -1,0 +1,49 @@
+meta {
+  name: Create Intervention
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/interventions
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) {
+      pid = patients[0].id;
+    }
+  }
+  bru.setVar('patientId', pid);
+  bru.setVar('performedAt', new Date().toISOString());
+}
+
+body:json {
+  {
+    "performedAt": "{{performedAt}}",
+    "type": "medication_dose",
+    "episodeIds": [],
+    "medicationId": "med-1",
+    "doseSource": "override",
+    "amountMg": 100,
+    "notes": "Sample medication dose"
+  }
+}
+
+script:post-response {
+  bru.setVar('interventionId', res.body.id);
+}
+
+assert {
+  id: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

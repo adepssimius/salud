@@ -24,8 +24,14 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   - Care team actions: add caregiver (search by email, choose role, add), change relationship inline via dropdown, delete caregiver (except owner), and promote a caregiver to owner from the table (updates patient `ownedById`).
   - Add caregiver uses a modal overlay; care team API responses may be array or `{ careTeam: [...] }`.
   - Delete patient button present with confirm.
-- Dashboard includes a button/entry point to create an observation.
+- Dashboard includes quick actions to create an observation and log an intervention.
 - Observation creation form allows multiple measurement entries (type + metadata), sets observed time, optional notes/tags, selects patient, and returns to dashboard on save.
+- Intervention creation form (medication dose or dressing change):
+  - Required: patient selection, performedAt, type.
+  - Medication dose: medicationId (free text for now), optional embodimentId, dose source (weight/age/override), dose amounts (mg/mL/pill count), optional weight/age used, optional guidelineId/scheduleId, episode/resolves tags, notes.
+  - Dressing change: bodyLocation, side, dressingType, optional scheduleId, episode/resolves tags, notes.
+  - Resolves tags must be a subset of episode tags.
+  - Returns to dashboard on save.
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## App shell & routing

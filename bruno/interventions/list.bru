@@ -1,0 +1,35 @@
+meta {
+  name: List Interventions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/interventions
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) {
+      pid = patients[0].id;
+    }
+  }
+  bru.setVar('patientId', pid);
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (Array.isArray(body) && body.length) {
+    bru.setVar('interventionId', body[0].id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

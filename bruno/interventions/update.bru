@@ -1,0 +1,37 @@
+meta {
+  name: Update Intervention
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}interventions/{{interventionId}}
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let iid = bru.getVar('interventionId');
+  if (!iid) {
+    const listReq = await bru.runRequest("interventions/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      iid = list[0].id;
+    }
+  }
+  bru.setVar('interventionId', iid);
+}
+
+body:json {
+  {
+    "notes": "Updated via Bruno",
+    "metadata": {
+      "isAtypical": true
+    }
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

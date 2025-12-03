@@ -516,16 +516,23 @@
           "notNull": true,
           "autoincrement": false
         },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "episode_tags": {
-          "name": "episode_tags",
-          "type": "text",
+    "type": {
+      "name": "type",
+      "type": "text",
+      "primaryKey": false,
+      "notNull": true,
+      "autoincrement": false
+    },
+    "intervention_schedule_id": {
+      "name": "intervention_schedule_id",
+      "type": "text",
+      "primaryKey": false,
+      "notNull": false,
+      "autoincrement": false
+    },
+    "episode_tags": {
+      "name": "episode_tags",
+      "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -590,13 +597,26 @@
           "columnsFrom": [
             "recorded_by_user_id"
           ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
+      "columnsTo": [
+        "id"
+      ],
+      "onDelete": "no action",
+      "onUpdate": "no action"
+    },
+    "interventions_intervention_schedule_id_intervention_schedules_id_fk": {
+      "name": "interventions_intervention_schedule_id_intervention_schedules_id_fk",
+      "tableFrom": "interventions",
+      "tableTo": "intervention_schedules",
+      "columnsFrom": [
+        "intervention_schedule_id"
+      ],
+      "columnsTo": [
+        "id"
+      ],
+      "onDelete": "no action",
+      "onUpdate": "no action"
+    }
+  },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

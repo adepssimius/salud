@@ -81,6 +81,7 @@ CREATE TABLE `interventions` (
 	`recorded_by_user_id` text NOT NULL,
 	`performed_at` integer NOT NULL,
 	`type` text NOT NULL,
+	`intervention_schedule_id` text,
 	`episode_tags` text,
 	`resolves_episode_ids` text,
 	`notes` text,
@@ -88,7 +89,8 @@ CREATE TABLE `interventions` (
 	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`recorded_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`recorded_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`intervention_schedule_id`) REFERENCES `intervention_schedules`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `medications` (
