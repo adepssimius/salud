@@ -9,10 +9,11 @@ import {
 } from '../../db/schema';
 import { CreateInterventionDto } from './dto/create-intervention.dto';
 import { UpdateInterventionDto } from './dto/update-intervention.dto';
+import { EpisodesService } from '../episodes/episodes.service';
 
 @Injectable()
 export class InterventionsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly episodesService: EpisodesService) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
     const db = this.db.db as any;
@@ -99,6 +100,26 @@ export class InterventionsService {
       metadata: JSON.stringify(metadata),
       interventionScheduleId: dto.interventionScheduleId ?? null,
     });
+
+    let episodeIds = dto.episodeIds ? [...dto.episodeIds] : [];
+    if (dto.startEpisodeName) {
+      const newEpisodeId = await this.episodesService.createFromEvent({
+        patientId,
+        userId,
+        name: dto.startEpisodeName,
+        startedAtType: 'intervention',
+        startedAtId: id,
+      });
+      episodeIds.push(newEpisodeId);
+      await db
+        .update(interventions)
+        .set({ episodeTags: JSON.stringify(episodeIds) })
+        .where(eq(interventions.id, id));
+    }
+
+    if (dto.resolvesEpisodeIds && dto.resolvesEpisodeIds.length) {
+      await this.episodesService.resolveEpisodes(patientId, userId, dto.resolvesEpisodeIds, 'intervention', id);
+    }
 
     if (dto.type === 'medication_dose' && dto.amountMg && dto.doseSource) {
       // Placeholder atypical computation: if doseSource override and no guideline, flag atypical

@@ -16,10 +16,9 @@ describe('Patients & Care Team', () => {
 });
 
 describe('Episodes', () => {
-  test.todo('create episode with start event (obs or intervention)');
-  test.todo('resolve episode via observation');
-  test.todo('resolve episode via intervention');
-  test.todo('list active vs resolved episodes');
+  test.todo('start episode via observation (startEpisodeName) and list active');
+  test.todo('resolve episode via observation or intervention and verify resolved fields');
+  test.todo('list active episodes for caregiver on dashboard view');
 });
 
 describe('Observations', () => {

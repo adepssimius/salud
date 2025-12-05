@@ -42,10 +42,14 @@ CREATE TABLE `episodes` (
 	`id` text PRIMARY KEY NOT NULL,
 	`patient_id` text NOT NULL,
 	`name` text NOT NULL,
-	`started_at_observation_id` text,
-	`resolved_at_observation_id` text,
+	`started_at_type` text NOT NULL,
+	`started_at_id` text NOT NULL,
+	`ended_at_type` text,
+	`ended_at_id` text,
 	`status` text NOT NULL,
 	`notes` text,
+	`created_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
+	`updated_at` integer DEFAULT (strftime('%s','now')) NOT NULL,
 	FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint

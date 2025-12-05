@@ -25,13 +25,8 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   - Add caregiver uses a modal overlay; care team API responses may be array or `{ careTeam: [...] }`.
   - Delete patient button present with confirm.
 - Dashboard includes quick actions to create an observation and log an intervention.
-- Observation creation form allows multiple measurement entries (type + metadata), sets observed time, optional notes/tags, selects patient, and returns to dashboard on save.
-- Intervention creation form (medication dose or dressing change):
-  - Required: patient selection, performedAt, type.
-  - Medication dose: medicationId (free text for now), optional embodimentId, dose source (weight/age/override), dose amounts (mg/mL/pill count), optional weight/age used, optional guidelineId/scheduleId, episode/resolves tags, notes.
-  - Dressing change: bodyLocation, side, dressingType, optional scheduleId, episode/resolves tags, notes.
-  - Resolves tags must be a subset of episode tags.
-  - Returns to dashboard on save.
+- Observation creation: patient select, observed time, notes/tags, multi-entry support, episodes dropdown (multi-select existing active episodes plus “create new episode” option), optional resolve toggle (resolves selected episodes), new-episode name shown only when “create new” is chosen, returns to dashboard on save.
+- Intervention creation: patient select, performedAt, type, medication/dressing fields as above, episodes dropdown (same behavior as observations), optional resolve toggle, new-episode name only when “create new” is chosen, returns to dashboard on save.
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## App shell & routing

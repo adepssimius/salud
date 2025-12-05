@@ -128,6 +128,7 @@ export interface CreateObservationDto {
   observedAt: string; // ISO datetime
   text?: string;
   symptomTags?: string[];
+  startEpisodeName?: string;
   episodeIds?: string[];
   resolvesEpisodeIds?: string[];
   entries: Array<{
@@ -166,9 +167,24 @@ export interface Intervention {
   updatedAt: number;
 }
 
+export interface Episode {
+  id: string;
+  patientId: string;
+  name: string;
+  status: 'active' | 'resolved';
+  startedAtType: 'observation' | 'intervention';
+  startedAtId: string;
+  endedAtType?: 'observation' | 'intervention' | null;
+  endedAtId?: string | null;
+  notes?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export interface CreateInterventionDto {
   performedAt: string; // ISO datetime
   type: InterventionType;
+  startEpisodeName?: string;
   episodeIds?: string[];
   resolvesEpisodeIds?: string[];
   notes?: string;

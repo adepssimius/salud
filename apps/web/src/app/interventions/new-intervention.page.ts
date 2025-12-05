@@ -18,7 +18,7 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <label class="field">
           <span>Patient</span>
-          <select formControlName="patientId">
+          <select formControlName="patientId" (change)="onPatientChange($event)">
             <option value="" disabled>Select a patient</option>
             <option *ngFor="let p of patients()" [value]="p.id">
               {{ p.fullName }}
@@ -44,12 +44,26 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
 
         <div class="grid">
           <label class="field">
-            <span>Episode tags (comma separated)</span>
-            <input type="text" formControlName="episodeIdsText" placeholder="e.g. ear-infection,fever" />
+            <span>Episodes</span>
+            <div class="episode-list">
+              <label class="inline-check" *ngFor="let ep of activeEpisodes()">
+                <input type="checkbox" [value]="ep.id" (change)="toggleEpisode(ep.id, $event)" />
+                <span>{{ ep.name }}</span>
+              </label>
+              <label class="inline-check">
+                <input type="checkbox" [checked]="createNewEpisode()" (change)="toggleCreateNew($event)" />
+                <span>Create new episode</span>
+              </label>
+            </div>
           </label>
           <label class="field">
             <span>Resolves episodes (comma separated)</span>
-            <input type="text" formControlName="resolvesEpisodeIdsText" placeholder="must be subset of tags" />
+            <input type="checkbox" formControlName="resolveSelected" />
+            <span class="muted">Resolve selected episodes</span>
+          </label>
+          <label class="field">
+            <span>Start new episode (optional)</span>
+            <input type="text" formControlName="startEpisodeName" placeholder="e.g. Strep throat" *ngIf="createNewEpisode()" />
           </label>
         </div>
 
@@ -231,6 +245,8 @@ export class NewInterventionPage implements OnInit {
   private readonly router = inject(Router);
 
   patients = signal<Patient[]>([]);
+  activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
+  createNewEpisode = signal(false);
   saving = signal(false);
   error = signal<string | null>(null);
   success = signal(false);
@@ -239,8 +255,9 @@ export class NewInterventionPage implements OnInit {
     patientId: ['', Validators.required],
     performedAt: [this.defaultDateTime(), Validators.required],
     type: this.fb.control<InterventionType>('medication_dose', { nonNullable: true }),
-    episodeIdsText: [''],
-    resolvesEpisodeIdsText: [''],
+    episodeSelection: this.fb.control<string[]>([], { nonNullable: true }),
+    resolveSelected: [false],
+    startEpisodeName: [''],
     medicationId: [''],
     medicationEmbodimentId: [''],
     doseSource: ['override'],
@@ -285,13 +302,23 @@ export class NewInterventionPage implements OnInit {
     this.api.get<Patient[]>(`/users/${user.id}/patients`).subscribe({
       next: (res) => {
         this.patients.set(res);
-        if (res.length && !this.form.controls.patientId.value) {
-          this.form.controls.patientId.setValue(res[0].id);
+        const current = this.form.getRawValue().patientId;
+        const pid = current || (res.length ? res[0].id : '');
+        if (pid) {
+          this.form.patchValue({ patientId: pid });
+          this.loadEpisodes(pid);
         }
       },
       error: () => {
         this.error.set('Unable to load patients.');
       },
+    });
+  }
+
+  private loadEpisodes(patientId: string) {
+    this.api.get<Array<{ id: string; name: string }>>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
+      next: (eps) => this.activeEpisodes.set(eps),
+      error: () => this.activeEpisodes.set([]),
     });
   }
 
@@ -316,11 +343,13 @@ export class NewInterventionPage implements OnInit {
     this.success.set(false);
 
     const val = this.form.getRawValue();
+    const episodeIds = (val.episodeSelection || []).filter((id) => id !== '__new__');
     const body: CreateInterventionDto = {
       performedAt: new Date(val.performedAt).toISOString(),
       type: val.type,
-      episodeIds: this.parseList(val.episodeIdsText),
-      resolvesEpisodeIds: this.parseList(val.resolvesEpisodeIdsText),
+      startEpisodeName: this.createNewEpisode() ? val.startEpisodeName || undefined : undefined,
+      episodeIds: episodeIds.length ? episodeIds : undefined,
+      resolvesEpisodeIds: val.resolveSelected && episodeIds.length ? episodeIds : undefined,
       notes: val.notes || undefined,
     };
 
@@ -361,5 +390,38 @@ export class NewInterventionPage implements OnInit {
 
   cancel() {
     this.router.navigate(['/dashboard']);
+  }
+
+  onPatientChange(event: Event) {
+    const pid = (event.target as HTMLSelectElement).value;
+    if (pid) {
+      this.form.patchValue({ patientId: pid });
+      this.loadEpisodes(pid);
+    }
+  }
+
+  toggleEpisode(id: string, event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    const current = new Set(this.form.getRawValue().episodeSelection);
+    if (checked) {
+      current.add(id);
+    } else {
+      current.delete(id);
+    }
+    this.form.patchValue({ episodeSelection: Array.from(current) });
+  }
+
+  toggleCreateNew(event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.createNewEpisode.set(checked);
+    if (checked) {
+      const current = new Set(this.form.getRawValue().episodeSelection);
+      current.add('__new__');
+      this.form.patchValue({ episodeSelection: Array.from(current) });
+    } else {
+      const current = new Set(this.form.getRawValue().episodeSelection);
+      current.delete('__new__');
+      this.form.patchValue({ episodeSelection: Array.from(current), startEpisodeName: '' });
+    }
   }
 }

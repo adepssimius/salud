@@ -57,10 +57,14 @@ export const episodes = sqliteTable('episodes', {
     .notNull()
     .references(() => patients.id),
   name: text('name').notNull(),
-  startedAtObservationId: text('started_at_observation_id'),
-  resolvedAtObservationId: text('resolved_at_observation_id'),
+  startedAtType: text('started_at_type', { enum: ['observation', 'intervention'] }).notNull(),
+  startedAtId: text('started_at_id').notNull(),
+  endedAtType: text('ended_at_type', { enum: ['observation', 'intervention'] }),
+  endedAtId: text('ended_at_id'),
   status: text('status', { enum: ['active', 'resolved'] }).notNull(),
   notes: text('notes'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
 
 export const observations = sqliteTable('observations', {

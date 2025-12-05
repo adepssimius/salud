@@ -25,7 +25,7 @@ interface EntryDraft {
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <label class="field">
           <span>Patient</span>
-          <select formControlName="patientId">
+          <select formControlName="patientId" (change)="onPatientChange($event)">
             <option value="">Select a patient</option>
             <option *ngFor="let p of patients()" [value]="p.id">{{ p.fullName }}</option>
           </select>
@@ -39,6 +39,29 @@ interface EntryDraft {
         <label class="field">
           <span>Notes</span>
           <textarea rows="2" formControlName="text"></textarea>
+        </label>
+
+        <div class="field">
+          <span>Episodes</span>
+          <div class="episode-list">
+            <label class="inline-check" *ngFor="let ep of activeEpisodes()">
+              <input type="checkbox" [value]="ep.id" (change)="toggleEpisode(ep.id, $event)" />
+              <span>{{ ep.name }}</span>
+            </label>
+            <label class="inline-check">
+              <input type="checkbox" [checked]="createNewEpisode()" (change)="toggleCreateNew($event)" />
+              <span>Create new episode</span>
+            </label>
+          </div>
+          <label class="field" *ngIf="createNewEpisode()">
+            <span>New episode name</span>
+            <input type="text" formControlName="startEpisodeName" placeholder="e.g. Fever" />
+          </label>
+        </div>
+
+        <label class="field inline-check">
+          <input type="checkbox" formControlName="resolveSelected" />
+          <span>Resolve selected episodes</span>
         </label>
 
         <label class="field">
@@ -206,6 +229,8 @@ export class NewObservationPage implements OnInit {
   private readonly fb = inject(FormBuilder);
 
   patients = signal<Patient[]>([]);
+  activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
+  createNewEpisode = signal(false);
   saving = signal(false);
   error = signal<string | null>(null);
   entries = signal<EntryDraft[]>([]);
@@ -231,6 +256,9 @@ export class NewObservationPage implements OnInit {
     patientId: ['', [Validators.required]],
     observedAt: ['', [Validators.required]],
     text: [''],
+    episodeSelection: this.fb.control<string[]>([], { nonNullable: true }),
+    resolveSelected: [false],
+    startEpisodeName: [''],
     symptomTags: [''],
   });
 
@@ -253,17 +281,35 @@ export class NewObservationPage implements OnInit {
     }
   }
 
+  onPatientChange(event: Event) {
+    const pid = (event.target as HTMLSelectElement).value;
+    if (pid) {
+      this.form.patchValue({ patientId: pid });
+      this.loadEpisodes(pid);
+    }
+  }
+
   private loadPatients() {
     const user = this.auth.user();
     if (!user) return;
     this.api.get<Patient[]>(`/users/${user.id}/patients`).subscribe({
       next: (res) => {
         this.patients.set(res);
-        if (res.length && !this.form.getRawValue().patientId) {
-          this.form.patchValue({ patientId: res[0].id });
+        const current = this.form.getRawValue().patientId;
+        const pid = current || (res.length ? res[0].id : '');
+        if (pid) {
+          this.form.patchValue({ patientId: pid });
+          this.loadEpisodes(pid);
         }
       },
       error: () => this.error.set('Unable to load patients'),
+    });
+  }
+
+  private loadEpisodes(patientId: string) {
+    this.api.get<Array<{ id: string; name: string }>>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
+      next: (eps) => this.activeEpisodes.set(eps),
+      error: () => this.activeEpisodes.set([]),
     });
   }
 
@@ -283,6 +329,31 @@ export class NewObservationPage implements OnInit {
     this.entries.set(next);
   }
 
+  toggleEpisode(id: string, event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    const current = new Set(this.form.getRawValue().episodeSelection);
+    if (checked) {
+      current.add(id);
+    } else {
+      current.delete(id);
+    }
+    this.form.patchValue({ episodeSelection: Array.from(current) });
+  }
+
+  toggleCreateNew(event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.createNewEpisode.set(checked);
+    if (checked) {
+      const current = new Set(this.form.getRawValue().episodeSelection);
+      current.add('__new__');
+      this.form.patchValue({ episodeSelection: Array.from(current) });
+    } else {
+      const current = new Set(this.form.getRawValue().episodeSelection);
+      current.delete('__new__');
+      this.form.patchValue({ episodeSelection: Array.from(current), startEpisodeName: '' });
+    }
+  }
+
   submit() {
     if (this.form.invalid || this.entries().length === 0) return;
     const user = this.auth.user();
@@ -292,11 +363,16 @@ export class NewObservationPage implements OnInit {
     }
     this.saving.set(true);
     this.error.set(null);
-    const { patientId, observedAt, text, symptomTags } = this.form.getRawValue();
-    const payload = {
+    const { patientId, observedAt, text, symptomTags, startEpisodeName, episodeSelection, resolveSelected } =
+      this.form.getRawValue();
+    const episodeIds = (episodeSelection || []).filter((id) => id !== '__new__');
+    const payload: any = {
       observedAt: new Date(observedAt).toISOString(),
       text: text ?? undefined,
       symptomTags: symptomTags ? symptomTags.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      startEpisodeName: this.createNewEpisode() ? startEpisodeName || undefined : undefined,
+      episodeIds: episodeIds.length ? episodeIds : undefined,
+      resolvesEpisodeIds: resolveSelected && episodeIds.length ? episodeIds : undefined,
       entries: this.entries(),
     };
     this.api.post(`/patients/${patientId}/observations`, payload).subscribe({

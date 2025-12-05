@@ -41,7 +41,12 @@ describe('NewInterventionPage', () => {
   });
 
   it('loads patients and submits medication dose', () => {
-    apiMock.get.mockReturnValue(of([{ id: 'p1', fullName: 'Patient 1' }]));
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/episodes')) {
+        return of([{ id: 'ep1', name: 'Episode 1' }]);
+      }
+      return of([{ id: 'p1', fullName: 'Patient 1' }]);
+    });
     apiMock.post.mockReturnValue(of({}));
     const fixture = TestBed.createComponent(NewInterventionPage);
     fixture.detectChanges();
@@ -52,6 +57,8 @@ describe('NewInterventionPage', () => {
       medicationId: 'med-1',
       doseSource: 'override',
       amountMg: 100,
+      episodeSelection: ['ep1'],
+      resolveSelected: true,
     });
     component.submit();
     expect(apiMock.get).toHaveBeenCalledWith('/users/u1/patients');
@@ -61,6 +68,8 @@ describe('NewInterventionPage', () => {
         type: 'medication_dose',
         medicationId: 'med-1',
         amountMg: 100,
+        episodeIds: ['ep1'],
+        resolvesEpisodeIds: ['ep1'],
       }),
     );
     expect(routerMock.navigate).toHaveBeenCalledWith(['/dashboard']);

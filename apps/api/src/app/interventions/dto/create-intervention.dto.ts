@@ -9,6 +9,10 @@ export class CreateInterventionDto {
   type!: InterventionType;
 
   @IsOptional()
+  @IsString()
+  startEpisodeName?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayUnique()
   @IsString({ each: true })

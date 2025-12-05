@@ -10,10 +10,11 @@ import {
 } from '../../db/schema';
 import { CreateObservationDto } from './dto/create-observation.dto';
 import { UpdateObservationDto } from './dto/update-observation.dto';
+import { EpisodesService } from '../episodes/episodes.service';
 
 @Injectable()
 export class ObservationsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly episodesService: EpisodesService) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
     const db = this.db.db as any;
@@ -49,12 +50,14 @@ export class ObservationsService {
   }
 
   private ensureResolvesSubset(dto: CreateObservationDto | UpdateObservationDto) {
-    if (dto.resolvesEpisodeIds && dto.episodeIds) {
-      const set = new Set(dto.episodeIds);
-      for (const res of dto.resolvesEpisodeIds) {
-        if (!set.has(res)) {
-          throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
-        }
+    if (!dto.resolvesEpisodeIds) return;
+    if (!dto.episodeIds || dto.episodeIds.length === 0) {
+      throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
+    }
+    const set = new Set(dto.episodeIds);
+    for (const res of dto.resolvesEpisodeIds) {
+      if (!set.has(res)) {
+        throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
       }
     }
   }
@@ -80,6 +83,26 @@ export class ObservationsService {
       episodeTags: dto.episodeIds ? JSON.stringify(dto.episodeIds) : null,
       resolvesEpisodeIds: dto.resolvesEpisodeIds ? JSON.stringify(dto.resolvesEpisodeIds) : null,
     });
+
+    let episodeIds = dto.episodeIds ? [...dto.episodeIds] : [];
+    if (dto.startEpisodeName) {
+      const newEpisodeId = await this.episodesService.createFromEvent({
+        patientId,
+        userId,
+        name: dto.startEpisodeName,
+        startedAtType: 'observation',
+        startedAtId: id,
+      });
+      episodeIds.push(newEpisodeId);
+      await db
+        .update(observations)
+        .set({ episodeTags: JSON.stringify(episodeIds) })
+        .where(eq(observations.id, id));
+    }
+
+    if (dto.resolvesEpisodeIds && dto.resolvesEpisodeIds.length) {
+      await this.episodesService.resolveEpisodes(patientId, userId, dto.resolvesEpisodeIds, 'observation', id);
+    }
 
     for (const entry of dto.entries) {
       await db.insert(observationEntries).values({

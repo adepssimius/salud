@@ -47,6 +47,10 @@ export class CreateObservationDto {
   @IsString({ each: true })
   resolvesEpisodeIds?: string[];
 
+  @IsOptional()
+  @IsString()
+  startEpisodeName?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

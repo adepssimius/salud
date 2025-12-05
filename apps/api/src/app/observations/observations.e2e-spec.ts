@@ -160,4 +160,58 @@ describe('Observations (e2e)', () => {
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(404);
   });
+
+  it('starts and resolves episodes via observations', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/users/${userId}/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'Episode Patient',
+        dateOfBirth: '2020-05-05',
+        sexAtBirth: 'male',
+      })
+      .expect(201);
+    const patientId = patientRes.body.id;
+
+    const startRes = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        startEpisodeName: 'Fever',
+        entries: [{ type: 'temperature', metadata: { valueC: 38.5 } }],
+      })
+      .expect(201);
+
+    const episodeId = startRes.body.episodeIds[0];
+    expect(episodeId).toBeDefined();
+
+    const listEpisodes = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/episodes?status=active`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(listEpisodes.body.find((e: any) => e.id === episodeId)?.status).toBe('active');
+
+    const resolveRes = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'temperature', metadata: { valueC: 37.0 } }],
+        episodeIds: [episodeId],
+        resolvesEpisodeIds: [episodeId],
+      })
+      .expect(201);
+    expect(resolveRes.body.resolvesEpisodeIds).toContain(episodeId);
+
+    const resolvedEpisodes = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/episodes?status=resolved`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const resolved = resolvedEpisodes.body.find((e: any) => e.id === episodeId);
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.endedAtId).toBe(resolveRes.body.id);
+    expect(resolved.endedAtType).toBe('observation');
+  });
 });

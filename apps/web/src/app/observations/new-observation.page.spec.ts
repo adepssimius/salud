@@ -41,13 +41,36 @@ describe('NewObservationPage', () => {
   });
 
   it('loads patients and creates observation', () => {
-    apiMock.get.mockReturnValue(of([{ id: 'p1', fullName: 'Pat', dateOfBirth: '2020-01-01', sexAtBirth: 'female', notes: null, ownedById: 'u1', latestWeightKg: null, latestWeightRecordedAt: null, myRole: 'parent' }]));
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/episodes')) {
+        return of([{ id: 'ep1', name: 'Episode 1' }]);
+      }
+      return of([
+        {
+          id: 'p1',
+          fullName: 'Pat',
+          dateOfBirth: '2020-01-01',
+          sexAtBirth: 'female',
+          notes: null,
+          ownedById: 'u1',
+          latestWeightKg: null,
+          latestWeightRecordedAt: null,
+          myRole: 'parent',
+        },
+      ]);
+    });
     apiMock.post.mockReturnValue(of({}));
 
     const fixture = TestBed.createComponent(NewObservationPage);
     fixture.detectChanges();
     const comp = fixture.componentInstance;
-    comp.form.patchValue({ patientId: 'p1', observedAt: '2025-01-01T10:00', symptomTags: 'cough' });
+    comp.form.patchValue({
+      patientId: 'p1',
+      observedAt: '2025-01-01T10:00',
+      symptomTags: 'cough',
+      episodeSelection: ['ep1'],
+      resolveSelected: true,
+    });
     comp.entryType = 'temperature';
     comp.entryMetadata = '{"valueC":37.5,"inputUnit":"C"}';
     comp.addEntry();

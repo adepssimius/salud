@@ -1,0 +1,36 @@
+meta {
+  name: Get Observation
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/observations/{{observationId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+
+  let oid = bru.getVar('observationId');
+  if (!oid) {
+    const listReq = await bru.runRequest("observations/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      oid = list[0].id;
+    }
+  }
+  bru.setVar('observationId', oid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
