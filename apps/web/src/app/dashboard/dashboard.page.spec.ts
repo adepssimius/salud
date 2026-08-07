@@ -11,6 +11,7 @@ describe('DashboardPage', () => {
   let routerMock: any;
 
   const emptyPayload = {
+    lastDoses: [],
     activeEpisodes: [],
     upcomingSchedules: [],
     shoppingList: [],
@@ -76,6 +77,7 @@ describe('DashboardPage', () => {
   it('renders active episodes, schedules, shopping list, and advisories', () => {
     apiMock.get.mockReturnValue(
       of({
+        lastDoses: [],
         activeEpisodes: [
           {
             patientId: 'p1',
@@ -84,7 +86,9 @@ describe('DashboardPage', () => {
             name: 'Fever',
             startedAt: 1700000000,
             lastObservationSummary: { observedAt: 1700000100, entries: [{ id: 'e1', type: 'temperature', metadata: {} }] },
-            medications: [{ medicationId: 'm1', lastDoseAt: 1700000200, nextAllowedAt: 1700014600, isAtypicalLastDose: false }],
+            medications: [
+              { medicationId: 'm1', medicationName: 'Ibuprofen', lastDoseAt: 1700000200, nextAllowedAt: 1700014600, isAtypicalLastDose: false },
+            ],
           },
         ],
         upcomingSchedules: [
@@ -99,9 +103,86 @@ describe('DashboardPage', () => {
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Fever');
     expect(text).toContain('Kiddo');
+    expect(text).toContain('Ibuprofen'); // medicationName now resolved, not a bare id
     expect(text).toContain('Amoxicillin');
     expect(text).toContain('overdue');
     expect(text).toContain('ibuprofen');
+  });
+
+  describe('last doses strip', () => {
+    const nowSec = () => Math.floor(Date.now() / 1000);
+
+    it('renders a relative time and a countdown for a recent dose', () => {
+      apiMock.get.mockReturnValue(
+        of({
+          ...emptyPayload,
+          lastDoses: [
+            {
+              patientId: 'p1',
+              patientName: 'Kiddo',
+              doses: [
+                {
+                  medicationId: 'm1',
+                  medicationName: 'Tylenol',
+                  lastDoseAt: nowSec() - (2 * 3600 + 15 * 60),
+                  nextAllowedAt: nowSec() + 6000,
+                  isAtypicalLastDose: false,
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      const text = fixture.nativeElement.textContent;
+      expect(text).toContain('Last doses');
+      expect(text).toContain('Kiddo');
+      expect(text).toContain('Tylenol');
+      expect(text).toContain('2h 15m ago');
+      expect(text).toContain('next dose in 1h 40m');
+    });
+
+    it('shows a confident negative for a patient with nothing in the window, and does not double up with the generic empty state', () => {
+      apiMock.get.mockReturnValue(
+        of({
+          ...emptyPayload,
+          lastDoses: [{ patientId: 'p1', patientName: 'Kiddo', doses: [] }],
+        }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      const text = fixture.nativeElement.textContent;
+      expect(text).toContain('Kiddo');
+      expect(text).toContain('Nothing given in the last 24 hours.');
+      expect(text).not.toContain('Nothing needs attention right now.');
+    });
+
+    it('reads "can give now" once nextAllowedAt has elapsed', () => {
+      apiMock.get.mockReturnValue(
+        of({
+          ...emptyPayload,
+          lastDoses: [
+            {
+              patientId: 'p1',
+              patientName: 'Kiddo',
+              doses: [
+                {
+                  medicationId: 'm1',
+                  medicationName: 'Tylenol',
+                  lastDoseAt: nowSec() - 5 * 3600,
+                  nextAllowedAt: nowSec() - 60,
+                  isAtypicalLastDose: false,
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('can give now');
+    });
   });
 
   it('shows a while-you-were-asleep card only for patients with a non-empty diff', () => {
