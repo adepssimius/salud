@@ -282,17 +282,34 @@ non-frozen) ER Brief's prior-episodes list.
 
 ---
 
-### 10. 🔴 Dashboard makes N+1 requests for the WYWA counts
-**Where:** `dashboard/dashboard.page.ts` → `loadWhatsNew()` — `GET /patients`, then one
-`GET /patients/:id/whats-new` per patient via `forkJoin`.
+### 10. ✅ Dashboard makes N+1 requests for the WYWA counts
+**Correction to the original fix:** it said to touch `WhatsNewService`/`DashboardService`. But
+`/api/dashboard` is served by `TimelineService.getDashboard`, and the module graph runs
+`WhatsNewModule → TimelineModule`. Injecting `WhatsNewService` into `TimelineService` inverts that
+edge into a cycle needing `forwardRef` on both sides (no precedent anywhere in `apps/api`) — and
+looping `getWhatsNew` per patient server-side would only *relocate* the N+1, at higher cost, since
+each call fully hydrates a timeline to produce three integers.
 
-**Problem:** Fine for a one-household MVP, wasteful in principle: the dashboard endpoint already
-computes overlapping data server-side, and first paint waits on the slowest of N calls.
+**The server cost was also worse than stated:** ~6-8 queries per patient. Counts don't need
+hydration. `buildWhatsNewSummaries` answers every patient in **three batched queries, flat** —
+an OR of per-patient windows (watermarks differ, so a shared `min(since)` collapses to the 24h
+fallback the moment anyone has never acked). `nowDueCount` costs zero: `getDashboard` already
+fetches every active schedule for every accessible patient. The watermark rides free on the
+care-team query `accessiblePatients` already runs. Client went **N+2 → 1 request**.
 
-**Fix:** Fold per-patient `{eventCount, advisoryCount, nowDueCount}` into `GET /api/dashboard`.
-Requires an `api.md` update first (house rule) and touches `WhatsNewService`/`DashboardService`.
+**Shared definitions, not shared implementation.** The two consumers can't share code (one needs
+rows, one needs a scalar), but the four boundary rules now live in one place,
+`whats-new/whats-new-window.ts` — a plain module, not a Nest provider, precisely so it can't
+recreate the cycle. A card that says "3 new events" over a page showing 4 is a caregiver-trust bug;
+an e2e test cross-asserts the dashboard counts against `GET /patients/:id/whats-new`.
 
-**Note:** Deliberate tradeoff at the time — not urgent. Revisit if the dashboard feels slow.
+**Emit shape:** one row per accessible patient, all-zero rows included — same contract as
+`lastDoses`. The "only show non-empty" rule is the *client's*, and is now a `computed()`.
+
+**Folded in:** the card no longer reads "0 new events · 1 advisory fired" (every clause is
+conditional); `load()`/`restock()` surface failures via `errorText` instead of rendering a blank
+page; and the spec's default mock was hardened — it answered every URL with the dashboard payload,
+which is why 8 of 10 tests never exercised the WYWA path at all.
 
 ---
 
@@ -363,6 +380,49 @@ If it's still useful as a checklist, it belongs in `app-spec/`, not in the Jest 
 
 ---
 
+### 16. 🟡 A backdated entry can slip past a caregiver's WYWA watermark
+
+**Found while working #10; deliberately not fixed there** — changing it would have altered what
+`GET /patients/:patientId/whats-new` returns, which is a behavior decision of its own rather than
+part of an N+1 fix.
+
+**The scenario:** you're asleep. Your partner is up at 2 AM with the kid but doesn't log it until
+6 AM, backdating the observation to 2 AM. You last checked the app at 5 AM. **Your 6 AM briefing
+does not show that event** — WYWA filters on clinical time (`observedAt`/`performedAt`, i.e. 2 AM,
+before your 5 AM watermark), not on when it was actually written.
+
+That's a real hole in a handoff feature whose entire premise is "what happened that I haven't seen".
+The 3 AM-caregiver-backdating-at-6 pattern is exactly the app's origin story, so this is likely to
+bite in practice rather than in theory.
+
+**Fix:** filter events on `createdAt` instead — in `whats-new/whats-new-window.ts`, which both the
+endpoint and the dashboard counts already share, so one change moves both together. Note the
+advisory predicate in that same file *already* keys on `createdAt`, which is why a backdated dose
+today produces `eventCount: 0` alongside `advisoryCount: 1` (asserted in `dashboard.e2e-spec.ts`).
+Needs an `api.md` update first, and the "clinical time" wording there and in the window module's
+comments comes back out.
+
+---
+
+### 17. 🔴 Two more N+1s inside `getDashboard`
+
+Left alone during #10 on purpose — folding them in would have tripled that diff and blurred its
+test story. Both are in `apps/api/src/app/timeline/timeline.service.ts`:
+
+**a. `buildActiveEpisodeSummary`** runs 3-5 queries **per active episode** inside a `Promise.all` —
+the pivot lookup, an observations fetch, its entries, an interventions fetch, and a start-event
+resolve.
+
+**b. The shopping list** runs one `medications` query **per** running-low embodiment, inside the
+loop. `medicationNames()` in the same file already does the batched `inArray` version; this is the
+one place that didn't get it.
+
+Neither is user-visible yet at household scale. (b) is a ~5-line fix using a helper that already
+exists; (a) needs the same batch-then-reduce reshape `buildLastDoseRows` and `buildWhatsNewSummaries`
+use.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -375,8 +435,10 @@ so the list below is re-sequenced.
 | 2 | ~~**Event display**~~ ✅ | ~~4, 12, 5~~ | **Done 2026-08-07.** One extraction (`core/event-display.ts`) fixed all three. |
 | 3 | ~~**Error messages**~~ ✅ | ~~6~~ | **Done 2026-08-07.** Turned out to be 32 sites, not 13, plus 3 silent-failure bugs found in passing. |
 | 4 | ~~**3 AM dashboard**~~ ✅ | ~~8~~ | **Done 2026-08-07.** Turned out to need real API work, not just presentation — see #8. |
-| 5 | **Cleanup** | 11, 13, 15 | Mechanical, low-risk, best done in one uninterrupted pass. #11 + #15 together get the bundle back under budget. |
-| 6 | **Deferred** | 9, 10 | Real but not blocking. #9 is a new page (medium build); #10 is an optimization with no user-visible symptom yet. |
+| 5 | ~~**Episode detail**~~ ✅ | ~~9~~ | **Done 2026-08-07.** Route landed flat, not nested; resolve hands off to the entry form rather than a new endpoint — see #9. |
+| 6 | ~~**Dashboard N+1**~~ ✅ | ~~10~~ | **Done 2026-08-07.** The stated fix would have created a module cycle; the real one needed no new module at all — see #10. Surfaced #16 and #17. |
+| 7 | **Cleanup** | 11, 13, 15 | Mechanical, low-risk, best done in one uninterrupted pass. #11 + #15 together get the bundle back under budget. |
+| 8 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
 
 ## Conventions for working these
 
