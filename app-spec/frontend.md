@@ -160,7 +160,23 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   she last get ibuprofen?" vs. "when did she last get *anything* for the fever?", two different
   questions with two different answers.
 - Episode frames render as shaded horizontal bands behind the curve, spanning each episode's
-  start/end, and double as filters when clicked (F-5.3).
+  start/end, and are clickable through to that episode's detail page (below) — "what happened
+  during this stretch" is answered better by the episode's own event list than by an in-chart
+  filter, so this supersedes the in-chart filtering originally sketched for F-5.3.
+
+## Episode detail
+- `episode-detail.page.ts` at `/episodes/:episodeId` (ISSUES.md #9) — the entry point for "what
+  happened during this episode", reachable from a timeline band, a patient's active-episode card on
+  the dashboard, a condition's nested-episodes list, and the ER Brief's prior-episodes list.
+- Shows the episode name, status, and started/ended times; its events (`GET .../timeline?episodeId=`,
+  rendered with the same `describeEvent`/photo-thumbnail treatment as every other event list —
+  core/event-display.ts); and, when active, its medications' last-dose summary.
+- **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation or
+  intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve endpoint. The
+  page's "Resolve this episode" action routes to `/observations/new` with this episode pre-selected
+  for `resolvesEpisodeIds`, the same review-and-confirm flow every other resolution goes through.
+- Links to the ER Brief scoped to this episode (`/patients/:id/er-brief?episodeId=...`, already
+  supported by the API) and back to the patient.
 
 ## ER Brief
 See `er-brief.md` for the full spec. `er-brief.page.ts` (authenticated, entry point from patient

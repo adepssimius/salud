@@ -76,7 +76,13 @@ where the caller is a member but the specific action is forbidden.
   - Each item includes derived `startedAt`/`endedAt` (epoch seconds, resolved from the linked
     event's own timestamp; `endedAt` is `null` while active) — data-model.md → Episode.
 - `GET /api/episodes/:episodeId`
-  - Returns details + linked observations/interventions (IDs only).
+  - Returns details + linked observations/interventions (IDs only) — for the hydrated events
+    themselves (with medication names and human-readable summaries), the client calls
+    `GET /api/patients/:patientId/timeline?episodeId=:episodeId`, which already exists and already
+    filters to one episode.
+  - Includes derived `startedAt`/`endedAt` (epoch seconds, resolved from the linked event's own
+    timestamp; `endedAt` is `null` while active) — same resolution `GET .../episodes` already does,
+    now consistent between the list and single-item routes.
 - `GET /api/episodes/active`
   - Returns all active episodes for patients on the requester’s care team.
 
