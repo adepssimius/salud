@@ -96,6 +96,12 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
   `,
   styles: [
     `
+      /* Explicit rather than inherited: these pages only set margin, so the header rendered at the
+         UA's 2em. The global h1 is 1.6rem, and silently shrinking a header a paramedic reads off a
+         printout is not a change to make by omission. */
+      h1 {
+        font-size: 2rem;
+      }
       .page {
         max-width: 900px;
         margin: 0 auto;
@@ -106,7 +112,6 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
         padding: 1.5rem;
       }
       .error {
-        color: #fca5a5;
         font-size: 1.1rem;
       }
       .frozen-banner {
@@ -125,9 +130,6 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 0.6rem;
-      }
-      h1 {
-        margin: 0;
       }
       .identity {
         margin: 0;
@@ -167,31 +169,8 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
         border-radius: 10px;
         padding: 1rem;
       }
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1.05rem;
-      }
-      .events {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
       .events li {
-        display: flex;
-        gap: 0.6rem;
         font-size: 0.9rem;
-      }
-      .ts {
-        color: #94a3b8;
-        min-width: 100px;
-      }
-      .kind {
-        text-transform: capitalize;
-        min-width: 90px;
-        color: #7dd3fc;
       }
       table {
         width: 100%;

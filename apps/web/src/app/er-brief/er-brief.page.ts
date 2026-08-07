@@ -171,6 +171,12 @@ import {
   `,
   styles: [
     `
+      /* Explicit rather than inherited: these pages only set margin, so the header rendered at the
+         UA's 2em. The global h1 is 1.6rem, and silently shrinking a header a paramedic reads off a
+         printout is not a change to make by omission. */
+      h1 {
+        font-size: 2rem;
+      }
       .page {
         max-width: 900px;
         margin: 0 auto;
@@ -203,9 +209,6 @@ import {
       code {
         word-break: break-all;
       }
-      .error {
-        color: #fca5a5;
-      }
       .brief-header {
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -214,9 +217,6 @@ import {
         display: flex;
         flex-direction: column;
         gap: 0.6rem;
-      }
-      h1 {
-        margin: 0;
       }
       .identity {
         margin: 0;
@@ -258,9 +258,6 @@ import {
       .muted {
         color: #94a3b8;
       }
-      .small {
-        font-size: 0.85rem;
-      }
       .brief-body {
         display: flex;
         flex-direction: column;
@@ -272,40 +269,17 @@ import {
         border-radius: 10px;
         padding: 1rem;
       }
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1.05rem;
-      }
       .link {
-        background: none;
-        border: none;
         color: inherit;
         font: inherit;
         text-align: left;
-        cursor: pointer;
-        padding: 0;
         text-decoration: underline;
         text-decoration-color: rgba(226, 232, 240, 0.3);
       }
-      .events {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
       .events li {
-        display: flex;
-        gap: 0.6rem;
         font-size: 0.9rem;
       }
       .row-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
         gap: 0.4rem;
       }
       .row-list li {
@@ -314,15 +288,6 @@ import {
         justify-content: space-between;
         gap: 0.5rem;
         font-size: 0.85rem;
-      }
-      .ts {
-        color: #94a3b8;
-        min-width: 100px;
-      }
-      .kind {
-        text-transform: capitalize;
-        min-width: 90px;
-        color: #7dd3fc;
       }
       table {
         width: 100%;
@@ -335,28 +300,11 @@ import {
         padding: 0.4rem 0.5rem;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
-      .primary,
-      .secondary,
       .tiny {
         border: none;
-        border-radius: 10px;
+        border-radius: var(--radius-control);
         font-weight: 700;
         cursor: pointer;
-      }
-      .primary {
-        padding: 0.55rem 0.9rem;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .secondary {
-        padding: 0.55rem 0.9rem;
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
       }
       .tiny {
         padding: 0.25rem 0.55rem;
