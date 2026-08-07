@@ -250,11 +250,6 @@ export function toCm(value: number, unit: LengthUnit): number {
       h3 {
         margin: 0;
       }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
       .row {
         display: flex;
         gap: 0.6rem;
@@ -263,18 +258,6 @@ export function toCm(value: number, unit: LengthUnit): number {
       .grow {
         flex: 1;
         min-width: 6rem;
-      }
-      input,
-      select,
-      textarea {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      textarea {
-        resize: vertical;
       }
       .segmented {
         display: flex;
@@ -324,22 +307,6 @@ export function toCm(value: number, unit: LengthUnit): number {
       }
       .secondary {
         align-self: flex-start;
-        padding: 0.65rem 1rem;
-        border-radius: 10px;
-        font-weight: 700;
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
-        cursor: pointer;
-      }
-      .muted {
-        color: #cbd5e1;
-      }
-      .small {
-        font-size: 0.85rem;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],

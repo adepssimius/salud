@@ -78,27 +78,17 @@ import { AdvisoryDisplay } from './advisory-banner.component';
         color: #fca5a5;
       }
       .muted {
-        color: #cbd5e1;
         font-size: 0.9rem;
       }
       .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.6rem;
         margin-top: 1.25rem;
       }
-      .secondary,
       .proceed {
         padding: 0.65rem 1.1rem;
-        border-radius: 10px;
+        border-radius: var(--radius-control);
         font-weight: 700;
         cursor: pointer;
         border: none;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        color: #e2e8f0;
       }
       .proceed {
         background: linear-gradient(135deg, #f87171, #fb7185);

@@ -262,65 +262,22 @@ import {
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
       }
       .muted {
-        color: #cbd5e1;
         margin: 0;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
       }
       /* flex-direction is explicit because .field also applies on the combined
          "field inline-check" label and would otherwise stack the box above its text. */
-      .inline-check {
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        gap: 0.35rem;
-      }
       .episode-list {
         display: flex;
         flex-wrap: wrap;
         gap: 0.75rem;
       }
       /* The generic input rule is meant for text fields; undo it for checkboxes. */
-      .inline-check input[type='checkbox'] {
-        padding: 0;
-        margin: 0;
-        width: auto;
-        accent-color: #22d3ee;
-      }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 0.75rem;
-      }
-      input,
-      select,
-      textarea {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      textarea {
-        resize: vertical;
       }
       .med-search {
         position: relative;
@@ -365,11 +322,6 @@ import {
         background: rgba(255, 255, 255, 0.06);
       }
       .link {
-        background: none;
-        border: none;
-        color: #7dd3fc;
-        cursor: pointer;
-        padding: 0;
         font-size: 0.85rem;
       }
       .guidance-cards {
@@ -408,43 +360,10 @@ import {
       .quick-weight input {
         max-width: 180px;
       }
-      .small {
-        font-size: 0.85rem;
-      }
       .secondary.small {
         padding: 0.4rem 0.7rem;
         font-size: 0.85rem;
         align-self: flex-start;
-      }
-      .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.6rem;
-        margin-top: 0.5rem;
-      }
-      .primary,
-      .secondary {
-        padding: 0.65rem 1rem;
-        border-radius: 10px;
-        font-weight: 700;
-        cursor: pointer;
-        border: none;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #e2e8f0;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],
