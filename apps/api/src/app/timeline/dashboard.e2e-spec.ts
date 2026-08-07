@@ -106,6 +106,7 @@ describe('Dashboard (e2e)', () => {
     expect(ep.lastObservationSummary.entries[0].type).toBe('temperature');
     const medSummary = ep.medications.find((m: any) => m.medicationId === medicationId);
     expect(medSummary).toBeDefined();
+    expect(medSummary.medicationName).toBe('dashboard-test-med');
     expect(medSummary.lastDoseAt).toBe(dose.body.performedAt);
     expect(medSummary.nextAllowedAt).toEqual(dose.body.metadata.nextAllowedAt);
     expect(medSummary.isAtypicalLastDose).toBe(dose.body.metadata.isAtypical);
@@ -172,5 +173,122 @@ describe('Dashboard (e2e)', () => {
       .expect(200);
     expect(dashboard.body.activeEpisodes.length).toBe(0);
     expect(dashboard.body.upcomingSchedules.length).toBe(0);
+    expect(dashboard.body.lastDoses.length).toBe(0);
+  });
+
+  describe('lastDoses', () => {
+    // Its own patient per test, isolated from the shared beforeAll fixture above — these assertions
+    // depend on precise timing (a dose N hours ago) and on the patient having no episode at all,
+    // which the shared patientId may have picked up from the tests above it.
+    async function newPatient() {
+      const res = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: 'Last Doses Patient', dateOfBirth: '2020-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      return res.body.id as string;
+    }
+
+    async function logDose(pid: string, hoursAgo: number, overrides: Record<string, any> = {}) {
+      const performedAt = new Date(Date.now() - hoursAgo * 3600_000).toISOString();
+      return request(app.getHttpServer())
+        .post(`/api/patients/${pid}/interventions`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          performedAt,
+          type: 'medication_dose',
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          doseSource: 'override',
+          amountMg: 120,
+          ...overrides,
+        })
+        .expect(201);
+    }
+
+    it('surfaces a dose with NO episode — the entire premise of this field', async () => {
+      const pid = await newPatient();
+      const dose = await logDose(pid, 1); // 1h ago, no episodeIds / startEpisodeName at all
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      // The old episode-scoped path sees nothing for this patient...
+      expect(dashboard.body.activeEpisodes.find((e: any) => e.patientId === pid)).toBeUndefined();
+
+      // ...while the patient-scoped lastDoses field does. This contrast is the fix.
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row).toBeDefined();
+      expect(row.doses.length).toBe(1);
+      expect(row.doses[0].medicationId).toBe(medicationId);
+      expect(row.doses[0].lastDoseAt).toBe(dose.body.performedAt);
+    });
+
+    it('resolves the medication name', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 1);
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row.doses[0].medicationName).toBe('dashboard-test-med');
+    });
+
+    it('applies a hard 24-hour cutoff: excludes a dose from 25h ago, includes one from 23h ago', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 25);
+      const recent = await logDose(pid, 23);
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row.doses.length).toBe(1);
+      expect(row.doses[0].lastDoseAt).toBe(recent.body.performedAt);
+    });
+
+    it('keeps only the most recent dose per medication', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 4);
+      const latest = await logDose(pid, 2);
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row.doses.length).toBe(1);
+      expect(row.doses[0].lastDoseAt).toBe(latest.body.performedAt);
+    });
+
+    it('still returns a row with doses: [] for a patient with nothing in the window', async () => {
+      const pid = await newPatient();
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row).toBeDefined();
+      expect(row.doses).toEqual([]);
+    });
+
+    it('passes nextAllowedAt and isAtypicalLastDose through from the dose metadata', async () => {
+      const pid = await newPatient();
+      const dose = await logDose(pid, 1);
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
+      expect(row.doses[0].nextAllowedAt).toEqual(dose.body.metadata.nextAllowedAt);
+      expect(row.doses[0].isAtypicalLastDose).toBe(dose.body.metadata.isAtypical);
+    });
   });
 });
