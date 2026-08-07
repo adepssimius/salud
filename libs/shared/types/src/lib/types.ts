@@ -679,9 +679,32 @@ export interface TimelineResponse {
 // Dashboard
 export interface DashboardMedicationSummary {
   medicationId: string;
+  medicationName: string;
   lastDoseAt: number; // epoch seconds
   nextAllowedAt: number | null;
   isAtypicalLastDose: boolean;
+}
+
+/** Most recent dose of one medication for one patient, inside the 24-hour window. */
+export interface DashboardLastDose {
+  medicationId: string;
+  medicationName: string;
+  lastDoseAt: number; // epoch seconds
+  /** Frozen at log time, not recomputed. null = no guideline supplied an interval. */
+  nextAllowedAt: number | null;
+  isAtypicalLastDose: boolean;
+}
+
+/**
+ * One row per accessible patient — emitted even when `doses` is empty, because "nothing given in the
+ * last 24 hours" is the answer at 3 AM, not the absence of one (api.md → `GET /api/dashboard`).
+ * Kept separate from DashboardMedicationSummary despite the matching fields: that one is
+ * episode-scoped over the episode's lifetime, this one is patient-scoped over 24 hours.
+ */
+export interface DashboardPatientLastDoses {
+  patientId: string;
+  patientName: string;
+  doses: DashboardLastDose[]; // most recent first
 }
 
 export interface DashboardActiveEpisode {
@@ -713,6 +736,7 @@ export interface DashboardShoppingListItem {
 }
 
 export interface DashboardPayload {
+  lastDoses: DashboardPatientLastDoses[];
   activeEpisodes: DashboardActiveEpisode[];
   upcomingSchedules: DashboardUpcomingSchedule[];
   shoppingList: DashboardShoppingListItem[];
