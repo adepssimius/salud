@@ -278,16 +278,6 @@ import { DashboardPayload } from '@salud/shared/types';
         align-items: center;
         gap: 0.5rem;
       }
-      .pill-danger {
-        display: inline-flex;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(248, 113, 113, 0.15);
-        border: 1px solid rgba(248, 113, 113, 0.4);
-        color: #fca5a5;
-        font-size: 0.75rem;
-        font-weight: 700;
-      }
       .episode-card {
         width: 100%;
         text-align: left;

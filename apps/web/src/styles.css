@@ -67,9 +67,253 @@
   --neutral-bg: rgba(148, 163, 184, 0.15);
   --neutral-border: rgba(148, 163, 184, 0.35);
 
+  /* success / ownership */
+  --success-bg: rgba(34, 197, 94, 0.2);
+  --success-border: rgba(34, 197, 94, 0.5);
+  --success-text: #bbf7d0;
+
   /* radii */
   --radius-card: 12px;
   --radius-control: 10px;
   --radius-input: 8px;
   --radius-pill: 999px;
+}
+
+/*
+ * The shared component vocabulary.
+ *
+ * Every rule below is currently dead: an emulated component style carries an extra [_ngcontent-*]
+ * attribute, so a page's own `.card` (0,2,0) beats this `.card` (0,1,0). Pages adopt these by
+ * deleting their local copy, one page per commit.
+ *
+ * The exception is the element selectors (input, h1, h2, form). Those tie on specificity, and
+ * Angular appends component <style> elements after this sheet's <link>, so the component still
+ * wins — but only while its rule exists. A page's local `input` rule therefore has to be deleted in
+ * the same commit that page adopts the global one; there is no half-migrated state for those.
+ *
+ * Values here are the ones the most pages already used. Where a page differs deliberately it keeps
+ * a local override; where it had merely drifted, it collapses onto these.
+ */
+
+/* ---- surfaces ---------------------------------------------------------- */
+
+/* Chrome only. Width and internal layout stay with the page: max-width takes six different values
+   across the app and gap five, and those are genuine per-page decisions rather than drift. */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 1.25rem;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ---- buttons ----------------------------------------------------------- */
+
+.primary,
+.secondary {
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-control);
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.primary {
+  background: var(--accent-gradient);
+  color: var(--on-accent);
+}
+
+.secondary {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.primary:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--accent-glow);
+}
+
+/* ---- form controls ----------------------------------------------------- */
+
+input,
+select,
+textarea {
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+/* Only three of thirteen form pages had a focus ring. Hoisting it gives the other ten one. */
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--accent-focus);
+  border-color: transparent;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* The rule above is meant for text fields; undo it for toggles. Two entry pages carried this undo
+   locally and medication-detail did not, which is why its checkboxes render as filled boxes today.
+   Unscoped so it also covers any checkbox added later. */
+input[type='checkbox'],
+input[type='radio'] {
+  padding: 0;
+  margin: 0;
+  width: auto;
+  accent-color: var(--accent-bright);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* flex-direction is explicit because this composes onto .field, whose `column` would otherwise win
+   on the same element regardless of source order. */
+.inline-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* The form-footer variant. Pages that want a left-aligned or wrapping action row (dashboard,
+   schedule-detail, patient-detail, condition-detail, danger-interstitial) keep their local rule and
+   win on specificity — no modifier class needed. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+/* ---- type -------------------------------------------------------------- */
+
+h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.error {
+  color: var(--danger-text);
+}
+
+.subtext {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* No align-self: only four of seven pages set it, and leaving it out is what lets the ER Brief keep
+   its inline underlined link without a rename. */
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-soft);
+  cursor: pointer;
+}
+
+/* ---- chips ------------------------------------------------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* Colour-only variants, so they layer over the base shape. */
+.pill-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.pill-neutral {
+  background: var(--neutral-bg);
+  border-color: var(--neutral-border);
+  color: var(--text-muted);
+}
+
+.pill-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+/* ---- event lists (er-brief, shared-brief, whats-new, episode-detail) ---- */
+
+.events,
+.row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.events li {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.ts {
+  color: var(--text-dim);
+  min-width: 100px;
+}
+
+.kind {
+  text-transform: capitalize;
+  min-width: 90px;
+  color: var(--accent-soft);
 }

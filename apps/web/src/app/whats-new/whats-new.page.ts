@@ -130,14 +130,6 @@ import { TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
         cursor: pointer;
         text-align: left;
       }
-      .pill-danger {
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(248, 113, 113, 0.2);
-        color: #fca5a5;
-        font-size: 0.75rem;
-        font-weight: 700;
-      }
       .events {
         list-style: none;
         margin: 0;
