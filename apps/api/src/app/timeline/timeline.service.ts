@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
   advisories,
@@ -11,6 +11,7 @@ import {
   medications,
   observationEntries,
   observations,
+  patients,
 } from '../../db/schema';
 import { PatientsService } from '../patients/patients.service';
 import { ObservationsService } from '../observations/observations.service';
@@ -23,6 +24,11 @@ function normalizeTs(value: any): number | null {
 }
 
 const STALE_WEIGHT_DAYS = 60;
+// The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
+// client-side filter — interventions has no medication_id column (it lives in the metadata JSON
+// blob), so every last-dose lookup here is a full scan + JS reduce; bounding it to a day's doses
+// keeps that proportional instead of scanning the patient's whole history.
+const LAST_DOSE_WINDOW_HOURS = 24;
 
 @Injectable()
 export class TimelineService {
@@ -157,10 +163,84 @@ export class TimelineService {
     };
   }
 
-  private async accessiblePatientIds(userId: string): Promise<string[]> {
+  private async accessiblePatients(userId: string): Promise<Array<{ id: string; fullName: string }>> {
     const db = this.db.db as any;
-    const rows = await db.select().from(careTeamMemberships).where(eq(careTeamMemberships.userId, userId));
-    return Array.from(new Set(rows.map((r: any) => r.patientId))) as string[];
+    const rows = await db
+      .select({ patient: patients })
+      .from(careTeamMemberships)
+      .leftJoin(patients, eq(careTeamMemberships.patientId, patients.id))
+      .where(eq(careTeamMemberships.userId, userId));
+    const byId = new Map<string, { id: string; fullName: string }>();
+    for (const r of rows) {
+      if (r.patient?.id && !byId.has(r.patient.id)) {
+        byId.set(r.patient.id, { id: r.patient.id, fullName: r.patient.fullName });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
+
+  private async medicationNames(medicationIds: string[]): Promise<Map<string, string>> {
+    if (!medicationIds.length) return new Map();
+    const db = this.db.db as any;
+    const rows = await db.select().from(medications).where(inArray(medications.id, medicationIds));
+    return new Map(rows.map((r: any) => [r.id, r.name]));
+  }
+
+  // Patient-scoped and episode-agnostic, unlike buildActiveEpisodeSummary's `medications` — a dose
+  // logged with no episode (the common 3 AM case) has no episodes_events_pivot row and would
+  // otherwise be invisible on the whole dashboard. Returns one row per patient, every time,
+  // including `doses: []` — the empty array is itself the answer (api.md → GET /api/dashboard).
+  // medicationName is filled in by the caller from a combined name map (see getDashboard).
+  private async buildLastDoseRows(accessible: Array<{ id: string; fullName: string }>) {
+    if (!accessible.length) return [];
+    const db = this.db.db as any;
+    const patientIds = accessible.map((p) => p.id);
+    const nowTs = Math.floor(Date.now() / 1000);
+    const cutoff = nowTs - LAST_DOSE_WINDOW_HOURS * 3600;
+
+    const rows = await db
+      .select()
+      .from(interventions)
+      .where(
+        and(
+          inArray(interventions.patientId, patientIds),
+          eq(interventions.type, 'medication_dose'),
+          gte(interventions.performedAt, new Date(cutoff * 1000)),
+        ),
+      );
+
+    const byPatientMed: Record<
+      string,
+      Record<string, { performedAtTs: number; nextAllowedAt: number | null; isAtypical: boolean }>
+    > = {};
+    for (const row of rows) {
+      const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      if (!metadata.medicationId) continue;
+      const performedAtTs = normalizeTs(row.performedAt) ?? 0;
+      const byMed = (byPatientMed[row.patientId] ??= {});
+      const existing = byMed[metadata.medicationId];
+      if (!existing || performedAtTs > existing.performedAtTs) {
+        byMed[metadata.medicationId] = {
+          performedAtTs,
+          nextAllowedAt: metadata.nextAllowedAt ?? null,
+          isAtypical: !!metadata.isAtypical,
+        };
+      }
+    }
+
+    return accessible.map((p) => {
+      const byMed = byPatientMed[p.id] ?? {};
+      const doses = Object.entries(byMed)
+        .map(([medicationId, v]) => ({
+          medicationId,
+          medicationName: '', // filled in by getDashboard from the combined name map
+          lastDoseAt: v.performedAtTs,
+          nextAllowedAt: v.nextAllowedAt,
+          isAtypicalLastDose: v.isAtypical,
+        }))
+        .sort((a, b) => b.lastDoseAt - a.lastDoseAt);
+      return { patientId: p.id, patientName: p.fullName, doses };
+    });
   }
 
   private async buildActiveEpisodeSummary(episodeRow: any) {
@@ -214,6 +294,7 @@ export class TimelineService {
       }
       medicationsSummary = Object.entries(byMed).map(([medicationId, v]) => ({
         medicationId,
+        medicationName: '', // filled in by getDashboard from the combined name map
         lastDoseAt: v.performedAtTs,
         nextAllowedAt: v.nextAllowedAt,
         isAtypicalLastDose: v.isAtypical,
@@ -242,12 +323,30 @@ export class TimelineService {
 
   async getDashboard(userId: string) {
     const db = this.db.db as any;
-    const patientIds = await this.accessiblePatientIds(userId);
+    const accessible = await this.accessiblePatients(userId);
+    const patientIds = accessible.map((p) => p.id);
 
     const activeEpisodeRows = await this.episodesService.listActiveForUser(userId);
     const activeEpisodes = await Promise.all(
       activeEpisodeRows.map((row: any) => this.buildActiveEpisodeSummary(row)),
     );
+
+    const lastDoseRows = await this.buildLastDoseRows(accessible);
+
+    // One combined name lookup serves both activeEpisodes' (episode-lifetime) and lastDoses'
+    // (24h) medication ids, rather than two separate N+1-prone passes.
+    const medicationIds = new Set<string>();
+    for (const ep of activeEpisodes) for (const m of ep.medications) medicationIds.add(m.medicationId);
+    for (const p of lastDoseRows) for (const d of p.doses) medicationIds.add(d.medicationId);
+    const nameById = await this.medicationNames(Array.from(medicationIds));
+
+    for (const ep of activeEpisodes) {
+      for (const m of ep.medications) m.medicationName = nameById.get(m.medicationId) ?? 'unknown';
+    }
+    const lastDoses = lastDoseRows.map((p: any) => ({
+      ...p,
+      doses: p.doses.map((d: any) => ({ ...d, medicationName: nameById.get(d.medicationId) ?? 'unknown' })),
+    }));
 
     let upcomingSchedules: any[] = [];
     if (patientIds.length) {
@@ -309,6 +408,6 @@ export class TimelineService {
       }));
     }
 
-    return { activeEpisodes, upcomingSchedules, shoppingList, unacknowledgedAdvisories };
+    return { lastDoses, activeEpisodes, upcomingSchedules, shoppingList, unacknowledgedAdvisories };
   }
 }
