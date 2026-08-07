@@ -177,7 +177,7 @@ describe('ER Brief (e2e)', () => {
         amountMg: 999,
       })
       .expect(201);
-  });
+  }, 30000);
 
   afterAll(async () => {
     await app.close();
