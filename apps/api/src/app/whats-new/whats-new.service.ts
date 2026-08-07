@@ -1,16 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { advisories, careTeamMemberships, interventionSchedules } from '../../db/schema';
 import { TimelineService } from '../timeline/timeline.service';
+import { advisoriesSince, isNowDue, whatsNewSince } from './whats-new-window';
 import { AckWhatsNewResponse, TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
 
 function normalizeTs(value: any): number | null {
   if (value === null || value === undefined) return null;
   return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
 }
-
-const FALLBACK_WINDOW_SECONDS = 24 * 60 * 60;
 
 @Injectable()
 export class WhatsNewService {
@@ -33,7 +32,10 @@ export class WhatsNewService {
   async getWhatsNew(patientId: string, userId: string): Promise<WhatsNewResponse> {
     const membership = await this.getMembership(patientId, userId);
     const nowTs = Math.floor(Date.now() / 1000);
-    const since = normalizeTs(membership.lastSeenAt) ?? nowTs - FALLBACK_WINDOW_SECONDS;
+    // Watermark rule and the three window predicates below are shared with the dashboard's count
+    // version of this same diff (whats-new-window.ts) — that's what keeps the card and this page
+    // from reporting different numbers.
+    const since = whatsNewSince(normalizeTs(membership.lastSeenAt), nowTs);
 
     const timeline = await this.timelineService.getTimeline(patientId, userId, { from: since });
     // The timeline merge only carries protocol_fired advisories (it's built for the dose-marker/
@@ -41,10 +43,7 @@ export class WhatsNewService {
     const events = (timeline.entries as TimelineEntry[]).filter((e) => e.kind !== 'advisory');
 
     const db = this.db.db as any;
-    const advisoryRows = await db
-      .select()
-      .from(advisories)
-      .where(and(eq(advisories.patientId, patientId), gt(advisories.createdAt, new Date(since * 1000))));
+    const advisoryRows = await db.select().from(advisories).where(advisoriesSince(patientId, since));
     const advisoriesFired = advisoryRows.map((r: any) => ({
       id: r.id,
       patientId: r.patientId,
@@ -78,7 +77,7 @@ export class WhatsNewService {
           overdue: nextDueAt != null && nextDueAt < nowTs,
         };
       })
-      .filter((s: any) => s.nextDueAt != null && s.nextDueAt <= nowTs);
+      .filter((s: any) => isNowDue(s.nextDueAt, nowTs));
 
     return { since, events, advisoriesFired, nowDue };
   }
