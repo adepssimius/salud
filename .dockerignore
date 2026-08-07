@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+data
+coverage
+tmp
+.nx
+.angular
+.claude
+*.md
