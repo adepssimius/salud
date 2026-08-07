@@ -16,7 +16,7 @@ import { InterventionSchedule } from '@salud/shared/types';
       <div class="row">
         <span class="pill">{{ s.type === 'medication_dose' ? 'Medication' : 'Dressing change' }}</span>
         <span class="pill" [class.pill-active]="s.status === 'active'">{{ s.status }}</span>
-        <span class="pill pill-overdue" *ngIf="s.adherence.overdue">overdue</span>
+        <span class="pill pill-danger" *ngIf="s.adherence.overdue">overdue</span>
       </div>
 
       <div class="timing muted" *ngIf="s.frequencyHours">Every {{ s.frequencyHours }} hours</div>
@@ -113,7 +113,7 @@ import { InterventionSchedule } from '@salud/shared/types';
         border-color: rgba(34, 211, 238, 0.35);
         color: #7dd3fc;
       }
-      .pill-overdue {
+      .pill-danger {
         background: rgba(248, 113, 113, 0.15);
         border-color: rgba(248, 113, 113, 0.4);
         color: #fca5a5;

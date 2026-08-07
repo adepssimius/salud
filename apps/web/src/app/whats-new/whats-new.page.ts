@@ -37,7 +37,7 @@ import { TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
             <li *ngFor="let s of r.nowDue">
               <button type="button" class="row-link" (click)="goToSchedule(s.scheduleId)">
                 <strong>{{ s.label }}</strong>
-                <span class="pill" *ngIf="s.overdue">overdue</span>
+                <span class="pill pill-danger" *ngIf="s.overdue">overdue</span>
                 <span class="muted small" *ngIf="s.nextDueAt"> — due {{ s.nextDueAt * 1000 | date: 'short' }}</span>
               </button>
             </li>
@@ -130,7 +130,7 @@ import { TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
         cursor: pointer;
         text-align: left;
       }
-      .pill {
+      .pill-danger {
         padding: 0.1rem 0.5rem;
         border-radius: 999px;
         background: rgba(248, 113, 113, 0.2);

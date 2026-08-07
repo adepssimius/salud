@@ -10,7 +10,7 @@ import { CommonModule } from '@angular/common';
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
-    <div class="card">
+    <div class="auth-card">
       <h1>Sign In</h1>
       <p class="subtext">Sign in to access your family's health dashboard.</p>
 
@@ -38,7 +38,9 @@ import { CommonModule } from '@angular/common';
   `,
   styles: [
     `
-      .card {
+      /* Not .card: this is a centred narrow column, not the panelled surface every other page
+         means by that name. It sits inside .app-content, which already supplies the chrome. */
+      .auth-card {
         max-width: 420px;
         margin: 0 auto;
         display: flex;

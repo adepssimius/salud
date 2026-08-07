@@ -26,7 +26,7 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
           <div>
             <h1>{{ ep.name }}</h1>
             <p class="muted">
-              <span class="pill" [class.resolved]="ep.status === 'resolved'">{{ ep.status }}</span>
+              <span class="pill" [class.pill-neutral]="ep.status === 'resolved'">{{ ep.status }}</span>
               <span *ngIf="ep.startedAt"> · started {{ ago(ep.startedAt) }}</span>
               <span *ngIf="ep.endedAt"> · ended {{ ago(ep.endedAt) }}</span>
             </p>
@@ -130,7 +130,7 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
         font-weight: 700;
         text-transform: capitalize;
       }
-      .pill.resolved {
+      .pill-neutral {
         background: rgba(148, 163, 184, 0.15);
         border-color: rgba(148, 163, 184, 0.4);
         color: #cbd5e1;

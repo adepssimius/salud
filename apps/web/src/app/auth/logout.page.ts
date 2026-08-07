@@ -8,7 +8,7 @@ import { AuthService } from '../core/auth.service';
   standalone: true,
   imports: [CommonModule, RouterLink],
   template: `
-    <div class="card">
+    <div class="auth-card">
       <h1>Signed out</h1>
       <p class="subtext">You have been logged out. Sign in again to continue.</p>
       <a class="primary" routerLink="/login">Back to login</a>
@@ -16,7 +16,9 @@ import { AuthService } from '../core/auth.service';
   `,
   styles: [
     `
-      .card {
+      /* Not .card: this is a centred narrow column, not the panelled surface every other page
+         means by that name. It sits inside .app-content, which already supplies the chrome. */
+      .auth-card {
         max-width: 420px;
         margin: 0 auto;
         display: flex;

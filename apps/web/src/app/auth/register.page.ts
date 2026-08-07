@@ -11,7 +11,7 @@ import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
-    <div class="card">
+    <div class="auth-card">
       <h1>Sign Up</h1>
       <p class="subtext">Keep everyone on the same page for meds and observations.</p>
 
@@ -68,7 +68,9 @@ import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
   `,
   styles: [
     `
-      .card {
+      /* Not .card: this is a centred narrow column, not the panelled surface every other page
+         means by that name. It sits inside .app-content, which already supplies the chrome. */
+      .auth-card {
         max-width: 560px;
         margin: 0 auto;
         display: flex;

@@ -40,7 +40,7 @@ import { DashboardPayload } from '@salud/shared/types';
 
             <div class="dose-row" *ngFor="let d of p.doses">
               <span class="med-name">{{ d.medicationName }}</span>
-              <span class="pill" *ngIf="d.isAtypicalLastDose">atypical</span>
+              <span class="pill pill-danger" *ngIf="d.isAtypicalLastDose">atypical</span>
               <span class="ago">{{ ago(d.lastDoseAt) }}</span>
               <span class="next" [class.ready]="doseReady(d.nextAllowedAt)" *ngIf="nextDose(d.nextAllowedAt) as label">{{
                 label
@@ -84,7 +84,7 @@ import { DashboardPayload } from '@salud/shared/types';
             <button type="button" class="row-link" (click)="goToSchedule(s.scheduleId)">
               <div class="row-main">
                 <strong>{{ s.label }}</strong>
-                <span class="pill" *ngIf="s.overdue">overdue</span>
+                <span class="pill pill-danger" *ngIf="s.overdue">overdue</span>
               </div>
               <div class="muted small" *ngIf="s.nextDueAt">
                 Due {{ until(s.nextDueAt) }}
@@ -109,7 +109,7 @@ import { DashboardPayload } from '@salud/shared/types';
                 ({{ ep.lastObservationSummary.entries[0]?.type }})
               </div>
               <div class="med-row" *ngFor="let m of ep.medications">
-                <span class="pill" *ngIf="m.isAtypicalLastDose">atypical</span>
+                <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
                 {{ m.medicationName }} — last dose {{ ago(m.lastDoseAt) }}
                 <span *ngIf="nextDose(m.nextAllowedAt) as label">· {{ label }}</span>
               </div>
@@ -278,7 +278,7 @@ import { DashboardPayload } from '@salud/shared/types';
         align-items: center;
         gap: 0.5rem;
       }
-      .pill {
+      .pill-danger {
         display: inline-flex;
         padding: 0.1rem 0.5rem;
         border-radius: 999px;

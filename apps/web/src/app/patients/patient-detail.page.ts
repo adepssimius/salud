@@ -119,7 +119,7 @@ interface UserSearchResult {
           <li *ngFor="let c of conditions()">
             <button type="button" class="condition-row" (click)="goToCondition(c.id)">
               <span class="name">{{ c.name }}</span>
-              <span class="pill" [class.owner]="c.status === 'active'">{{ c.status }}</span>
+              <span class="pill" [class.pill-success]="c.status === 'active'">{{ c.status }}</span>
             </button>
           </li>
         </ul>
@@ -163,7 +163,7 @@ interface UserSearchResult {
                 </select>
               </td>
               <td>
-                <span class="pill owner" *ngIf="member.user.id === patient()?.ownedById">Owner</span>
+                <span class="pill pill-success" *ngIf="member.user.id === patient()?.ownedById">Owner</span>
                 <button
                   type="button"
                   class="tiny"
@@ -389,7 +389,7 @@ interface UserSearchResult {
         font-weight: 700;
         text-transform: capitalize;
       }
-      .pill.owner {
+      .pill-success {
         background: rgba(34, 197, 94, 0.2);
         border-color: rgba(34, 197, 94, 0.5);
         color: #bbf7d0;

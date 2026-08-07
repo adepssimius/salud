@@ -95,7 +95,7 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
               <div class="patient-meta">
                 <span class="pill">{{ patient.myRole ?? '—' }}</span>
                 <span class="muted">DOB: {{ patient.dateOfBirth }}</span>
-                <span class="pill owner" *ngIf="patient.ownedById === currentUserId()">Owner</span>
+                <span class="pill pill-success" *ngIf="patient.ownedById === currentUserId()">Owner</span>
               </div>
             </button>
           </li>
@@ -273,7 +273,7 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
       .error {
         color: #fca5a5;
       }
-      .owner {
+      .pill-success {
         background: rgba(34, 197, 94, 0.2);
         border-color: rgba(34, 197, 94, 0.5);
         color: #bbf7d0;

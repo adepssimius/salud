@@ -34,7 +34,7 @@ import { Medication } from '@salud/shared/types';
             </div>
             <div class="med-brands muted" *ngIf="m.brandNames.length">{{ m.brandNames.join(', ') }}</div>
             <div class="med-tags" *ngIf="m.tags.length">
-              <span class="tag" *ngFor="let t of m.tags">{{ t }}</span>
+              <span class="pill" *ngFor="let t of m.tags">{{ t }}</span>
             </div>
           </button>
         </li>
@@ -130,8 +130,7 @@ import { Medication } from '@salud/shared/types';
         gap: 0.35rem;
         margin-top: 0.35rem;
       }
-      .pill,
-      .tag {
+      .pill {
         display: inline-flex;
         padding: 0.1rem 0.5rem;
         border-radius: 999px;

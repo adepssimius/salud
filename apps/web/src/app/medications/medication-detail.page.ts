@@ -16,7 +16,7 @@ import { Medication, MedicationEmbodiment, MedicationGuideline } from '@salud/sh
       <p class="muted" *ngIf="med.brandNames.length">Also known as: {{ med.brandNames.join(', ') }}</p>
       <p class="muted" *ngIf="med.description">{{ med.description }}</p>
       <div class="med-tags" *ngIf="med.tags.length">
-        <span class="tag" *ngFor="let t of med.tags">{{ t }}</span>
+        <span class="pill" *ngFor="let t of med.tags">{{ t }}</span>
       </div>
 
       <section>
@@ -244,16 +244,6 @@ import { Medication, MedicationEmbodiment, MedicationGuideline } from '@salud/sh
         gap: 0.35rem;
       }
       .pill {
-        display: inline-flex;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-        font-size: 0.75rem;
-        font-weight: 700;
-      }
-      .tag {
         display: inline-flex;
         padding: 0.1rem 0.5rem;
         border-radius: 999px;
