@@ -15,6 +15,7 @@ import { ScheduleDetailPage } from './schedules/schedule-detail.page';
 import { TimelinePage } from './timeline/timeline.page';
 import { NewConditionPage } from './conditions/new-condition.page';
 import { ConditionDetailPage } from './conditions/condition-detail.page';
+import { EpisodeDetailPage } from './episodes/episode-detail.page';
 import { ErBriefPage } from './er-brief/er-brief.page';
 import { SharedBriefPage } from './er-brief/shared-brief.page';
 import { WhatsNewPage } from './whats-new/whats-new.page';
@@ -31,6 +32,7 @@ export const appRoutes: Route[] = [
   { path: 'patients/:id/timeline', component: TimelinePage, canActivate: [authGuard] },
   { path: 'patients/:id/conditions/new', component: NewConditionPage, canActivate: [authGuard] },
   { path: 'conditions/:id', component: ConditionDetailPage, canActivate: [authGuard] },
+  { path: 'episodes/:id', component: EpisodeDetailPage, canActivate: [authGuard] },
   { path: 'patients/:id/er-brief', component: ErBriefPage, canActivate: [authGuard] },
   { path: 'brief/:token', component: SharedBriefPage },
   { path: 'patients/:id/whats-new', component: WhatsNewPage, canActivate: [authGuard] },
