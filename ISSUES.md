@@ -218,17 +218,41 @@ rule for future call sites.
 
 ## Utility gaps
 
-### 8. 🔴 The founding 3 AM question isn't answered on the dashboard
-**Problem:** "Did I already give Tylenol?" is the origin story in `CLAUDE.md`. Today the answer is
-buried: last-dose info appears only inside an active-episode card (`dashboard.page.ts`, `.med-row`),
-in small text, as an absolute timestamp ("Last dose 8/6/26, 11:14 PM"). At 3 AM, half-awake, the
-useful form is **"2h 15m ago."**
+### 8. ✅ The founding 3 AM question isn't answered on the dashboard
+**Problem:** "Did I already give Tylenol?" is the origin story in `CLAUDE.md`. Today the answer was
+buried: last-dose info appeared only inside an active-episode card (`dashboard.page.ts`, `.med-row`),
+in small text, as an absolute timestamp ("Last dose 8/6/26, 11:14 PM").
 
-**Fix:** A per-patient "Last doses" strip near the top of the dashboard: medication name, relative
-time since last dose, and a next-allowed countdown. Relative times should be the default in every
-handoff surface (dashboard, WYWA, ER Brief header). The data is already in `GET /api/dashboard`.
+**Correction to original review — the fix was NOT "mostly presentational."** The claim "the data is
+already in `GET /api/dashboard`" was false, twice over: (1) `DashboardMedicationSummary` carried
+`medicationId` but no name — unrenderable; (2) all last-dose data flowed through
+`episodes(status='active') → episodes_events_pivot → interventions`, so a dose logged with **no
+episode had no pivot row and was invisible in the entire payload**, a resolved episode's doses
+vanished, and a patient with no active episode showed nothing at all. The 3 AM Tylenol case — kid
+feels warm, give Tylenol, no episode — was exactly the case that rendered nothing. This needed real
+API work, not styling; re-sized from Medium to Medium-large.
 
-**Size:** Medium — mostly presentational, but wants a shared `relativeTime()` helper.
+**Fixed 2026-08-07:** New patient-scoped, episode-agnostic `lastDoses` field on `GET /api/dashboard`
+— most recent dose of each medication in the last 24 hours, one row per accessible patient always
+(including `doses: []`, rendered as an explicit "Nothing given in the last 24 hours." — the negative
+*is* the answer at 3 AM). Bounded in SQL since `interventions` has no `medication_id` column
+(lives in the metadata JSON blob); one batched medication-name lookup shared with the existing
+episode-scoped rows rather than two N+1 passes.
+
+New `core/relative-time.ts` (`timeAgo`/`timeUntil`/`relativeTime`/`nextDoseLabel`, 13 unit tests
+incl. every ladder boundary as an adjacent pair) powers the strip and replaced every absolute
+timestamp already on the dashboard (schedule due, last observed, episode last dose, next allowed).
+The duplicate untested `formatRelativeAge` in `patient-detail.page.ts` was retired in favor of it —
+one behavioral delta (a status set under a day ago now reads e.g. "5h ago" instead of the previously
+ambiguous "today"), flagged and approved rather than slipped in. What's New and the ER Brief were
+deliberately left on absolute times — the ER Brief is a clinical print document where triage staff
+need the actual time, not its age.
+
+**Verified live:** created a patient that will never have an episode, logged a Tylenol dose with no
+`episodeIds`, and confirmed `GET /api/dashboard` returns `activeEpisodes: []` for that patient
+alongside `lastDoses[…].doses[0].medicationName == "Tylenol"` — that contrast is the proof. Also
+confirmed a 25h-old dose is excluded, a dose-free patient gets `doses: []`, and the browser renders
+the strip correctly with the countdown omitted when no guideline supplies an interval.
 
 ---
 
@@ -338,7 +362,7 @@ so the list below is re-sequenced.
 | 1 | ~~**Quick wins**~~ ✅ | ~~1, 2, 3, 7, 14~~ | **Done 2026-08-07.** `lint:web` is now green, so it can gate everything after. |
 | 2 | ~~**Event display**~~ ✅ | ~~4, 12, 5~~ | **Done 2026-08-07.** One extraction (`core/event-display.ts`) fixed all three. |
 | 3 | ~~**Error messages**~~ ✅ | ~~6~~ | **Done 2026-08-07.** Turned out to be 32 sites, not 13, plus 3 silent-failure bugs found in passing. |
-| 4 | **3 AM dashboard** | 8 | The highest product value left. Wants the `relativeTime()` helper, which batch 2 makes natural. |
+| 4 | ~~**3 AM dashboard**~~ ✅ | ~~8~~ | **Done 2026-08-07.** Turned out to need real API work, not just presentation — see #8. |
 | 5 | **Cleanup** | 11, 13, 15 | Mechanical, low-risk, best done in one uninterrupted pass. #11 + #15 together get the bundle back under budget. |
 | 6 | **Deferred** | 9, 10 | Real but not blocking. #9 is a new page (medium build); #10 is an optimization with no user-visible symptom yet. |
 
