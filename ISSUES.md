@@ -315,20 +315,50 @@ which is why 8 of 10 tests never exercised the WYWA path at all.
 
 ## Clarity / maintainability
 
-### 11. 🔴 ~2,000 lines of duplicated inline CSS
-**Problem:** Every page re-declares `.card`, `.primary`, `.secondary`, `.field`, `.muted`, `.small`,
-`.pill`, `.error` — roughly 100 lines × 20+ pages. `apps/web/src/app/` is ~7,200 lines of page code,
-a large fraction of it copy-pasted styling.
+### 11. ✅ ~2,000 lines of duplicated inline CSS
+**Correction to the original review — the bundle was the wrong justification.** The budget is
+`type: initial`, which counts JS and CSS bytes identically, and `styles.css` is an entry point and
+therefore always initial. Moving rules into it moves those bytes *back* into the budget; only real
+deduplication helps at all, and the whole inline CSS pool (66.7 kB raw) was smaller than the overage.
+The 542.95 kB figure was also stale — it was **572.56 kB, 72.56 kB over**.
 
-**Evidence it's costing something:** the production bundle is **542.95 kB against a 500 kB budget**
-(build warns every run, 42.95 kB over).
+**The actual cause was eager routing.** `app.routes.ts` imported all 21 pages statically, so every
+page plus `@angular/forms` shipped in the initial bundle. Lazy-loading them took initial from
+**572.56 kB → 303.40 kB** — from 72 kB over budget to 196 kB under, and `yarn build:web` is
+warning-free for the first time. `nx-welcome.ts` was deleted too, but it saves **zero** initial bytes
+(see #15a).
 
-**Fix:** Move the shared vocabulary to `apps/web/src/styles.css` as global classes; leave only
-genuinely page-specific rules inline. Do it in one pass so the theme stays consistent — and fold #1's
-missing classes in while you're there. Retire `nx-welcome.ts` at the same time (#15) for another
-7 kB of the overage.
+**The CSS work then stands on its own merits**, which is maintainability: **2,885 → 1,700 lines of
+inline CSS (41% removed)** against a 272-line `styles.css`. There is now one place to change the
+theme.
 
-**Size:** Large but mechanical; high leverage for future theme work.
+Shipped in ordered, individually-verifiable commits: tokens → class renames → the global vocabulary
+→ per-page adoption. Tokens first (provably no rendered change), then `.card`/`.pill` renamed where
+one name meant several things, then the globals added as dead rules — a component style out-specifies
+a global one, so pages could adopt one at a time with no flag day.
+
+**Two latent bugs fixed as side effects:**
+- `* { box-sizing: border-box }` lived in `app.css`, which is scoped to the shell, so **no routed
+  page ever got it**. Declared widths were untruthful — the new-observation card said
+  `max-width: 720px` and measured 762px.
+- `medication-detail`'s checkboxes rendered as bloated filled squares; its own `input, select` rule
+  was hitting them. Same bug #1 fixed on the entry pages, which this page never got. The global
+  checkbox reset is unscoped, so it also discharges #1's "left in the two pages… #11 will hoist them".
+
+**Normalized drift** (the call was: collapse to the majority, keep deliberate differences):
+button paddings (six variants), `.small` (three sizes), `.muted` (two greys), `.field` gap, the
+`.secondary` border alpha, and profile's rogue cyan-bordered button. Deliberate exceptions kept: the
+auth pages' larger type, er-brief's inverted `.link` and 2rem clinical header, er-brief's
+`@media print`, profile's breakpoint.
+
+**Traps worth knowing if you touch this again** — none are visible in a diff:
+1. A local rule whose declarations *all* match the global still changes rendering if the global
+   declares *more*. Four pages had `h1 { margin: 0 }` and would have silently gained a font-size.
+2. Deleting `display: flex` from an `.actions` rule that never set `justify-content` hands it the
+   global's `flex-end`. Bit dashboard, schedule-detail and patient-detail.
+3. A grouped `.primary, .secondary, .tiny { border: none }` keeps stripping `.secondary`'s outline
+   once its own border rule is removed as redundant. Narrow the group to the variants that have no
+   global.
 
 ---
 
@@ -366,10 +396,15 @@ Purely mechanical, no behavior change, well covered by existing e2e tests.
 
 ---
 
-### 15. 🔴 Two dead-weight leftovers
-**a. `apps/web/src/app/nx-welcome.ts`** — 30 KB scaffold component, **not referenced anywhere**
-**[verified]**. It's the source of the recurring 7.03 kB component-style budget warning on every
-build. Delete it.
+### 15. 🟡 Two dead-weight leftovers (a done, b open)
+**a. ✅ `apps/web/src/app/nx-welcome.ts`** — 30 KB scaffold component, unreferenced anywhere.
+**Deleted 2026-08-07 with #11.**
+
+**Correction:** the claim that it accounted for "another 7 kB of the overage" was wrong — it was
+already tree-shaken out of the bundle (`grep -c 'Nx is a smart' dist/.../main-*.js` → 0), so removing
+it changed initial by exactly **0 bytes**. What it did remove is the 7.03 kB `anyComponentStyle`
+*warning*, which fires because Angular extracts the `<style>` block inside its template literal into
+a component stylesheet whether or not the component is ever instantiated.
 
 **b. `apps/api/src/app/api.spec.ts`** — 30 `test.todo` stubs **[verified]** mirroring the spec. Real
 e2e suites (18 files, 121 passing tests) have since covered most of this ground. As-is it reads like
@@ -423,6 +458,34 @@ use.
 
 ---
 
+### 18. 🟡 The ER Brief's medication table overflows on a phone
+
+**Found while probing #11's box-model change; not caused by it** — the table measures the same 414px
+under either box model, because that is its intrinsic minimum content width for six columns.
+
+**Where:** `er-brief.page.ts`'s "Current medication situation" table. Below roughly 700px viewport it
+extends past its container; at 375px it overflows by ~150px and the page scrolls sideways.
+
+**Why it matters:** the ER Brief is the one screen most likely to be opened on a phone in a waiting
+room, and horizontal scroll is exactly where a caregiver loses the "next allowed" column.
+
+**Fix options:** wrap it in an `overflow-x: auto` container (cheapest, keeps the print layout
+intact), or give it a stacked card layout under a breakpoint. Note `@media print` must keep the real
+table — a paramedic reads the printout in columns.
+
+---
+
+### 19. 🟢 profile's mobile breakpoint is dead code
+
+**Where:** `profile.page.ts` — `@media (max-width: 640px)` sets `.tabs { flex-direction: row }`, but
+a later `.tabs { flex-direction: column }` at the same specificity overrides it on source order. The
+tab strip never goes horizontal on mobile.
+
+Spotted during #11 and deliberately left alone: folding a behaviour fix into a mechanical CSS
+refactor is how a large diff becomes unreviewable. It is a one-line move.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -437,8 +500,10 @@ so the list below is re-sequenced.
 | 4 | ~~**3 AM dashboard**~~ ✅ | ~~8~~ | **Done 2026-08-07.** Turned out to need real API work, not just presentation — see #8. |
 | 5 | ~~**Episode detail**~~ ✅ | ~~9~~ | **Done 2026-08-07.** Route landed flat, not nested; resolve hands off to the entry form rather than a new endpoint — see #9. |
 | 6 | ~~**Dashboard N+1**~~ ✅ | ~~10~~ | **Done 2026-08-07.** The stated fix would have created a module cycle; the real one needed no new module at all — see #10. Surfaced #16 and #17. |
-| 7 | **Cleanup** | 11, 13, 15 | Mechanical, low-risk, best done in one uninterrupted pass. #11 + #15 together get the bundle back under budget. |
-| 8 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
+| 7 | ~~**CSS + bundle**~~ ✅ | ~~11, 15a~~ | **Done 2026-08-07.** Lazy routes fixed the budget (572→303 kB), not the CSS; the CSS work is 41% fewer inline lines plus a token system — see #11. |
+| 8 | **Cleanup** | 13, 15b | Mechanical, low-risk. |
+| 9 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
+| 10 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
 
 ## Conventions for working these
 

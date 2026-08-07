@@ -14,7 +14,7 @@ give Tylenol?"), logging from a phone in real time. Mobile-first entry, desktop-
 | Monorepo | Nx 22, Yarn 1 (`yarn <bin>`, never `npx`), Node 22.13.0 pinned via `.tool-versions` (asdf) |
 | API | NestJS 11, `apps/api`, global prefix `/api`, JWT (passport-jwt) + Argon2id |
 | DB | Drizzle ORM. SQLite default (better-sqlite3); Postgres/MySQL selectable by env only |
-| Web | Angular 20, `apps/web`, standalone components, signals, inline templates + inline styles |
+| Web | Angular 20, `apps/web`, standalone components, signals, lazy routes, inline templates + a global style vocabulary in `src/styles.css` |
 | Shared | `libs/shared/types` → import as `@salud/shared/types` (plain types, zero decorators) |
 | Tests | Jest + supertest (API, incl. `*.e2e-spec.ts`), jest-preset-angular (web), Cypress (`apps/web-e2e`) |
 | API docs | Bruno collection in `bruno/` |
@@ -123,6 +123,15 @@ Note `/users/me` and `/users/search` stay — those are genuinely identity-scope
   preserved in metadata for display, and user prefs drive conversion in the UI.
 - **Angular pages** are standalone components in a single `*.page.ts` with inline `template:` and
   `styles:`, `inject()` for DI, `signal()` for state. Dark theme, hand-rolled CSS, no UI library.
+- **Styling: reach for the global vocabulary first.** `apps/web/src/styles.css` holds the theme
+  tokens (`--surface`, `--text-muted`, `--accent`, `--danger-text`, the radii) and the shared classes
+  every page uses — `.card`, `.primary`/`.secondary`, `.field`, `.inline-check`, `.muted`, `.small`,
+  `.error`, `.link`, `.pill` (+ `-danger`/`-neutral`/`-success`), `.events`, `.row-list`, plus the
+  `input`/`h1`/`h2`/`form` defaults. A page's inline `styles:` is for what is genuinely specific to
+  that page. Don't re-declare a global rule to change one value — override just that declaration, or
+  reconsider whether the difference is intentional.
+- **Routes are lazy.** Every entry in `app.routes.ts` uses `loadComponent`, including `login`. A
+  static page import puts that page and its dependencies back in the initial bundle.
 - **Every new endpoint needs three things**: a Jest/supertest case in `<feature>.e2e-spec.ts`,
   a Bruno request under the matching `bruno/` folder, and a real curl/Bruno check against a running
   server (the spec is explicit that automated tests alone are not sufficient for access control).
