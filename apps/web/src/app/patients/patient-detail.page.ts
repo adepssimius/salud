@@ -16,24 +16,13 @@ import {
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../core/error-display';
+import { timeAgo } from '../core/relative-time';
 import { RevisionHistoryComponent } from '../core/revision-history.component';
 
 interface UserSearchResult {
   id: string;
   email: string;
   displayName: string;
-}
-
-// "set 14 months ago" (§4.1) — a stale code status should visibly look stale.
-function formatRelativeAge(epochSeconds: number): string {
-  const days = Math.floor((Date.now() / 1000 - epochSeconds) / 86400);
-  if (days < 1) return 'today';
-  if (days === 1) return '1 day ago';
-  if (days < 30) return `${days} days ago`;
-  const months = Math.floor(days / 30);
-  if (months < 24) return months === 1 ? '1 month ago' : `${months} months ago`;
-  const years = Math.floor(months / 12);
-  return years === 1 ? '1 year ago' : `${years} years ago`;
 }
 
 @Component({
@@ -543,7 +532,7 @@ export class PatientDetailPage implements OnInit {
   codeStatusAge = computed(() => {
     const setAt = this.patient()?.codeStatusSetAt;
     if (!setAt) return '';
-    return formatRelativeAge(setAt);
+    return timeAgo(setAt);
   });
 
   ngOnInit(): void {

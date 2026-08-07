@@ -116,6 +116,29 @@ describe('PatientDetailPage', () => {
     expect(component.editingCodeStatus()).toBe(false);
   });
 
+  it('shows the code status age in relative time, and blank when unset', () => {
+    const fourteenMonthsAgo = Math.floor(Date.now() / 1000) - 14 * 30 * 86400;
+    apiMock.get.mockReturnValueOnce(
+      of({
+        id: 'p1',
+        codeStatus: 'DNR',
+        codeStatusSetByUserId: 'u1',
+        codeStatusSetAt: fourteenMonthsAgo,
+      }),
+    );
+    apiMock.get.mockReturnValueOnce(of([]));
+    apiMock.get.mockReturnValueOnce(of([]));
+    apiMock.get.mockReturnValueOnce(of([]));
+    const fixture = TestBed.createComponent(PatientDetailPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+
+    expect(component.codeStatusAge()).toBe('14 months ago');
+
+    component.patient.set({ ...component.patient()!, codeStatusSetAt: null } as any);
+    expect(component.codeStatusAge()).toBe('');
+  });
+
   it('navigates to new-condition and condition-detail', () => {
     apiMock.get.mockReturnValue(of({}));
     const fixture = TestBed.createComponent(PatientDetailPage);
