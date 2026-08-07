@@ -25,27 +25,11 @@ import { AuthService } from '../core/auth.service';
         flex-direction: column;
         gap: 0.75rem;
       }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      .subtext {
-        margin: 0;
-        color: #cbd5e1;
-      }
+      /* This "button" is an <a>, so it needs the bits a <button> gets for free. */
       .primary {
         display: inline-block;
-        padding: 0.65rem 0.9rem;
-        border-radius: 10px;
-        border: none;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-        font-weight: 700;
         text-decoration: none;
         text-align: center;
-      }
-      .primary:hover {
-        box-shadow: 0 8px 20px rgba(34, 211, 238, 0.35);
       }
     `,
   ],

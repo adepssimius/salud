@@ -47,67 +47,25 @@ import { CommonModule } from '@angular/common';
         flex-direction: column;
         gap: 1rem;
       }
+      /* The auth pages are deliberately a size up from the rest of the app. */
       h1 {
-        margin: 0;
         font-size: 1.8rem;
       }
-      .subtext {
-        margin: 0;
-        color: #cbd5e1;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
       .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
         font-size: 0.95rem;
-      }
-      input {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      input:focus {
-        outline: 2px solid #38bdf8;
-        border-color: transparent;
       }
       .primary {
         margin-top: 0.25rem;
         padding: 0.75rem 1rem;
-        border-radius: 10px;
-        border: none;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-        font-weight: 700;
-        cursor: pointer;
-        transition: transform 120ms ease, box-shadow 120ms ease;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .primary:not(:disabled):hover {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(34, 211, 238, 0.35);
-      }
-      .muted {
-        color: #cbd5e1;
       }
       .muted a {
-        color: #38bdf8;
+        color: var(--accent-focus);
         text-decoration: none;
       }
       .muted a:hover {
         text-decoration: underline;
       }
       .error {
-        color: #fca5a5;
         margin: 0.25rem 0 0;
       }
     `,
