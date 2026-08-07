@@ -1,47 +1,96 @@
 import { Route } from '@angular/router';
-import { LoginPage } from './auth/login.page';
-import { RegisterPage } from './auth/register.page';
-import { LogoutPage } from './auth/logout.page';
-import { DashboardPage } from './dashboard/dashboard.page';
-import { ProfilePage } from './profile/profile.page';
-import { NewPatientPage } from './patients/new-patient.page';
-import { PatientDetailPage } from './patients/patient-detail.page';
-import { NewObservationPage } from './observations/new-observation.page';
-import { NewInterventionPage } from './interventions/new-intervention.page';
-import { MedicationsPage } from './medications/medications.page';
-import { MedicationDetailPage } from './medications/medication-detail.page';
-import { NewSchedulePage } from './schedules/new-schedule.page';
-import { ScheduleDetailPage } from './schedules/schedule-detail.page';
-import { TimelinePage } from './timeline/timeline.page';
-import { NewConditionPage } from './conditions/new-condition.page';
-import { ConditionDetailPage } from './conditions/condition-detail.page';
-import { EpisodeDetailPage } from './episodes/episode-detail.page';
-import { ErBriefPage } from './er-brief/er-brief.page';
-import { SharedBriefPage } from './er-brief/shared-brief.page';
-import { WhatsNewPage } from './whats-new/whats-new.page';
 import { authGuard } from './core/auth.guard';
 
+// Every page is loaded lazily, including login. Importing them statically put all 21 pages — and
+// @angular/forms, which only pages use — into the initial bundle, which is what pushed it 72 kB past
+// the 500 kB budget. Keeping login eager to save one round-trip would drag forms back in on its own.
 export const appRoutes: Route[] = [
   { path: '', pathMatch: 'full', redirectTo: 'login' },
-  { path: 'login', component: LoginPage },
-  { path: 'register', component: RegisterPage },
-  { path: 'logout', component: LogoutPage },
-  { path: 'profile', component: ProfilePage, canActivate: [authGuard] },
-  { path: 'patients/new', component: NewPatientPage, canActivate: [authGuard] },
-  { path: 'patients/:id', component: PatientDetailPage, canActivate: [authGuard] },
-  { path: 'patients/:id/timeline', component: TimelinePage, canActivate: [authGuard] },
-  { path: 'patients/:id/conditions/new', component: NewConditionPage, canActivate: [authGuard] },
-  { path: 'conditions/:id', component: ConditionDetailPage, canActivate: [authGuard] },
-  { path: 'episodes/:id', component: EpisodeDetailPage, canActivate: [authGuard] },
-  { path: 'patients/:id/er-brief', component: ErBriefPage, canActivate: [authGuard] },
-  { path: 'brief/:token', component: SharedBriefPage },
-  { path: 'patients/:id/whats-new', component: WhatsNewPage, canActivate: [authGuard] },
-  { path: 'observations/new', component: NewObservationPage, canActivate: [authGuard] },
-  { path: 'interventions/new', component: NewInterventionPage, canActivate: [authGuard] },
-  { path: 'medications', component: MedicationsPage, canActivate: [authGuard] },
-  { path: 'medications/:id', component: MedicationDetailPage, canActivate: [authGuard] },
-  { path: 'schedules/new', component: NewSchedulePage, canActivate: [authGuard] },
-  { path: 'schedules/:id', component: ScheduleDetailPage, canActivate: [authGuard] },
-  { path: 'dashboard', component: DashboardPage, canActivate: [authGuard] },
+  { path: 'login', loadComponent: () => import('./auth/login.page').then((m) => m.LoginPage) },
+  { path: 'register', loadComponent: () => import('./auth/register.page').then((m) => m.RegisterPage) },
+  { path: 'logout', loadComponent: () => import('./auth/logout.page').then((m) => m.LogoutPage) },
+  {
+    path: 'profile',
+    loadComponent: () => import('./profile/profile.page').then((m) => m.ProfilePage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'patients/new',
+    loadComponent: () => import('./patients/new-patient.page').then((m) => m.NewPatientPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'patients/:id',
+    loadComponent: () => import('./patients/patient-detail.page').then((m) => m.PatientDetailPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'patients/:id/timeline',
+    loadComponent: () => import('./timeline/timeline.page').then((m) => m.TimelinePage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'patients/:id/conditions/new',
+    loadComponent: () => import('./conditions/new-condition.page').then((m) => m.NewConditionPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'conditions/:id',
+    loadComponent: () => import('./conditions/condition-detail.page').then((m) => m.ConditionDetailPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'episodes/:id',
+    loadComponent: () => import('./episodes/episode-detail.page').then((m) => m.EpisodeDetailPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'patients/:id/er-brief',
+    loadComponent: () => import('./er-brief/er-brief.page').then((m) => m.ErBriefPage),
+    canActivate: [authGuard],
+  },
+  // No authGuard — a clinician opening a shared brief now downloads the framework plus this one
+  // chunk instead of every page in the app.
+  { path: 'brief/:token', loadComponent: () => import('./er-brief/shared-brief.page').then((m) => m.SharedBriefPage) },
+  {
+    path: 'patients/:id/whats-new',
+    loadComponent: () => import('./whats-new/whats-new.page').then((m) => m.WhatsNewPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'observations/new',
+    loadComponent: () => import('./observations/new-observation.page').then((m) => m.NewObservationPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'interventions/new',
+    loadComponent: () => import('./interventions/new-intervention.page').then((m) => m.NewInterventionPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'medications',
+    loadComponent: () => import('./medications/medications.page').then((m) => m.MedicationsPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'medications/:id',
+    loadComponent: () => import('./medications/medication-detail.page').then((m) => m.MedicationDetailPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'schedules/new',
+    loadComponent: () => import('./schedules/new-schedule.page').then((m) => m.NewSchedulePage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'schedules/:id',
+    loadComponent: () => import('./schedules/schedule-detail.page').then((m) => m.ScheduleDetailPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'dashboard',
+    loadComponent: () => import('./dashboard/dashboard.page').then((m) => m.DashboardPage),
+    canActivate: [authGuard],
+  },
   { path: '**', redirectTo: 'login' },
 ];
