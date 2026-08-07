@@ -229,60 +229,20 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
         gap: 1.25rem;
         max-width: 900px;
       }
-      .card {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
       .card-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1rem;
         margin-bottom: 0.5rem;
-      }
-      .header-actions {
-        display: flex;
-        gap: 0.5rem;
       }
       h1,
       h2 {
         margin: 0;
       }
       .muted {
-        color: #cbd5e1;
         margin: 0;
-      }
-      .small {
-        font-size: 0.85rem;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
       }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 0.75rem;
-      }
-      input,
-      select,
-      textarea {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      textarea {
-        resize: vertical;
       }
       .list-field {
         display: flex;
@@ -336,34 +296,16 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
         min-width: 100px;
       }
       .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.6rem;
         align-items: center;
         margin-top: 0.25rem;
       }
-      .primary,
-      .secondary,
       .danger,
       .tiny {
-        padding: 0.6rem 1rem;
-        border-radius: 10px;
+        padding: 0.65rem 1rem;
+        border-radius: var(--radius-control);
         font-weight: 700;
         cursor: pointer;
         border: none;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
       }
       .danger {
         background: rgba(248, 113, 113, 0.12);
@@ -377,11 +319,6 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
         color: #e2e8f0;
       }
       .row-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        flex-direction: column;
         gap: 0.5rem;
       }
       .row {
@@ -431,9 +368,6 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
       .protocol-form {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.75rem;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],

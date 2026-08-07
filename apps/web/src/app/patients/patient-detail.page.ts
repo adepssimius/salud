@@ -247,29 +247,15 @@ interface UserSearchResult {
         flex-direction: column;
         gap: 1.25rem;
       }
-      .card {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
       .card-header {
-        display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
       }
       .header-actions {
-        display: flex;
-        gap: 0.5rem;
         align-items: center;
       }
       h1,
       h2 {
         margin: 0;
-      }
-      .muted {
-        color: #cbd5e1;
       }
       .grid {
         display: grid;
@@ -277,52 +263,19 @@ interface UserSearchResult {
         gap: 0.75rem;
       }
       form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
         margin-top: 0.5rem;
       }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
-      input,
-      select,
-      textarea {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      textarea {
-        resize: vertical;
-      }
       .actions {
-        display: flex;
+        justify-content: flex-start;
         gap: 0.75rem;
         align-items: center;
       }
-      .primary,
-      .secondary,
       .danger,
       .tiny {
         border: none;
-        border-radius: 10px;
+        border-radius: var(--radius-control);
         font-weight: 700;
         cursor: pointer;
-      }
-      .primary {
-        padding: 0.65rem 1rem;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .secondary {
-        padding: 0.55rem 0.9rem;
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
       }
       .danger {
         padding: 0.55rem 0.9rem;
@@ -379,20 +332,7 @@ interface UserSearchResult {
         font-size: 0.9rem;
       }
       .pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.15rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-        font-weight: 700;
         text-transform: capitalize;
-      }
-      .pill-success {
-        background: rgba(34, 197, 94, 0.2);
-        border-color: rgba(34, 197, 94, 0.5);
-        color: #bbf7d0;
       }
       .actions-cell {
         text-align: right;
@@ -402,9 +342,6 @@ interface UserSearchResult {
         background: transparent;
         color: #e2e8f0;
         cursor: pointer;
-      }
-      .error {
-        color: #fca5a5;
       }
       /* A button rather than a div so dismissing the modal is reachable without a mouse. */
       .modal-backdrop {
