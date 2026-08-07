@@ -130,17 +130,8 @@ const DOSE_MARKER_Y = 230;
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
       }
       .muted {
-        color: #cbd5e1;
         margin: 0;
       }
       .weight-warn {
@@ -148,11 +139,6 @@ const DOSE_MARKER_Y = 230;
       }
       .link {
         align-self: flex-start;
-        background: none;
-        border: none;
-        color: #7dd3fc;
-        cursor: pointer;
-        padding: 0;
       }
       .filters {
         display: flex;
@@ -206,9 +192,6 @@ const DOSE_MARKER_Y = 230;
       }
       .dose-marker.atypical {
         stroke: #f87171;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],

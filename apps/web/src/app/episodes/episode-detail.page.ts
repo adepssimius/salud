@@ -79,109 +79,27 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 1rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-        color: #e2e8f0;
       }
       .card-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1rem;
         flex-wrap: wrap;
       }
-      .header-actions {
-        display: flex;
-        gap: 0.5rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1.05rem;
-      }
       .muted {
-        color: #cbd5e1;
         margin: 0;
-      }
-      .small {
-        font-size: 0.85rem;
       }
       .link {
         align-self: flex-start;
-        background: none;
-        border: none;
-        color: #7dd3fc;
-        cursor: pointer;
-        padding: 0;
       }
       .pill {
-        display: inline-flex;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-        font-size: 0.75rem;
-        font-weight: 700;
         text-transform: capitalize;
-      }
-      .pill-neutral {
-        background: rgba(148, 163, 184, 0.15);
-        border-color: rgba(148, 163, 184, 0.4);
-        color: #cbd5e1;
       }
       section {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.85rem;
       }
-      .events {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
       .events li {
-        display: flex;
-        gap: 0.6rem;
         align-items: center;
         font-size: 0.9rem;
         flex-wrap: wrap;
-      }
-      .ts {
-        color: #94a3b8;
-        min-width: 110px;
-      }
-      .kind {
-        text-transform: capitalize;
-        min-width: 90px;
-        color: #7dd3fc;
-      }
-      .primary,
-      .secondary {
-        padding: 0.55rem 0.9rem;
-        border-radius: 10px;
-        font-weight: 700;
-        cursor: pointer;
-        border: none;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],

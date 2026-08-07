@@ -75,24 +75,6 @@ import { Medication } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      .muted {
-        color: #cbd5e1;
-      }
-      .search {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
       }
       .med-list {
         list-style: none;
@@ -130,16 +112,6 @@ import { Medication } from '@salud/shared/types';
         gap: 0.35rem;
         margin-top: 0.35rem;
       }
-      .pill {
-        display: inline-flex;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-        font-size: 0.75rem;
-        font-weight: 700;
-      }
       .new-med {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.75rem;
@@ -150,42 +122,9 @@ import { Medication } from '@salud/shared/types';
         gap: 0.6rem;
         margin-top: 0.6rem;
       }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-      }
-      input {
-        padding: 0.6rem 0.7rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
       .primary,
       .secondary {
-        padding: 0.6rem 1rem;
-        border-radius: 10px;
-        font-weight: 700;
-        border: none;
-        cursor: pointer;
         align-self: flex-start;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],
