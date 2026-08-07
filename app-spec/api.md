@@ -407,9 +407,27 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     advisories list already return — no separate summarization shape to keep in sync (P6: the
     timeline presents raw data, never a derived summary).
 - `GET /api/dashboard`
-  - Aggregates all patients with active episodes.
+  - Aggregates **every patient the caller is on the care team for** — not only patients with an
+    active episode. Episodes are an optional frame over the timeline (data-model.md → "Episode
+    model"); the most common dose of all is the 3 AM one logged with no episode at all, and it must
+    still reach the dashboard.
   - Response includes:
-    - `activeEpisodes`: `[ { patientId, patientName, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
+    - `lastDoses`: `[ { patientId, patientName, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose } ] } ]`
+      — the most recent dose of each distinct medication **in the last 24 hours**, per patient,
+      **episode-agnostic**. This is the direct answer to product.md's founding question ("did I
+      already give Tylenol?").
+      - **One entry per accessible patient, always — including patients with `doses: []`.** The
+        empty array is the answer, not the absence of one; the client renders it as an explicit
+        "nothing given in the last 24 hours" rather than omitting the patient. Do not "optimize"
+        empty rows away.
+      - Doses are most-recent-first. The 24-hour window is a hard cutoff on `performedAt` applied in
+        SQL — older doses drop off entirely rather than being returned and filtered client-side.
+      - `nextAllowedAt` is the frozen value written into the dose's metadata at log time (see
+        "Dosing engine"), not a live recomputation. `null` means "no guideline supplied an
+        interval" — that is *no guidance*, not *cannot give*.
+    - `activeEpisodes`: `[ { patientId, patientName, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
+      — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
+      episode", which the patient-scoped 24h `lastDoses` above deliberately does not.
     - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean } ]`
     - `shoppingList`: `[ { embodimentId, medicationId, medicationName, label, runningLowFlaggedAt } ]`
       — embodiments across all the caregiver's patients' shared catalog currently flagged

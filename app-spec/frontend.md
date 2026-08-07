@@ -98,9 +98,22 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   yet — every M4 producer follows the same candidate-then-persist-on-save shape as M2's).
 
 ## Dashboard
+- **"Last doses" strip — the first content on the page after any advisories.** Per patient: every
+  medication given in the last 24 hours, with its name, how long ago in relative form ("2h 15m
+  ago"), and the next-allowed countdown ("can give now" / "next dose in 1h 40m", omitted entirely
+  when no guideline supplies an interval). This is the direct answer to the founding question
+  (product.md → origin story), so it sits above everything else that is history or planning.
+  - **A patient with nothing in the window gets an explicit confident negative — "Nothing given in
+    the last 24 hours." — never a blank space or a hidden row.** At 3 AM the negative *is* the
+    answer; an absent row is ambiguous between "nobody gave anything" and "the app doesn't know".
+    The empty state is a feature, not a fallback.
+  - Backed by `lastDoses` in `GET /api/dashboard`, which is **episode-agnostic** — a dose logged
+    with no episode appears here. That is the common case and the one the strip exists for.
 - Desktop-friendly: per-patient cards for each active episode showing the last observation summary
-  and, per medication active in that episode, the last dose time, computed `nextAllowedAt`, and
-  whether the last dose was atypical (product.md → Dashboard).
+  and, per medication active in that episode, the medication name, the last dose time, computed
+  `nextAllowedAt`, and whether the last dose was atypical (product.md → Dashboard). This section is
+  episode *context*; the strip above is the canonical answer to "did I already give it" and stays
+  correct when there is no episode at all.
 - Due/overdue schedule rows (`overdue` styled distinctly) each carry a one-tap **"Log dose"**
   action that routes to `/interventions/new?scheduleId=...`, pre-filling patient, medication,
   embodiment, and amount from the schedule (F-4.2) — the caregiver still reviews and confirms
@@ -111,6 +124,13 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   producer through M4 self-acknowledges at creation (`advisories.md` → "Acknowledgment
   semantics") — but the section stays present rather than absent, so a future producer that
   persists ahead of save doesn't require a dashboard reshape.
+- **Times on this page are relative, not absolute.** Every timestamp the dashboard shows — last
+  dose, next allowed, last observed, schedule due — renders through
+  `apps/web/src/app/core/relative-time.ts` ("2h 15m ago", "in 1h 40m", "Due 40m ago"). A half-awake
+  caregiver can act on an elapsed interval; they cannot act on "8/6/26, 11:14 PM" without doing
+  arithmetic first, which is exactly the work P1 says the app should do for them.
+  - **The ER Brief is the deliberate exception** and keeps wall-clock times: it is a clinical print
+    document handed to triage staff, who need the actual time of the last dose, not its age.
 
 ## Conditions
 - `new-condition.page.ts`: patient (pre-selected from the entry point), name, diagnosis text,
