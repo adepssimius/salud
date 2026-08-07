@@ -51,7 +51,7 @@ describe('NewPatientPage', () => {
       myRole: 'parent',
     });
     component.submit();
-    expect(apiMock.post).toHaveBeenCalledWith('/users/u1/patients', expect.objectContaining({ fullName: 'Pat One' }));
+    expect(apiMock.post).toHaveBeenCalledWith('/patients', expect.objectContaining({ fullName: 'Pat One' }));
     expect(routerMock.navigate).toHaveBeenCalledWith(['/profile'], { queryParams: { tab: 'patients' } });
   });
 

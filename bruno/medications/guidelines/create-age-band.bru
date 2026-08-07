@@ -1,0 +1,33 @@
+meta {
+  name: Create Age-Band Guideline
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}/guidelines
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "source": "Manufacturer label — Children's Tylenol dosing chart",
+    "type": "age_band",
+    "ageMinMonths": 12,
+    "ageMaxMonths": 23,
+    "doseMg": 160,
+    "doseMl": 5,
+    "maxMgPerDay": 800,
+    "frequencyPerDay": 4
+  }
+}
+
+assert {
+  id: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

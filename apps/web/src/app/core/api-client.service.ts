@@ -27,4 +27,8 @@ export class ApiClientService {
   delete<T>(path: string): Observable<T> {
     return this.http.delete<T>(`${this.base}${path}`);
   }
+
+  getBlob(path: string): Observable<Blob> {
+    return this.http.get(`${this.base}${path}`, { responseType: 'blob' });
+  }
 }

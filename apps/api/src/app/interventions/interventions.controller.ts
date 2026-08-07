@@ -76,4 +76,12 @@ export class InterventionsController {
   ) {
     return await this.interventions.update(id, req.user.userId, dto);
   }
+
+  @Get('interventions/:id/revisions')
+  async getRevisions(
+    @Request() req: any,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return await this.interventions.getRevisions(id, req.user.userId);
+  }
 }

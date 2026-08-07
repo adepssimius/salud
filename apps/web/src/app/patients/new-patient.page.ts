@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
+import { errorText } from '../core/error-display';
 import { CareTeamRole, CreatePatientDto, SexAtBirth } from '@salud/shared/types';
 
 @Component({
@@ -171,14 +172,14 @@ export class NewPatientPage implements OnInit {
     const body: CreatePatientDto = {
       ...this.form.getRawValue(),
     };
-    this.api.post<{ patient: unknown }>(`/users/${user.id}/patients`, body).subscribe({
+    this.api.post<{ patient: unknown }>(`/patients`, body).subscribe({
       next: () => {
         this.saving.set(false);
         this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
       },
-      error: () => {
+      error: (err) => {
         this.saving.set(false);
-        this.error.set('Could not create patient right now.');
+        this.error.set(errorText(err, 'Could not create patient right now.'));
       },
     });
   }

@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 import { ApiClientService } from '../core/api-client.service';
+import { errorText } from '../core/error-display';
 import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
 
 @Component({
@@ -71,6 +72,7 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
             {{ saving() ? 'Saving…' : 'Save changes' }}
           </button>
           <p class="muted" *ngIf="saved()">Saved.</p>
+          <p class="error" *ngIf="saveError()">{{ saveError() }}</p>
         </form>
       </div>
 
@@ -87,13 +89,15 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         <div *ngIf="patientsError()" class="error">{{ patientsError() }}</div>
 
         <ul class="patient-list" *ngIf="!patientsLoading() && patients().length">
-          <li *ngFor="let patient of patients()" (click)="goToPatient(patient.id)">
-            <div class="patient-name">{{ patient.fullName }}</div>
-            <div class="patient-meta">
-              <span class="pill">{{ patient.myRole ?? '—' }}</span>
-              <span class="muted">DOB: {{ patient.dateOfBirth }}</span>
-              <span class="pill owner" *ngIf="patient.ownedById === currentUserId()">Owner</span>
-            </div>
+          <li *ngFor="let patient of patients()">
+            <button type="button" class="patient-button" (click)="goToPatient(patient.id)">
+              <div class="patient-name">{{ patient.fullName }}</div>
+              <div class="patient-meta">
+                <span class="pill">{{ patient.myRole ?? '—' }}</span>
+                <span class="muted">DOB: {{ patient.dateOfBirth }}</span>
+                <span class="pill owner" *ngIf="patient.ownedById === currentUserId()">Owner</span>
+              </div>
+            </button>
           </li>
         </ul>
         <p class="muted" *ngIf="!patientsLoading() && !patients().length">No patients yet.</p>
@@ -230,10 +234,20 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         gap: 0.65rem;
       }
       .patient-list li {
-        padding: 0.75rem;
         border-radius: 10px;
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .patient-button {
+        width: 100%;
+        padding: 0.75rem;
+        text-align: left;
+        background: none;
+        border: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        border-radius: 10px;
       }
       .patient-name {
         font-weight: 700;
@@ -283,6 +297,7 @@ export class ProfilePage implements OnInit {
 
   saving = signal(false);
   saved = signal(false);
+  saveError = signal<string | null>(null);
   selectedTab = signal<'profile' | 'patients'>('profile');
   patients = signal<Patient[]>([]);
   patientsLoading = signal(false);
@@ -315,6 +330,7 @@ export class ProfilePage implements OnInit {
     if (this.form.invalid || this.saving()) return;
     this.saving.set(true);
     this.saved.set(false);
+    this.saveError.set(null);
     const dto = this.form.getRawValue();
     this.auth.updateProfile(dto).subscribe({
       next: (res) => {
@@ -322,8 +338,9 @@ export class ProfilePage implements OnInit {
         this.saving.set(false);
         this.saved.set(true);
       },
-      error: () => {
+      error: (err) => {
         this.saving.set(false);
+        this.saveError.set(errorText(err, 'Could not save your profile.'));
       },
     });
   }
@@ -350,25 +367,25 @@ export class ProfilePage implements OnInit {
 
   private ensurePatientsLoaded() {
     if (this.patientsLoaded() || !this.currentUserId()) return;
-    this.loadPatients(this.currentUserId()!);
+    this.loadPatients();
   }
 
   goToPatient(id: string) {
     this.router.navigate(['/patients', id]);
   }
 
-  private loadPatients(userId: string) {
+  private loadPatients() {
     this.patientsLoading.set(true);
     this.patientsError.set(null);
-    this.api.get<{ patients?: Patient[] } | Patient[]>(`/users/${userId}/patients`).subscribe({
+    this.api.get<{ patients?: Patient[] } | Patient[]>(`/patients`).subscribe({
       next: (res) => {
         const list = Array.isArray(res) ? res : res.patients ?? [];
         this.patients.set(list);
         this.patientsLoaded.set(true);
         this.patientsLoading.set(false);
       },
-      error: () => {
-        this.patientsError.set('Unable to load patients right now.');
+      error: (err) => {
+        this.patientsError.set(errorText(err, 'Unable to load patients right now.'));
         this.patientsLoading.set(false);
       },
     });

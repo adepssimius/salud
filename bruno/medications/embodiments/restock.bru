@@ -1,0 +1,20 @@
+meta {
+  name: Restock Embodiment
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}embodiments/{{embodimentId}}/restock
+  body: none
+  auth: inherit
+}
+
+assert {
+  runningLow: eq false
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

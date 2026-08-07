@@ -1,0 +1,22 @@
+meta {
+  name: Update Medication
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "description": "Updated description"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

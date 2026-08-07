@@ -1,0 +1,38 @@
+meta {
+  name: Update Code Status
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/code-status
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:json {
+  {
+    "codeStatus": "Full code"
+  }
+}
+
+assert {
+  codeStatus: eq Full code
+  codeStatusSetByUserId: isNotEmpty
+  codeStatusSetAt: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Update Condition
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}conditions/{{conditionId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "status": "resolved"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Create Medication
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "acetaminophen",
+    "brandNames": ["Tylenol", "Panadol"],
+    "description": "Antipyretic and analgesic.",
+    "tags": ["antipyretic", "analgesic"]
+  }
+}
+
+script:post-response {
+  bru.setVar('medicationId', res.body.id);
+}
+
+assert {
+  id: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

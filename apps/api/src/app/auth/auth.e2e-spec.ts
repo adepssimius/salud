@@ -72,6 +72,33 @@ describe('Auth (e2e)', () => {
       });
   });
 
+  it('returns the error code as a plain string message on a wrong password', async () => {
+    // Pins the response SHAPE the web's core/error-display.ts mapper is built against: an explicit
+    // throw gives `message` as a string holding the code, not an array and not framework prose. A
+    // future global exception filter changing this would silently break every mapped sentence.
+    const email = `wrongpw-${Date.now()}@example.com`;
+    await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({
+        email,
+        password: 'correct-password',
+        displayName: 'Test User',
+        preferredTempUnit: 'F',
+        preferredLengthUnit: 'cm',
+        preferredWeightUnit: 'kg',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email, password: 'wrong-password' })
+      .expect(401)
+      .expect((res) => {
+        expect(typeof res.body.message).toBe('string');
+        expect(res.body.message).toBe('INVALID_CREDENTIALS');
+      });
+  });
+
   it('updates profile prefs and name', async () => {
     const email = `profile-${Date.now()}@example.com`;
     const password = 'password123';

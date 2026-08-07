@@ -1,0 +1,33 @@
+meta {
+  name: Get Condition Revisions
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}conditions/{{conditionId}}/revisions
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let cid = bru.getVar('conditionId');
+  if (!cid) {
+    const listReq = await bru.runRequest("conditions/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      cid = list[0].id;
+    }
+  }
+  bru.setVar('conditionId', cid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Newest first. A freshly-created condition has none — PATCH
+  {{apiPrefix}}conditions/{{conditionId}} at least once first to populate a revision.
+}

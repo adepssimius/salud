@@ -13,6 +13,10 @@ export class CreateInterventionDto {
   startEpisodeName?: string;
 
   @IsOptional()
+  @IsString()
+  startEpisodeConditionId?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayUnique()
   @IsString({ each: true })

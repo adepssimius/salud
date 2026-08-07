@@ -56,7 +56,7 @@ describe('Patients (e2e)', () => {
     const { token, userId } = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'Alice Smith',
@@ -71,21 +71,21 @@ describe('Patients (e2e)', () => {
     expect(patientId).toBeDefined();
 
     const listRes = await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients`)
+      .get(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(listRes.body.length).toBeGreaterThan(0);
     expect(listRes.body[0].myRole).toBe('grandparent');
 
     const getRes = await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients/${patientId}`)
+      .get(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(getRes.body.fullName).toBe('Alice Smith');
     expect(getRes.body.myRole).toBe('grandparent');
 
     const patchRes = await request(app.getHttpServer())
-      .patch(`/api/users/${userId}/patients/${patientId}`)
+      .patch(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${token}`)
       .send({ notes: 'Updated notes' })
       .expect(200);
@@ -97,7 +97,7 @@ describe('Patients (e2e)', () => {
     const other = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'Private Patient',
@@ -111,14 +111,14 @@ describe('Patients (e2e)', () => {
 
     // Other user should not see in list
     const listRes = await request(app.getHttpServer())
-      .get(`/api/users/${other.userId}/patients`)
+      .get(`/api/patients`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(200);
     expect(listRes.body.find((p: any) => p.id === patientId)).toBeUndefined();
 
     // Other user should get 404 on get (resource not found for them)
     await request(app.getHttpServer())
-      .get(`/api/users/${other.userId}/patients/${patientId}`)
+      .get(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
   });
@@ -127,7 +127,7 @@ describe('Patients (e2e)', () => {
     const { token, userId } = await registerAndLogin(app);
 
     const first = await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'First Patient',
@@ -137,7 +137,7 @@ describe('Patients (e2e)', () => {
       .expect(201);
 
     const second = await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'Second Patient',
@@ -153,7 +153,7 @@ describe('Patients (e2e)', () => {
   it('rejects malformed patient id', async () => {
     const { token, userId } = await registerAndLogin(app);
     await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients/not-a-uuid`)
+      .get(`/api/patients/not-a-uuid`)
       .set('Authorization', `Bearer ${token}`)
       .expect(400);
   });
@@ -163,7 +163,7 @@ describe('Patients (e2e)', () => {
     const other = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'No Access',
@@ -176,23 +176,23 @@ describe('Patients (e2e)', () => {
 
     // list under other user should not include
     const listRes = await request(app.getHttpServer())
-      .get(`/api/users/${other.userId}/patients`)
+      .get(`/api/patients`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(200);
     expect(listRes.body.find((p: any) => p.id === patientId)).toBeUndefined();
 
     // get/patch/delete under other user should 404
     await request(app.getHttpServer())
-      .get(`/api/users/${other.userId}/patients/${patientId}`)
+      .get(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
     await request(app.getHttpServer())
-      .patch(`/api/users/${other.userId}/patients/${patientId}`)
+      .patch(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${other.token}`)
       .send({ fullName: 'Should Fail' })
       .expect(404);
     await request(app.getHttpServer())
-      .delete(`/api/users/${other.userId}/patients/${patientId}`)
+      .delete(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
   });
@@ -201,7 +201,7 @@ describe('Patients (e2e)', () => {
     const { token, userId } = await registerAndLogin(app);
     const nonexistent = '00000000-0000-4000-8000-000000000000';
     await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients/${nonexistent}`)
+      .get(`/api/patients/${nonexistent}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
   });
@@ -211,7 +211,7 @@ describe('Patients (e2e)', () => {
     const roles = ['self', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'];
     for (const role of roles) {
       const res = await request(app.getHttpServer())
-        .post(`/api/users/${userId}/patients`)
+        .post(`/api/patients`)
         .set('Authorization', `Bearer ${token}`)
         .send({
           fullName: `Role ${role}`,
@@ -227,7 +227,7 @@ describe('Patients (e2e)', () => {
   it('list returns myRole and includes multiple patients', async () => {
     const { token, userId } = await registerAndLogin(app);
     await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'List A',
@@ -237,7 +237,7 @@ describe('Patients (e2e)', () => {
       })
       .expect(201);
     await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'List B',
@@ -248,33 +248,18 @@ describe('Patients (e2e)', () => {
       .expect(201);
 
     const listRes = await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients`)
+      .get(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(listRes.body.length).toBeGreaterThanOrEqual(2);
     expect(listRes.body.every((p: any) => p.myRole)).toBeTruthy();
   });
 
-  it('rejects creation under another userId', async () => {
-    const owner = await registerAndLogin(app);
-    const other = await registerAndLogin(app);
-    await request(app.getHttpServer())
-      .post(`/api/users/${other.userId}/patients`)
-      .set('Authorization', `Bearer ${owner.token}`)
-      .send({
-        fullName: 'Wrong Path',
-        dateOfBirth: '2014-04-04',
-        sexAtBirth: 'female',
-        myRole: 'parent',
-      })
-      .expect(403);
-  });
-
   it('deletes a patient', async () => {
     const { token, userId } = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         fullName: 'Delete Me',
@@ -286,12 +271,12 @@ describe('Patients (e2e)', () => {
     const patientId = createRes.body.id;
 
     await request(app.getHttpServer())
-      .delete(`/api/users/${userId}/patients/${patientId}`)
+      .delete(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
     await request(app.getHttpServer())
-      .get(`/api/users/${userId}/patients/${patientId}`)
+      .get(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
   });
@@ -301,7 +286,7 @@ describe('Patients (e2e)', () => {
     const other = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'Care Team Patient',
@@ -314,7 +299,7 @@ describe('Patients (e2e)', () => {
     const patientId = createRes.body.id;
 
     const listInitial = await request(app.getHttpServer())
-      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
     expect(listInitial.body).toEqual(
@@ -331,14 +316,14 @@ describe('Patients (e2e)', () => {
     );
 
     await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .post(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({ userId: other.userId, role: 'nanny' })
       .expect(201);
 
     // remove caregiver
     await request(app.getHttpServer())
-      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${other.userId}`)
+      .delete(`/api/patients/${patientId}/care-team/${other.userId}`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200)
       .expect((res) => {
@@ -346,27 +331,27 @@ describe('Patients (e2e)', () => {
       });
 
     const listAfterRemoval = await request(app.getHttpServer())
-      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
     expect(listAfterRemoval.body.find((m: any) => m.user.id === other.userId)).toBeUndefined();
 
     // cannot remove owner
     await request(app.getHttpServer())
-      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${owner.userId}`)
+      .delete(`/api/patients/${patientId}/care-team/${owner.userId}`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(400);
 
     const listAfter = await request(app.getHttpServer())
-      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
     expect(listAfter.body.find((m: any) => m.user.id === owner.userId)).toBeDefined();
     expect(listAfter.body.find((m: any) => m.user.id === other.userId)).toBeUndefined();
 
-    // other user still blocked from managing care team via their user path
+    // other (non-member) user still blocked from managing care team
     await request(app.getHttpServer())
-      .get(`/api/users/${other.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
   });
@@ -374,7 +359,7 @@ describe('Patients (e2e)', () => {
   it('prevents removing the owner from the care team', async () => {
     const owner = await registerAndLogin(app);
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'Owner Protected',
@@ -386,12 +371,12 @@ describe('Patients (e2e)', () => {
     const patientId = createRes.body.id;
 
     await request(app.getHttpServer())
-      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${owner.userId}`)
+      .delete(`/api/patients/${patientId}/care-team/${owner.userId}`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(400);
 
     const list = await request(app.getHttpServer())
-      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
     expect(list.body.find((m: any) => m.user.id === owner.userId)).toBeDefined();
@@ -402,7 +387,7 @@ describe('Patients (e2e)', () => {
     const newOwner = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'Transfer Patient',
@@ -415,13 +400,13 @@ describe('Patients (e2e)', () => {
 
     // add new owner to care team first
     await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .post(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({ userId: newOwner.userId, role: 'parent' })
       .expect(201);
 
     const updated = await request(app.getHttpServer())
-      .patch(`/api/users/${owner.userId}/patients/${patientId}`)
+      .patch(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({ ownedById: newOwner.userId })
       .expect(200);
@@ -429,7 +414,7 @@ describe('Patients (e2e)', () => {
 
     // new owner remains protected from deletion
     await request(app.getHttpServer())
-      .delete(`/api/users/${owner.userId}/patients/${patientId}/care-team/${newOwner.userId}`)
+      .delete(`/api/patients/${patientId}/care-team/${newOwner.userId}`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(400);
   });
@@ -440,7 +425,7 @@ describe('Patients (e2e)', () => {
     const self2 = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({
         fullName: 'Single Self Patient',
@@ -453,7 +438,7 @@ describe('Patients (e2e)', () => {
     const patientId = createRes.body.id;
 
     await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .post(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({ userId: self1.userId, role: 'self' })
       .expect(201)
@@ -462,13 +447,13 @@ describe('Patients (e2e)', () => {
       });
 
     await request(app.getHttpServer())
-      .post(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .post(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .send({ userId: self2.userId, role: 'self' })
       .expect(400);
 
     const list = await request(app.getHttpServer())
-      .get(`/api/users/${owner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
 
@@ -481,7 +466,7 @@ describe('Patients (e2e)', () => {
     const anotherSelf = await registerAndLogin(app);
 
     const createRes = await request(app.getHttpServer())
-      .post(`/api/users/${selfOwner.userId}/patients`)
+      .post(`/api/patients`)
       .set('Authorization', `Bearer ${selfOwner.token}`)
       .send({
         fullName: 'Self Created',
@@ -494,17 +479,72 @@ describe('Patients (e2e)', () => {
 
     // second self should be rejected
     await request(app.getHttpServer())
-      .post(`/api/users/${selfOwner.userId}/patients/${patientId}/care-team`)
+      .post(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${selfOwner.token}`)
       .send({ userId: anotherSelf.userId, role: 'self' })
       .expect(400);
 
     const list = await request(app.getHttpServer())
-      .get(`/api/users/${selfOwner.userId}/patients/${patientId}/care-team`)
+      .get(`/api/patients/${patientId}/care-team`)
       .set('Authorization', `Bearer ${selfOwner.token}`)
       .expect(200);
     const selfCount = list.body.filter((m: any) => m.role === 'self').length;
     expect(selfCount).toBe(1);
     expect(list.body.find((m: any) => m.user.id === selfOwner.userId)?.role).toBe('self');
+  });
+
+  it('sets code status via its own endpoint, stamping attribution server-side', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const createRes = await request(app.getHttpServer())
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Code Status Patient', dateOfBirth: '2015-01-01', sexAtBirth: 'female' })
+      .expect(201);
+    const patientId = createRes.body.id;
+    expect(createRes.body.codeStatus).toBeNull();
+    expect(createRes.body.codeStatusSetByUserId).toBeNull();
+    expect(createRes.body.codeStatusSetAt).toBeNull();
+
+    // The general PATCH cannot set code status — it's not part of UpdatePatientDto's shape.
+    const generalPatch = await request(app.getHttpServer())
+      .patch(`/api/patients/${patientId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ codeStatus: 'Should not apply' })
+      .expect(200);
+    expect(generalPatch.body.codeStatus).toBeNull();
+
+    const before = Math.floor(Date.now() / 1000);
+    const res = await request(app.getHttpServer())
+      .patch(`/api/patients/${patientId}/code-status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ codeStatus: 'Full code' })
+      .expect(200);
+    expect(res.body.codeStatus).toBe('Full code');
+    expect(res.body.codeStatusSetByUserId).toBe(userId);
+    expect(res.body.codeStatusSetAt).toBeGreaterThanOrEqual(before);
+
+    // GET reflects the same attribution.
+    const get = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(get.body.codeStatus).toBe('Full code');
+    expect(get.body.codeStatusSetByUserId).toBe(userId);
+  });
+
+  it('enforces patient access control on code-status (404, not 403)', async () => {
+    const owner = await registerAndLogin(app);
+    const other = await registerAndLogin(app);
+    const createRes = await request(app.getHttpServer())
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ fullName: 'Locked Patient', dateOfBirth: '2015-01-01', sexAtBirth: 'male' })
+      .expect(201);
+    const res = await request(app.getHttpServer())
+      .patch(`/api/patients/${createRes.body.id}/code-status`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .send({ codeStatus: 'DNR' })
+      .expect(404);
+    expect(res.body.message).toBe('PATIENT_NOT_FOUND');
   });
 });

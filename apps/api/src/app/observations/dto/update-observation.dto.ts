@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsOptional, IsString, ArrayUnique, ValidateNested, IsEnum } from 'class-validator';
+import { IsArray, IsOptional, IsString, ArrayUnique, ValidateNested, IsEnum, Validate } from 'class-validator';
 import { ObservationType } from '@salud/shared/types';
+import { EntryMetadataConstraint } from './entry-metadata.dto';
 
 class UpdateObservationEntryDto {
   @IsOptional()
@@ -18,11 +19,12 @@ class UpdateObservationEntryDto {
     'lesion_size',
     'symptom',
     'note',
+    'tag',
     'photo',
   ] satisfies ObservationType[])
   type!: ObservationType;
 
-  @IsOptional()
+  @Validate(EntryMetadataConstraint)
   metadata?: Record<string, any>;
 }
 
@@ -30,12 +32,6 @@ export class UpdateObservationDto {
   @IsOptional()
   @IsString()
   text?: string | null;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayUnique()
-  @IsString({ each: true })
-  symptomTags?: string[];
 
   @IsOptional()
   @IsArray()

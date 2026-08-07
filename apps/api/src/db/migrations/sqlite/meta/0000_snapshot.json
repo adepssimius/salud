@@ -1,9 +1,288 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "64f97966-3b8b-404c-93ed-1e73ce4c0dea",
+  "id": "b3e49af4-b4a7-4613-a0a0-0957a68b16b7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "adverse_reactions": {
+      "name": "adverse_reactions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_by_user_id": {
+          "name": "recorded_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope_type": {
+          "name": "scope_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "embodiment_id": {
+          "name": "embodiment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tag": {
+          "name": "tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "adverse_reactions_patient_id_patients_id_fk": {
+          "name": "adverse_reactions_patient_id_patients_id_fk",
+          "tableFrom": "adverse_reactions",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "adverse_reactions_recorded_by_user_id_users_id_fk": {
+          "name": "adverse_reactions_recorded_by_user_id_users_id_fk",
+          "tableFrom": "adverse_reactions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "recorded_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "adverse_reactions_medication_id_medications_id_fk": {
+          "name": "adverse_reactions_medication_id_medications_id_fk",
+          "tableFrom": "adverse_reactions",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "adverse_reactions_embodiment_id_medication_embodiments_id_fk": {
+          "name": "adverse_reactions_embodiment_id_medication_embodiments_id_fk",
+          "tableFrom": "adverse_reactions",
+          "tableTo": "medication_embodiments",
+          "columnsFrom": [
+            "embodiment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "advisories": {
+      "name": "advisories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "context_type": {
+          "name": "context_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "context_id": {
+          "name": "context_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "acknowledged_by_user_id": {
+          "name": "acknowledged_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "advisories_patient_id_patients_id_fk": {
+          "name": "advisories_patient_id_patients_id_fk",
+          "tableFrom": "advisories",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "advisories_acknowledged_by_user_id_users_id_fk": {
+          "name": "advisories_acknowledged_by_user_id_users_id_fk",
+          "tableFrom": "advisories",
+          "tableTo": "users",
+          "columnsFrom": [
+            "acknowledged_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "care_team_memberships": {
       "name": "care_team_memberships",
       "columns": {
@@ -40,6 +319,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
@@ -92,8 +378,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "episodes": {
-      "name": "episodes",
+    "conditions": {
+      "name": "conditions",
       "columns": {
         "id": {
           "name": "id",
@@ -116,65 +402,188 @@
           "notNull": true,
           "autoincrement": false
         },
-    "started_at_type": {
-      "name": "started_at_type",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false
+        "diagnosis_text": {
+          "name": "diagnosis_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "baselines": {
+          "name": "baselines",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "devices": {
+          "name": "devices",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "contacts": {
+          "name": "contacts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "conditions_patient_id_patients_id_fk": {
+          "name": "conditions_patient_id_patients_id_fk",
+          "tableFrom": "conditions",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "conditions_created_by_user_id_users_id_fk": {
+          "name": "conditions_created_by_user_id_users_id_fk",
+          "tableFrom": "conditions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
-    "started_at_id": {
-      "name": "started_at_id",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false
-    },
-    "ended_at_type": {
-      "name": "ended_at_type",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": false,
-      "autoincrement": false
-    },
-    "ended_at_id": {
-      "name": "ended_at_id",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": false,
-      "autoincrement": false
-    },
-    "status": {
-      "name": "status",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false
-    },
-    "notes": {
-      "name": "notes",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": false,
-      "autoincrement": false
-    },
-    "created_at": {
-      "name": "created_at",
-      "type": "integer",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false,
-      "default": "(strftime('%s','now'))"
-    },
-    "updated_at": {
-      "name": "updated_at",
-      "type": "integer",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false,
-      "default": "(strftime('%s','now'))"
-    }
-  },
+    "episodes": {
+      "name": "episodes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "condition_id": {
+          "name": "condition_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "started_at_type": {
+          "name": "started_at_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "started_at_id": {
+          "name": "started_at_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ended_at_type": {
+          "name": "ended_at_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ended_at_id": {
+          "name": "ended_at_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
       "indexes": {},
       "foreignKeys": {
         "episodes_patient_id_patients_id_fk": {
@@ -183,6 +592,218 @@
           "tableTo": "patients",
           "columnsFrom": [
             "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "episodes_condition_id_conditions_id_fk": {
+          "name": "episodes_condition_id_conditions_id_fk",
+          "tableFrom": "episodes",
+          "tableTo": "conditions",
+          "columnsFrom": [
+            "condition_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "episodes_events_pivot": {
+      "name": "episodes_events_pivot",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "episode_id": {
+          "name": "episode_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "starts_episode": {
+          "name": "starts_episode",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "resolves_episode": {
+          "name": "resolves_episode",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "episodes_events_pivot_episode_id_episodes_id_fk": {
+          "name": "episodes_events_pivot_episode_id_episodes_id_fk",
+          "tableFrom": "episodes_events_pivot",
+          "tableTo": "episodes",
+          "columnsFrom": [
+            "episode_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "er_brief_snapshots": {
+      "name": "er_brief_snapshots",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "episode_id": {
+          "name": "episode_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "er_brief_snapshots_token_unique": {
+          "name": "er_brief_snapshots_token_unique",
+          "columns": [
+            "token"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "er_brief_snapshots_patient_id_patients_id_fk": {
+          "name": "er_brief_snapshots_patient_id_patients_id_fk",
+          "tableFrom": "er_brief_snapshots",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "er_brief_snapshots_episode_id_episodes_id_fk": {
+          "name": "er_brief_snapshots_episode_id_episodes_id_fk",
+          "tableFrom": "er_brief_snapshots",
+          "tableTo": "episodes",
+          "columnsFrom": [
+            "episode_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "er_brief_snapshots_created_by_user_id_users_id_fk": {
+          "name": "er_brief_snapshots_created_by_user_id_users_id_fk",
+          "tableFrom": "er_brief_snapshots",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -233,6 +854,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_by_user_id": {
           "name": "created_by_user_id",
           "type": "text",
@@ -251,6 +879,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "file_assets_patient_id_patients_id_fk": {
+          "name": "file_assets_patient_id_patients_id_fk",
+          "tableFrom": "file_assets",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "file_assets_created_by_user_id_users_id_fk": {
           "name": "file_assets_created_by_user_id_users_id_fk",
           "tableFrom": "file_assets",
@@ -309,6 +950,13 @@
         },
         "episode_id": {
           "name": "episode_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "condition_id": {
+          "name": "condition_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -497,6 +1145,19 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
+        "intervention_schedules_condition_id_conditions_id_fk": {
+          "name": "intervention_schedules_condition_id_conditions_id_fk",
+          "tableFrom": "intervention_schedules",
+          "tableTo": "conditions",
+          "columnsFrom": [
+            "condition_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "intervention_schedules_created_by_user_id_users_id_fk": {
           "name": "intervention_schedules_created_by_user_id_users_id_fk",
           "tableFrom": "intervention_schedules",
@@ -546,29 +1207,15 @@
           "notNull": true,
           "autoincrement": false
         },
-    "type": {
-      "name": "type",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": true,
-      "autoincrement": false
-    },
-    "intervention_schedule_id": {
-      "name": "intervention_schedule_id",
-      "type": "text",
-      "primaryKey": false,
-      "notNull": false,
-      "autoincrement": false
-    },
-    "episode_tags": {
-      "name": "episode_tags",
-      "type": "text",
+        "type": {
+          "name": "type",
+          "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
-        "resolves_episode_ids": {
-          "name": "resolves_episode_ids",
+        "schedule_id": {
+          "name": "schedule_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -627,26 +1274,26 @@
           "columnsFrom": [
             "recorded_by_user_id"
           ],
-      "columnsTo": [
-        "id"
-      ],
-      "onDelete": "no action",
-      "onUpdate": "no action"
-    },
-    "interventions_intervention_schedule_id_intervention_schedules_id_fk": {
-      "name": "interventions_intervention_schedule_id_intervention_schedules_id_fk",
-      "tableFrom": "interventions",
-      "tableTo": "intervention_schedules",
-      "columnsFrom": [
-        "intervention_schedule_id"
-      ],
-      "columnsTo": [
-        "id"
-      ],
-      "onDelete": "no action",
-      "onUpdate": "no action"
-    }
-  },
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interventions_schedule_id_intervention_schedules_id_fk": {
+          "name": "interventions_schedule_id_intervention_schedules_id_fk",
+          "tableFrom": "interventions",
+          "tableTo": "intervention_schedules",
+          "columnsFrom": [
+            "schedule_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -702,6 +1349,43 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "at_home": {
+          "name": "at_home",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "running_low": {
+          "name": "running_low",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "running_low_flagged_by_user_id": {
+          "name": "running_low_flagged_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "running_low_flagged_at": {
+          "name": "running_low_flagged_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -712,6 +1396,19 @@
           "tableTo": "medications",
           "columnsFrom": [
             "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_embodiments_running_low_flagged_by_user_id_users_id_fk": {
+          "name": "medication_embodiments_running_low_flagged_by_user_id_users_id_fk",
+          "tableFrom": "medication_embodiments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "running_low_flagged_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -890,6 +1587,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "brand_names": {
+          "name": "brand_names",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "description": {
           "name": "description",
           "type": "text",
@@ -935,6 +1639,74 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "observation_entries": {
+      "name": "observation_entries",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "observation_id": {
+          "name": "observation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "observation_entries_observation_id_observations_id_fk": {
+          "name": "observation_entries_observation_id_observations_id_fk",
+          "tableFrom": "observation_entries",
+          "tableTo": "observations",
+          "columnsFrom": [
+            "observation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "observations": {
       "name": "observations",
       "columns": {
@@ -966,13 +1738,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "text": {
           "name": "text",
           "type": "text",
@@ -982,34 +1747,6 @@
         },
         "unit_preference_at_entry": {
           "name": "unit_preference_at_entry",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "symptom_tags": {
-          "name": "symptom_tags",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "episode_tags": {
-          "name": "episode_tags",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "resolves_episode_ids": {
-          "name": "resolves_episode_ids",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1124,6 +1861,27 @@
           "notNull": true,
           "autoincrement": false
         },
+        "code_status": {
+          "name": "code_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "code_status_set_by_user_id": {
+          "name": "code_status_set_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "code_status_set_at": {
+          "name": "code_status_set_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1155,14 +1913,27 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "patients_code_status_set_by_user_id_users_id_fk": {
+          "name": "patients_code_status_set_by_user_id_users_id_fk",
+          "tableFrom": "patients",
+          "tableTo": "users",
+          "columnsFrom": [
+            "code_status_set_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "symptom_tags": {
-      "name": "symptom_tags",
+    "protocols": {
+      "name": "protocols",
       "columns": {
         "id": {
           "name": "id",
@@ -1171,23 +1942,163 @@
           "notNull": true,
           "autoincrement": false
         },
-        "label": {
-          "name": "label",
+        "condition_id": {
+          "name": "condition_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "category": {
-          "name": "category",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "trigger_metric": {
+          "name": "trigger_metric",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trigger_operator": {
+          "name": "trigger_operator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trigger_value": {
+          "name": "trigger_value",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instruction_text": {
+          "name": "instruction_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_text": {
+          "name": "source_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "protocols_condition_id_conditions_id_fk": {
+          "name": "protocols_condition_id_conditions_id_fk",
+          "tableFrom": "protocols",
+          "tableTo": "conditions",
+          "columnsFrom": [
+            "condition_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "revisions": {
+      "name": "revisions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "edited_by_user_id": {
+          "name": "edited_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "edited_at": {
+          "name": "edited_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "revisions_edited_by_user_id_users_id_fk": {
+          "name": "revisions_edited_by_user_id_users_id_fk",
+          "tableFrom": "revisions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "edited_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

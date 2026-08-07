@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
+import { errorText } from '../core/error-display';
 import { CommonModule } from '@angular/common';
 import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
 
@@ -177,7 +178,7 @@ export class RegisterPage {
       },
       error: (err) => {
         this.loading.set(false);
-        this.error.set(err?.error?.message ?? 'Unable to create account. Please try again.');
+        this.error.set(errorText(err, 'Unable to create account. Please try again.'));
       },
     });
   }

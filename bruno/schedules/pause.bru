@@ -1,0 +1,27 @@
+meta {
+  name: Pause Schedule
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "status": "paused"
+  }
+}
+
+assert {
+  status: eq paused
+  nextDueAt: isNull
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

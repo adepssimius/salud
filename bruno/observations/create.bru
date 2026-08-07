@@ -25,8 +25,12 @@ body:json {
   {
     "observedAt": "{{observedAt}}",
     "startEpisodeName": "Bruno Episode",
+    "episodeIds": [],
+    "resolvesEpisodeIds": [],
+    "unitPreferenceAtEntry": { "temp": "F", "weight": "lb", "length": "in" },
     "entries": [
-      { "type": "temperature", "metadata": { "valueC": 38.1 } }
+      { "type": "temperature", "metadata": { "value": 38.1, "unit": "C", "method": "oral" } },
+      { "type": "weight", "metadata": { "kg": 11.34 } }
     ]
   }
 }
@@ -40,6 +44,9 @@ script:post-response {
 
 assert {
   id: isNotEmpty
+  res.body.unitPreferenceAtEntry.temp: eq F
+  res.body.unitPreferenceAtEntry.weight: eq lb
+  res.body.unitPreferenceAtEntry.length: eq in
 }
 
 settings {

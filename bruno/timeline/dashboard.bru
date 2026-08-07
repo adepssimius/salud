@@ -1,0 +1,23 @@
+meta {
+  name: Get Dashboard
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}dashboard
+  body: none
+  auth: inherit
+}
+
+assert {
+  activeEpisodes: isDefined
+  upcomingSchedules: isDefined
+  shoppingList: isDefined
+  unacknowledgedAdvisories: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

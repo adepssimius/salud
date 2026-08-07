@@ -1,16 +1,36 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { debounceTime } from 'rxjs/operators';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
-import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/types';
+import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
+import { DangerInterstitialComponent } from '../core/danger-interstitial.component';
+import { errorText } from '../core/error-display';
+import {
+  CreateInterventionDto,
+  DoseCheckDto,
+  DoseCheckResult,
+  InterventionSchedule,
+  InterventionType,
+  Medication,
+  MedicationEmbodiment,
+  Patient,
+} from '@salud/shared/types';
 
 @Component({
   selector: 'app-new-intervention-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, AdvisoryBannerComponent, DangerInterstitialComponent],
   template: `
+    <app-danger-interstitial
+      *ngIf="showDangerInterstitial()"
+      [advisories]="dangerAdvisories()"
+      (proceed)="acknowledgeDangerAdvisories()"
+      (backOut)="clearMedication()"
+    ></app-danger-interstitial>
+
     <div class="card">
       <h1>Log Intervention</h1>
       <p class="muted">Record a medication dose or dressing change.</p>
@@ -56,28 +76,117 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
               </label>
             </div>
           </label>
-          <label class="field">
-            <span>Resolves episodes (comma separated)</span>
+          <label class="field inline-check">
             <input type="checkbox" formControlName="resolveSelected" />
-            <span class="muted">Resolve selected episodes</span>
+            <span>Resolve selected episodes</span>
           </label>
-          <label class="field">
+          <label class="field" *ngIf="createNewEpisode()">
             <span>Start new episode (optional)</span>
-            <input type="text" formControlName="startEpisodeName" placeholder="e.g. Strep throat" *ngIf="createNewEpisode()" />
+            <input type="text" formControlName="startEpisodeName" placeholder="e.g. Strep throat" />
           </label>
         </div>
 
         <ng-container *ngIf="isMedication()">
           <div class="grid">
+            <div class="field med-search">
+              <span>Medication</span>
+              <ng-container *ngIf="!selectedMedication(); else medicationChosen">
+                <input
+                  type="text"
+                  placeholder="Search by generic or brand name…"
+                  [value]="medicationQuery()"
+                  (input)="onMedicationQueryChange($event)"
+                />
+                <ul class="med-results" *ngIf="medicationResults().length">
+                  <li *ngFor="let m of medicationResults()">
+                    <button type="button" class="med-result" (click)="selectMedication(m)">
+                      <strong>{{ m.name }}</strong>
+                      <span class="muted" *ngIf="m.brandNames.length"> — {{ m.brandNames.join(', ') }}</span>
+                    </button>
+                  </li>
+                </ul>
+              </ng-container>
+              <ng-template #medicationChosen>
+                <div class="chosen-med">
+                  <span>
+                    {{ selectedMedication()!.name }}
+                    <span class="muted" *ngIf="selectedMedication()!.brandNames.length">
+                      ({{ selectedMedication()!.brandNames.join(', ') }})
+                    </span>
+                  </span>
+                  <button type="button" class="link" (click)="clearMedication()">change</button>
+                </div>
+              </ng-template>
+            </div>
             <label class="field">
-              <span>Medication ID</span>
-              <input type="text" formControlName="medicationId" />
-            </label>
-            <label class="field">
-              <span>Embodiment ID (optional)</span>
-              <input type="text" formControlName="medicationEmbodimentId" />
+              <span>Embodiment</span>
+              <select formControlName="medicationEmbodimentId" [disabled]="!embodiments().length">
+                <option value="">
+                  {{ selectedMedication() ? 'Select…' : 'Choose a medication first' }}
+                </option>
+                <option *ngFor="let e of embodiments()" [value]="e.id">
+                  {{ e.label }}{{ e.atHome ? ' · at home' : ' · not at home' }}{{ e.runningLow ? ' · running low' : '' }}{{ isExpired(e) ? ' · expired' : '' }}
+                </option>
+              </select>
             </label>
           </div>
+          <div class="guidance-cards" *ngIf="selectedMedication()">
+            <div class="guidance-card" *ngIf="doseCheckResult()?.guidance?.weightBased as wb">
+              <div class="guidance-header">
+                <span class="pill">Weight-based</span>
+              </div>
+              <div class="guidance-amount">{{ wb.computedMg | number: '1.0-1' }} mg</div>
+              <div class="muted small">
+                {{ wb.mgPerKg }} mg/kg × {{ wb.weightKgUsed }} kg
+                <span *ngIf="wb.maxMgPerDose"> · max {{ wb.maxMgPerDose }} mg/dose</span>
+              </div>
+              <div class="muted small">Source: {{ wb.source }}</div>
+              <button type="button" class="secondary small" (click)="useWeightBasedAmount()">Use this</button>
+            </div>
+            <div class="guidance-card" *ngIf="doseCheckResult()?.guidance?.ageBand as ab">
+              <div class="guidance-header">
+                <span class="pill">Age-band</span>
+              </div>
+              <div class="guidance-amount">
+                {{ ab.doseMg }} mg<span *ngIf="ab.doseMl"> ({{ ab.doseMl }} mL)</span>
+              </div>
+              <div class="muted small">{{ ab.frequencyPerDay }}x/day · max {{ ab.maxMgPerDay }} mg/day</div>
+              <div class="muted small">Source: {{ ab.source }}</div>
+              <button type="button" class="secondary small" (click)="useAgeBandAmount()">Use this</button>
+            </div>
+            <p
+              class="muted small"
+              *ngIf="doseCheckResult() && !doseCheckResult()!.guidance.weightBased && !doseCheckResult()!.guidance.ageBand"
+            >
+              No applicable dosing guidance found for this medication{{
+                embodiments().length ? '/embodiment' : ''
+              }} yet.
+            </p>
+          </div>
+
+          <div class="advisories" *ngIf="nonDangerAdvisories().length">
+            <app-advisory-banner *ngFor="let a of nonDangerAdvisories()" [advisory]="a"></app-advisory-banner>
+            <div class="quick-weight" *ngIf="hasStaleWeightAdvisory()">
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Current weight (kg)"
+                [ngModel]="quickWeightKg()"
+                (ngModelChange)="quickWeightKg.set($event)"
+                [ngModelOptions]="{ standalone: true }"
+              />
+              <button
+                type="button"
+                class="secondary small"
+                (click)="saveQuickWeight()"
+                [disabled]="!quickWeightKg() || savingWeight()"
+              >
+                {{ savingWeight() ? 'Saving…' : 'Log weight' }}
+              </button>
+            </div>
+            <p class="error small" *ngIf="weightError()">{{ weightError() }}</p>
+          </div>
+
           <div class="grid">
             <label class="field">
               <span>Dose source</span>
@@ -101,18 +210,6 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
             </label>
           </div>
           <div class="grid">
-            <label class="field">
-              <span>Weight used (kg)</span>
-              <input type="number" step="0.01" formControlName="weightKgUsed" />
-            </label>
-            <label class="field">
-              <span>Age used (months)</span>
-              <input type="number" step="1" formControlName="ageMonthsUsed" />
-            </label>
-            <label class="field">
-              <span>Guideline ID (optional)</span>
-              <input type="text" formControlName="guidelineId" />
-            </label>
             <label class="field">
               <span>Schedule ID (optional)</span>
               <input type="text" formControlName="interventionScheduleId" />
@@ -188,6 +285,26 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
         flex-direction: column;
         gap: 0.35rem;
       }
+      /* flex-direction is explicit because .field also applies on the combined
+         "field inline-check" label and would otherwise stack the box above its text. */
+      .inline-check {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .episode-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      /* The generic input rule is meant for text fields; undo it for checkboxes. */
+      .inline-check input[type='checkbox'] {
+        padding: 0;
+        margin: 0;
+        width: auto;
+        accent-color: #22d3ee;
+      }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -204,6 +321,100 @@ import { CreateInterventionDto, InterventionType, Patient } from '@salud/shared/
       }
       textarea {
         resize: vertical;
+      }
+      .med-search {
+        position: relative;
+      }
+      .med-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        list-style: none;
+        margin: 0.25rem 0 0;
+        padding: 0.25rem;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #0b1224;
+        max-height: 220px;
+        overflow-y: auto;
+      }
+      .med-result {
+        width: 100%;
+        text-align: left;
+        padding: 0.5rem 0.6rem;
+        border-radius: 6px;
+        border: none;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .med-result:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .chosen-med {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .link {
+        background: none;
+        border: none;
+        color: #7dd3fc;
+        cursor: pointer;
+        padding: 0;
+        font-size: 0.85rem;
+      }
+      .guidance-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.75rem;
+      }
+      .guidance-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        padding: 0.75rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .guidance-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .guidance-amount {
+        font-size: 1.3rem;
+        font-weight: 700;
+      }
+      .advisories {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .quick-weight {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .quick-weight input {
+        max-width: 180px;
+      }
+      .small {
+        font-size: 0.85rem;
+      }
+      .secondary.small {
+        padding: 0.4rem 0.7rem;
+        font-size: 0.85rem;
+        align-self: flex-start;
       }
       .actions {
         display: flex;
@@ -243,6 +454,9 @@ export class NewInterventionPage implements OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+
+  private scheduleIdParam: string | null = null;
 
   patients = signal<Patient[]>([]);
   activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
@@ -250,6 +464,29 @@ export class NewInterventionPage implements OnInit {
   saving = signal(false);
   error = signal<string | null>(null);
   success = signal(false);
+
+  medicationQuery = signal('');
+  medicationResults = signal<Medication[]>([]);
+  selectedMedication = signal<Medication | null>(null);
+  embodiments = signal<MedicationEmbodiment[]>([]);
+
+  doseCheckResult = signal<DoseCheckResult | null>(null);
+  quickWeightKg = signal<number | null>(null);
+  savingWeight = signal(false);
+  weightError = signal<string | null>(null);
+
+  // A danger-class reaction candidate earns a full-screen interstitial (F-2.5) instead of an
+  // inline banner. Re-armed on every fresh dose-check so a changed medication/amount re-confirms.
+  dangerAdvisoriesAcknowledged = signal(false);
+  dangerAdvisories = computed(
+    () => this.doseCheckResult()?.advisories.filter((a) => a.type === 'reaction_danger') ?? [],
+  );
+  nonDangerAdvisories = computed(
+    () => this.doseCheckResult()?.advisories.filter((a) => a.type !== 'reaction_danger') ?? [],
+  );
+  showDangerInterstitial = computed(
+    () => this.dangerAdvisories().length > 0 && !this.dangerAdvisoriesAcknowledged(),
+  );
 
   form = this.fb.nonNullable.group({
     patientId: ['', Validators.required],
@@ -275,15 +512,68 @@ export class NewInterventionPage implements OnInit {
   });
 
   ngOnInit(): void {
+    this.scheduleIdParam = this.route.snapshot.queryParamMap.get('scheduleId');
+    this.form.valueChanges.pipe(debounceTime(400)).subscribe(() => this.maybeRunDoseCheck());
+
     const user = this.auth.user();
     if (!user && this.auth.token) {
       this.auth.me().subscribe({
-        next: () => this.loadPatients(),
+        next: () => this.afterAuthReady(),
         error: () => this.auth.logout(),
       });
     } else {
-      this.loadPatients();
+      this.afterAuthReady();
     }
+  }
+
+  private afterAuthReady(): void {
+    this.loadPatients();
+    if (this.scheduleIdParam) {
+      this.prefillFromSchedule(this.scheduleIdParam);
+    }
+  }
+
+  private prefillFromSchedule(scheduleId: string): void {
+    this.api.get<InterventionSchedule>(`/schedules/${scheduleId}`).subscribe({
+      next: (schedule) => {
+        this.form.patchValue({
+          patientId: schedule.patientId,
+          type: schedule.type,
+          interventionScheduleId: schedule.id,
+          doseSource: 'override',
+          amountMg: schedule.doseMg,
+          amountMl: schedule.doseMl,
+          pillCount: schedule.pillCount,
+          bodyLocation: schedule.bodyLocation ?? '',
+          side: schedule.side ?? 'n/a',
+          dressingType: schedule.dressingType ?? '',
+        });
+        this.loadEpisodes(schedule.patientId);
+        if (schedule.medicationId) {
+          this.loadMedicationForSchedule(schedule.medicationId, schedule.medicationEmbodimentId);
+        }
+      },
+      error: (err) => this.error.set(errorText(err, 'Unable to load the schedule to prefill this dose.')),
+    });
+  }
+
+  private loadMedicationForSchedule(medicationId: string, embodimentId: string | null): void {
+    this.api.get<Medication>(`/medications/${medicationId}`).subscribe({
+      next: (medication) => {
+        this.selectedMedication.set(medication);
+        this.form.patchValue({ medicationId: medication.id });
+        this.api.get<MedicationEmbodiment[]>(`/medications/${medication.id}/embodiments`).subscribe({
+          next: (embodiments) => {
+            this.embodiments.set(embodiments);
+            if (embodimentId) {
+              this.form.patchValue({ medicationEmbodimentId: embodimentId });
+            }
+          },
+          error: () => this.embodiments.set([]),
+        });
+      },
+      error: () => undefined,
+    });
   }
 
   private defaultDateTime() {
@@ -299,9 +589,10 @@ export class NewInterventionPage implements OnInit {
   private loadPatients() {
     const user = this.auth.user();
     if (!user) return;
-    this.api.get<Patient[]>(`/users/${user.id}/patients`).subscribe({
+    this.api.get<Patient[]>(`/patients`).subscribe({
       next: (res) => {
         this.patients.set(res);
+        if (this.scheduleIdParam) return;
         const current = this.form.getRawValue().patientId;
         const pid = current || (res.length ? res[0].id : '');
         if (pid) {
@@ -309,8 +600,8 @@ export class NewInterventionPage implements OnInit {
           this.loadEpisodes(pid);
         }
       },
-      error: () => {
-        this.error.set('Unable to load patients.');
+      error: (err) => {
+        this.error.set(errorText(err, 'Unable to load patients.'));
       },
     });
   }
@@ -383,7 +674,7 @@ export class NewInterventionPage implements OnInit {
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(err?.error?.message || 'Could not save intervention.');
+        this.error.set(errorText(err, 'Could not save intervention.'));
       },
     });
   }
@@ -423,5 +714,117 @@ export class NewInterventionPage implements OnInit {
       current.delete('__new__');
       this.form.patchValue({ episodeSelection: Array.from(current), startEpisodeName: '' });
     }
+  }
+
+  onMedicationQueryChange(event: Event) {
+    const q = (event.target as HTMLInputElement).value;
+    this.medicationQuery.set(q);
+    if (!q) {
+      this.medicationResults.set([]);
+      return;
+    }
+    this.api.get<Medication[]>('/medications', { q }).subscribe({
+      next: (res) => this.medicationResults.set(res),
+      error: () => this.medicationResults.set([]),
+    });
+  }
+
+  selectMedication(medication: Medication) {
+    this.selectedMedication.set(medication);
+    this.medicationResults.set([]);
+    this.medicationQuery.set('');
+    this.form.patchValue({ medicationId: medication.id, medicationEmbodimentId: '' });
+    this.embodiments.set([]);
+    this.api.get<MedicationEmbodiment[]>(`/medications/${medication.id}/embodiments`).subscribe({
+      next: (res) => this.embodiments.set(res),
+      error: () => this.embodiments.set([]),
+    });
+  }
+
+  clearMedication() {
+    this.selectedMedication.set(null);
+    this.embodiments.set([]);
+    this.form.patchValue({ medicationId: '', medicationEmbodimentId: '' });
+    this.doseCheckResult.set(null);
+    this.dangerAdvisoriesAcknowledged.set(false);
+  }
+
+  isExpired(embodiment: MedicationEmbodiment): boolean {
+    return !!embodiment.expiresAt && embodiment.expiresAt * 1000 < Date.now();
+  }
+
+  private maybeRunDoseCheck() {
+    const val = this.form.getRawValue();
+    if (val.type !== 'medication_dose' || !val.medicationId || !val.patientId) {
+      this.doseCheckResult.set(null);
+      return;
+    }
+    const body: DoseCheckDto = {
+      medicationId: val.medicationId,
+      medicationEmbodimentId: val.medicationEmbodimentId || undefined,
+      amountMg: val.amountMg ?? undefined,
+      occurredAt: val.performedAt ? new Date(val.performedAt).toISOString() : undefined,
+    };
+    this.api
+      .post<DoseCheckResult, DoseCheckDto>(`/patients/${val.patientId}/dose-checks`, body)
+      .subscribe({
+        next: (res) => {
+          this.doseCheckResult.set(res);
+          this.dangerAdvisoriesAcknowledged.set(false);
+        },
+        error: () => this.doseCheckResult.set(null),
+      });
+  }
+
+  acknowledgeDangerAdvisories() {
+    this.dangerAdvisoriesAcknowledged.set(true);
+  }
+
+  hasStaleWeightAdvisory(): boolean {
+    return !!this.doseCheckResult()?.advisories.some((a) => a.type === 'stale_weight');
+  }
+
+  useWeightBasedAmount() {
+    const guidance = this.doseCheckResult()?.guidance.weightBased;
+    if (!guidance) return;
+    this.form.patchValue({
+      amountMg: Math.round(guidance.computedMg * 100) / 100,
+      doseSource: 'weight_based',
+    });
+  }
+
+  useAgeBandAmount() {
+    const guidance = this.doseCheckResult()?.guidance.ageBand;
+    if (!guidance) return;
+    this.form.patchValue({
+      amountMg: guidance.doseMg,
+      amountMl: guidance.doseMl,
+      pillCount: guidance.pillCount,
+      doseSource: 'age_based',
+    });
+  }
+
+  saveQuickWeight() {
+    const kg = this.quickWeightKg();
+    const patientId = this.form.getRawValue().patientId;
+    if (!kg || !patientId) return;
+    this.savingWeight.set(true);
+    this.weightError.set(null);
+    this.api
+      .post(`/patients/${patientId}/observations`, {
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'weight', metadata: { kg } }],
+      })
+      .subscribe({
+        next: () => {
+          this.savingWeight.set(false);
+          this.quickWeightKg.set(null);
+          this.maybeRunDoseCheck();
+        },
+        error: (err) => {
+          this.savingWeight.set(false);
+          this.weightError.set(errorText(err, 'Could not log the weight.'));
+        },
+      });
   }
 }

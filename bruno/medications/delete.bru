@@ -1,0 +1,16 @@
+meta {
+  name: Delete Medication
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

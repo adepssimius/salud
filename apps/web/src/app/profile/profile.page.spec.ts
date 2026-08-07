@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { ProfilePage } from './profile.page';
 import { AuthService } from '../core/auth.service';
 import { ApiClientService } from '../core/api-client.service';
@@ -83,6 +83,18 @@ describe('ProfilePage', () => {
     expect(component.form.getRawValue().preferredTempUnit).toBe('C');
   });
 
+  it('shows an error and clears the spinner when saving the profile fails', () => {
+    // This save used to fail completely silently — no message, no cleared spinner.
+    authMock.updateProfile.mockReturnValue(throwError(() => ({ error: { message: 'boom' } })));
+    const fixture = TestBed.createComponent(ProfilePage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    component.submit();
+    expect(component.saveError()).toBe('Could not save your profile.');
+    expect(component.saving()).toBe(false);
+    expect(component.saved()).toBe(false);
+  });
+
   it('loads patients when tab selected', () => {
     apiMock.get.mockReturnValue(
       of([
@@ -103,7 +115,7 @@ describe('ProfilePage', () => {
     const component = fixture.componentInstance;
     fixture.detectChanges();
     component.selectTab('patients');
-    expect(apiMock.get).toHaveBeenCalledWith('/users/u1/patients');
+    expect(apiMock.get).toHaveBeenCalledWith('/patients');
     expect(component.patients().length).toBe(1);
   });
 

@@ -1,0 +1,30 @@
+meta {
+  name: Get Schedule
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let sid = bru.getVar('scheduleId');
+  if (!sid) {
+    const listReq = await bru.runRequest('schedules/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) sid = list[0].id;
+  }
+  bru.setVar('scheduleId', sid);
+}
+
+assert {
+  adherence: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

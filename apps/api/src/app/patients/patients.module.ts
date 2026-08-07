@@ -7,10 +7,12 @@ import { JwtStrategy } from '../auth/jwt.strategy';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CareTeamService } from './care-team.service';
+import { RevisionsModule } from '../revisions/revisions.module';
 
 @Module({
   imports: [
     PersistenceModule,
+    RevisionsModule,
     ConfigModule,
     JwtModule.registerAsync({
       useFactory: (config: ConfigService) => ({

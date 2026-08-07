@@ -1,0 +1,56 @@
+meta {
+  name: Create Schedule
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/schedules
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+  bru.setVar('startAt', new Date().toISOString());
+}
+
+body:json {
+  {
+    "type": "medication_dose",
+    "label": "Amoxicillin q8h",
+    "medicationId": "{{medicationId}}",
+    "doseMg": 400,
+    "frequencyHours": 8,
+    "startAt": "{{startAt}}",
+    "endAfterOccurrences": 10
+  }
+}
+
+script:post-response {
+  bru.setVar('scheduleId', res.body.id);
+}
+
+assert {
+  id: isNotEmpty
+  nextDueAt: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

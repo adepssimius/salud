@@ -1,0 +1,46 @@
+meta {
+  name: Upload File
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}files
+  body: multipartForm
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:multipart-form {
+  patientId: {{patientId}}
+  file: @file(./files/fixtures/rash.png) @contentType(image/png)
+}
+
+script:post-response {
+  bru.setVar('fileId', res.body.fileId);
+}
+
+assert {
+  fileId: isNotEmpty
+  url: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Real multipart upload example (api.md → "Files"). The file field path is relative to the
+  collection root (bruno/files/fixtures/rash.png, a 4x4 test PNG checked into the repo) — swap
+  it for an absolute path if your Bruno client resolves relative file paths differently.
+}

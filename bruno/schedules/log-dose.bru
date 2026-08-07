@@ -1,0 +1,25 @@
+meta {
+  name: Log Dose From Schedule
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/log
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {}
+}
+
+assert {
+  intervention: isDefined
+  schedule: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

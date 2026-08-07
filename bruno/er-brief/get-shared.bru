@@ -1,0 +1,28 @@
+meta {
+  name: Get Shared Brief (no auth)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}er-brief/shared/{{token}}
+  body: none
+  auth: none
+}
+
+assert {
+  payload: isDefined
+  frozenAt: isNotEmpty
+  expiresAt: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Deliberately unauthenticated (security.md → "ER Brief snapshot tokens") — the second exception to
+  inherited bearer auth in this collection, after auth/login and auth/register. Run
+  "Create Snapshot" first to populate {{token}}.
+}

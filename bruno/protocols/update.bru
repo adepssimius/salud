@@ -1,0 +1,22 @@
+meta {
+  name: Update Protocol
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}protocols/{{protocolId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "active": false
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

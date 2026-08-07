@@ -76,4 +76,12 @@ export class ObservationsController {
   ) {
     return await this.observations.update(id, req.user.userId, dto);
   }
+
+  @Get('observations/:id/revisions')
+  async getRevisions(
+    @Request() req: any,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return await this.observations.getRevisions(id, req.user.userId);
+  }
 }

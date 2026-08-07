@@ -71,9 +71,9 @@ describe('RegisterPage', () => {
     expect(navSpy).toHaveBeenCalledWith('/dashboard');
   });
 
-  it('shows error on failure', () => {
+  it('shows a plain sentence for a known error code', () => {
     authMock.register.mockReturnValue(
-      throwError(() => ({ error: { message: 'Email exists' } })),
+      throwError(() => ({ error: { message: 'EMAIL_TAKEN' } })),
     );
     component.form.patchValue({
       displayName: 'B',
@@ -81,6 +81,6 @@ describe('RegisterPage', () => {
       password: 'password',
     });
     component.submit();
-    expect(component.error()).toBe('Email exists');
+    expect(component.error()).toBe('An account with that email already exists. Try signing in instead.');
   });
 });

@@ -1,0 +1,33 @@
+meta {
+  name: Get Intervention Revisions
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}interventions/{{interventionId}}/revisions
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let iid = bru.getVar('interventionId');
+  if (!iid) {
+    const listReq = await bru.runRequest("interventions/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      iid = list[0].id;
+    }
+  }
+  bru.setVar('interventionId', iid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Newest first. A freshly-created intervention has none — PATCH
+  {{apiPrefix}}interventions/{{interventionId}} at least once first to populate a revision.
+}

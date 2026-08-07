@@ -6,13 +6,17 @@ import { FormsModule } from '@angular/forms';
 import {
   CareTeamMember,
   CareTeamRole,
+  Condition,
   Patient,
   SexAtBirth,
+  UpdateCodeStatusDto,
   UpdatePatientDto,
   UserProfile,
 } from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
+import { errorText } from '../core/error-display';
+import { RevisionHistoryComponent } from '../core/revision-history.component';
 
 interface UserSearchResult {
   id: string;
@@ -20,10 +24,22 @@ interface UserSearchResult {
   displayName: string;
 }
 
+// "set 14 months ago" (§4.1) — a stale code status should visibly look stale.
+function formatRelativeAge(epochSeconds: number): string {
+  const days = Math.floor((Date.now() / 1000 - epochSeconds) / 86400);
+  if (days < 1) return 'today';
+  if (days === 1) return '1 day ago';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 24) return months === 1 ? '1 month ago' : `${months} months ago`;
+  const years = Math.floor(months / 12);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+}
+
 @Component({
   selector: 'app-patient-detail-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, RevisionHistoryComponent],
   template: `
     <div class="layout">
       <div class="card">
@@ -34,6 +50,8 @@ interface UserSearchResult {
           </div>
           <div class="header-actions">
             <button class="secondary" type="button" (click)="backToProfile()">Back</button>
+            <button class="secondary" type="button" (click)="goToTimeline()">Timeline</button>
+            <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
             <button class="danger" type="button" (click)="deletePatient()" [disabled]="deleting()">
               {{ deleting() ? 'Deleting…' : 'Delete' }}
             </button>
@@ -71,6 +89,52 @@ interface UserSearchResult {
             <span class="muted" *ngIf="saveMessage()">{{ saveMessage() }}</span>
           </div>
         </form>
+        <app-revision-history entityType="patient" [entityId]="patientId"></app-revision-history>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Code status</h2>
+            <p class="muted">Set deliberately; the age is always visible.</p>
+          </div>
+          <button class="secondary" type="button" (click)="startEditCodeStatus()" *ngIf="!editingCodeStatus()">
+            {{ patient()?.codeStatus ? 'Update' : 'Set code status' }}
+          </button>
+        </div>
+        <div *ngIf="!editingCodeStatus()">
+          <p *ngIf="patient()?.codeStatus" class="code-status-value">{{ patient()?.codeStatus }}</p>
+          <p *ngIf="!patient()?.codeStatus" class="muted">Not set.</p>
+          <p class="muted small" *ngIf="patient()?.codeStatusSetAt">
+            Set by {{ codeStatusSetByName() }} · {{ codeStatusAge() }}
+          </p>
+        </div>
+        <div class="inline" *ngIf="editingCodeStatus()">
+          <input type="text" [(ngModel)]="codeStatusDraft" name="codeStatusDraft" placeholder="e.g. Full code" />
+          <button class="primary" type="button" [disabled]="!codeStatusDraft.trim() || savingCodeStatus()" (click)="saveCodeStatus()">
+            {{ savingCodeStatus() ? 'Saving…' : 'Save' }}
+          </button>
+          <button class="secondary" type="button" (click)="editingCodeStatus.set(false)">Cancel</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Conditions</h2>
+            <p class="muted">Standing frames for chronic illness.</p>
+          </div>
+          <button class="secondary" type="button" (click)="goToNewCondition()">Add condition</button>
+        </div>
+        <ul class="condition-list" *ngIf="conditions().length">
+          <li *ngFor="let c of conditions()">
+            <button type="button" class="condition-row" (click)="goToCondition(c.id)">
+              <span class="name">{{ c.name }}</span>
+              <span class="pill" [class.owner]="c.status === 'active'">{{ c.status }}</span>
+            </button>
+          </li>
+        </ul>
+        <p class="muted" *ngIf="!conditions().length">No conditions yet.</p>
       </div>
 
       <div class="card">
@@ -137,8 +201,14 @@ interface UserSearchResult {
       </div>
     </div>
 
-    <div class="modal-backdrop" *ngIf="addModalOpen()" (click)="closeAddModal()"></div>
-    <div class="modal" *ngIf="addModalOpen()">
+    <button
+      type="button"
+      class="modal-backdrop"
+      *ngIf="addModalOpen()"
+      aria-label="Close dialog"
+      (click)="closeAddModal()"
+    ></button>
+    <div class="modal" *ngIf="addModalOpen()" role="dialog" aria-modal="true">
       <div class="modal-header">
         <h3>Add caregiver</h3>
         <button class="icon-button" (click)="closeAddModal()">✕</button>
@@ -153,13 +223,16 @@ interface UserSearchResult {
         </label>
         <div *ngIf="searchError" class="error">{{ searchError }}</div>
         <ul class="search-results" *ngIf="searchResults.length">
-          <li
-            *ngFor="let u of searchResults"
-            [class.selected]="u.id === selectedUserId"
-            (click)="selectUser(u.id)"
-          >
-            <div class="name">{{ u.displayName || u.email }}</div>
-            <div class="muted small">{{ u.email }}</div>
+          <li *ngFor="let u of searchResults" [class.selected]="u.id === selectedUserId">
+            <button
+              type="button"
+              class="result-button"
+              [attr.aria-pressed]="u.id === selectedUserId"
+              (click)="selectUser(u.id)"
+            >
+              <div class="name">{{ u.displayName || u.email }}</div>
+              <div class="muted small">{{ u.email }}</div>
+            </button>
           </li>
         </ul>
 
@@ -273,6 +346,33 @@ interface UserSearchResult {
         background: rgba(255, 255, 255, 0.06);
         color: #e2e8f0;
       }
+      .code-status-value {
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin: 0.25rem 0;
+      }
+      .condition-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .condition-row {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        text-align: left;
+      }
       .care-table {
         width: 100%;
         border-collapse: collapse;
@@ -317,10 +417,14 @@ interface UserSearchResult {
       .error {
         color: #fca5a5;
       }
+      /* A button rather than a div so dismissing the modal is reachable without a mouse. */
       .modal-backdrop {
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, 0.5);
+        border: none;
+        padding: 0;
+        cursor: pointer;
       }
       .modal {
         position: fixed;
@@ -365,11 +469,20 @@ interface UserSearchResult {
         gap: 0.35rem;
       }
       .search-results li {
-        padding: 0.65rem;
         border-radius: 10px;
         border: 1px solid rgba(255, 255, 255, 0.08);
         background: rgba(255, 255, 255, 0.03);
+      }
+      .result-button {
+        width: 100%;
+        padding: 0.65rem;
+        text-align: left;
+        background: none;
+        border: none;
+        color: inherit;
+        font: inherit;
         cursor: pointer;
+        border-radius: 10px;
       }
       .search-results li.selected {
         border-color: rgba(14, 165, 233, 0.7);
@@ -397,6 +510,12 @@ export class PatientDetailPage implements OnInit {
   careTeamLoading = signal(false);
   careTeamError = signal<string | null>(null);
 
+  conditions = signal<Condition[]>([]);
+
+  editingCodeStatus = signal(false);
+  codeStatusDraft = '';
+  savingCodeStatus = signal(false);
+
   addModalOpen = signal(false);
   searchEmail = '';
   searchResults: UserSearchResult[] = [];
@@ -413,6 +532,19 @@ export class PatientDetailPage implements OnInit {
   });
 
   currentUserId = computed(() => this.auth.user()?.id ?? null);
+
+  codeStatusSetByName = computed(() => {
+    const setById = this.patient()?.codeStatusSetByUserId;
+    if (!setById) return 'unknown';
+    const member = this.careTeam().find((m) => m.user.id === setById);
+    return member?.user.displayName || member?.user.email || 'unknown';
+  });
+
+  codeStatusAge = computed(() => {
+    const setAt = this.patient()?.codeStatusSetAt;
+    if (!setAt) return '';
+    return formatRelativeAge(setAt);
+  });
 
   ngOnInit(): void {
     this.patientId = this.route.snapshot.paramMap.get('id') ?? '';
@@ -434,11 +566,19 @@ export class PatientDetailPage implements OnInit {
     if (!this.currentUserId()) return;
     this.loadPatient();
     this.loadCareTeam();
+    this.loadConditions();
+  }
+
+  private loadConditions() {
+    this.api.get<Condition[]>(`/patients/${this.patientId}/conditions`).subscribe({
+      next: (res) => this.conditions.set(res),
+      error: () => this.conditions.set([]),
+    });
   }
 
   private loadPatient() {
     if (!this.currentUserId()) return;
-    this.api.get<Patient>(`/users/${this.currentUserId()}/patients/${this.patientId}`).subscribe({
+    this.api.get<Patient>(`/patients/${this.patientId}`).subscribe({
       next: (p) => {
         this.patient.set(p);
         this.form.patchValue({
@@ -459,15 +599,15 @@ export class PatientDetailPage implements OnInit {
     this.careTeamLoading.set(true);
     this.careTeamError.set(null);
     this.api
-      .get<{ careTeam?: CareTeamMember[] } | CareTeamMember[]>(`/users/${this.currentUserId()}/patients/${this.patientId}/care-team`)
+      .get<{ careTeam?: CareTeamMember[] } | CareTeamMember[]>(`/patients/${this.patientId}/care-team`)
       .subscribe({
         next: (res) => {
           const list = Array.isArray(res) ? res : res.careTeam ?? [];
           this.careTeam.set(list);
           this.careTeamLoading.set(false);
         },
-        error: () => {
-          this.careTeamError.set('Unable to load caregivers right now.');
+        error: (err) => {
+          this.careTeamError.set(errorText(err, 'Unable to load caregivers right now.'));
           this.careTeamLoading.set(false);
         },
       });
@@ -478,15 +618,15 @@ export class PatientDetailPage implements OnInit {
     this.savingPatient.set(true);
     this.saveMessage.set(null);
     const dto: UpdatePatientDto = { ...this.form.getRawValue() };
-    this.api.patch<Patient, UpdatePatientDto>(`/users/${this.currentUserId()}/patients/${this.patientId}`, dto).subscribe({
+    this.api.patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, dto).subscribe({
       next: (p) => {
         this.patient.set(p);
         this.savingPatient.set(false);
         this.saveMessage.set('Saved');
       },
-      error: () => {
+      error: (err) => {
         this.savingPatient.set(false);
-        this.saveMessage.set('Error saving');
+        this.saveMessage.set(errorText(err, 'Could not save.'));
       },
     });
   }
@@ -495,7 +635,7 @@ export class PatientDetailPage implements OnInit {
     if (!this.currentUserId()) return;
     this.api
       .post<CareTeamMember, { userId: string; role: CareTeamRole }>(
-        `/users/${this.currentUserId()}/patients/${this.patientId}/care-team`,
+        `/patients/${this.patientId}/care-team`,
         { userId: member.user.id, role },
       )
       .subscribe({
@@ -506,8 +646,8 @@ export class PatientDetailPage implements OnInit {
             ),
           );
         },
-        error: () => {
-          this.careTeamError.set('Could not update relationship.');
+        error: (err) => {
+          this.careTeamError.set(errorText(err, 'Could not update relationship.'));
         },
       });
   }
@@ -515,15 +655,22 @@ export class PatientDetailPage implements OnInit {
   makeOwner(member: CareTeamMember) {
     if (!this.currentUserId()) return;
     this.api
-      .patch<Patient, UpdatePatientDto>(`/users/${this.currentUserId()}/patients/${this.patientId}`, {
+      .patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, {
         ownedById: member.user.id,
       })
       .subscribe({
         next: (p) => {
           this.patient.set(p);
         },
-        error: () => {
-          this.careTeamError.set('Could not update owner.');
+        error: (err) => {
+          // The default USER_NOT_FOUND sentence is written for adding a caregiver by a stale search
+          // result; transferring ownership needs its own wording (app-spec/frontend.md → "Errors &
+          // failure messages").
+          this.careTeamError.set(
+            errorText(err, 'Could not update owner.', {
+              USER_NOT_FOUND: 'That caregiver is no longer on this care team. Refresh the page and try again.',
+            }),
+          );
         },
       });
   }
@@ -533,14 +680,14 @@ export class PatientDetailPage implements OnInit {
     if (member.user.id === this.patient()?.ownedById) return;
     this.api
       .delete<{ deleted: boolean }>(
-        `/users/${this.currentUserId()}/patients/${this.patientId}/care-team/${member.user.id}`,
+        `/patients/${this.patientId}/care-team/${member.user.id}`,
       )
       .subscribe({
         next: () => {
           this.careTeam.set(this.careTeam().filter((m) => m.user.id !== member.user.id));
         },
-        error: () => {
-          this.careTeamError.set('Could not remove caregiver.');
+        error: (err) => {
+          this.careTeamError.set(errorText(err, 'Could not remove caregiver.'));
         },
       });
   }
@@ -568,8 +715,8 @@ export class PatientDetailPage implements OnInit {
           this.selectedUserId = users[0].id;
         }
       },
-      error: () => {
-        this.searchError = 'Unable to search right now.';
+      error: (err) => {
+        this.searchError = errorText(err, 'Unable to search right now.');
       },
     });
   }
@@ -583,7 +730,7 @@ export class PatientDetailPage implements OnInit {
     this.savingCaregiver.set(true);
     this.api
       .post<CareTeamMember, { userId: string; role: CareTeamRole }>(
-        `/users/${this.currentUserId()}/patients/${this.patientId}/care-team`,
+        `/patients/${this.patientId}/care-team`,
         { userId: this.selectedUserId, role: this.newCaregiverRole },
       )
       .subscribe({
@@ -592,8 +739,8 @@ export class PatientDetailPage implements OnInit {
           this.savingCaregiver.set(false);
           this.closeAddModal();
         },
-        error: () => {
-          this.careTeamError.set('Could not add caregiver.');
+        error: (err) => {
+          this.careTeamError.set(errorText(err, 'Could not add caregiver.'));
           this.savingCaregiver.set(false);
         },
       });
@@ -603,19 +750,58 @@ export class PatientDetailPage implements OnInit {
     this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
   }
 
+  goToTimeline() {
+    this.router.navigate(['/patients', this.patientId, 'timeline']);
+  }
+
+  goToErBrief() {
+    this.router.navigate(['/patients', this.patientId, 'er-brief']);
+  }
+
+  startEditCodeStatus() {
+    this.codeStatusDraft = this.patient()?.codeStatus ?? '';
+    this.editingCodeStatus.set(true);
+  }
+
+  saveCodeStatus() {
+    const value = this.codeStatusDraft.trim();
+    if (!value || this.savingCodeStatus()) return;
+    this.savingCodeStatus.set(true);
+    this.api
+      .patch<Patient, UpdateCodeStatusDto>(`/patients/${this.patientId}/code-status`, { codeStatus: value })
+      .subscribe({
+        next: (p) => {
+          this.patient.set(p);
+          this.savingCodeStatus.set(false);
+          this.editingCodeStatus.set(false);
+        },
+        error: () => {
+          this.savingCodeStatus.set(false);
+        },
+      });
+  }
+
+  goToNewCondition() {
+    this.router.navigate(['/patients', this.patientId, 'conditions', 'new']);
+  }
+
+  goToCondition(conditionId: string) {
+    this.router.navigate(['/conditions', conditionId]);
+  }
+
   deletePatient() {
     if (!this.currentUserId() || this.deleting()) return;
     const confirmed = window.confirm('Delete this patient? This cannot be undone.');
     if (!confirmed) return;
     this.deleting.set(true);
-    this.api.delete<{ deleted: boolean }>(`/users/${this.currentUserId()}/patients/${this.patientId}`).subscribe({
+    this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}`).subscribe({
       next: () => {
         this.deleting.set(false);
         this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
       },
-      error: () => {
+      error: (err) => {
         this.deleting.set(false);
-        this.careTeamError.set('Could not delete patient.');
+        this.careTeamError.set(errorText(err, 'Could not delete patient.'));
       },
     });
   }

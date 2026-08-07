@@ -49,8 +49,14 @@
   color: #38bdf8;
 }
 
-.profile {
+/* The menu positions against this wrapper, since it can't live inside the toggle button. */
+.profile-wrap {
   position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.profile {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -59,6 +65,14 @@
   background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  /* A <button> would otherwise take the UA's font and text colour. */
+  color: #e2e8f0;
+  font: inherit;
+}
+
+.profile:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .avatar {

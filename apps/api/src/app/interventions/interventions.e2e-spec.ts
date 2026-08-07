@@ -23,9 +23,9 @@ async function registerAndLogin(app: INestApplication) {
   return { token: reg.body.token, email, userId: reg.body.user.id };
 }
 
-async function createPatient(app: INestApplication, token: string, userId: string) {
+async function createPatient(app: INestApplication, token: string) {
   const res = await request(app.getHttpServer())
-    .post(`/api/users/${userId}/patients`)
+    .post(`/api/patients`)
     .set('Authorization', `Bearer ${token}`)
     .send({
       fullName: `Patient ${Date.now()}`,
@@ -66,8 +66,8 @@ describe('Interventions (e2e)', () => {
   });
 
   it('creates and fetches a medication dose intervention', async () => {
-    const { token, userId } = await registerAndLogin(app);
-    const patientId = await createPatient(app, token, userId);
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
 
     const createRes = await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
@@ -97,8 +97,8 @@ describe('Interventions (e2e)', () => {
   });
 
   it('rejects resolvesEpisodeIds that are not a subset of episodeIds', async () => {
-    const { token, userId } = await registerAndLogin(app);
-    const patientId = await createPatient(app, token, userId);
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
 
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
@@ -115,7 +115,7 @@ describe('Interventions (e2e)', () => {
   it('enforces access control across users', async () => {
     const owner = await registerAndLogin(app);
     const other = await registerAndLogin(app);
-    const patientId = await createPatient(app, owner.token, owner.userId);
+    const patientId = await createPatient(app, owner.token);
 
     const created = await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
@@ -123,7 +123,6 @@ describe('Interventions (e2e)', () => {
       .send({
         performedAt: new Date().toISOString(),
         type: 'dressing_change',
-        episodeIds: ['ep-1'],
         bodyLocation: 'Left knee',
         side: 'left',
         dressingType: 'gauze',
@@ -147,8 +146,8 @@ describe('Interventions (e2e)', () => {
   });
 
   it('filters by medicationId', async () => {
-    const { token, userId } = await registerAndLogin(app);
-    const patientId = await createPatient(app, token, userId);
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
 
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
@@ -187,8 +186,8 @@ describe('Interventions (e2e)', () => {
   });
 
   it('validates resolves subset on update while allowing updates without resending episodeIds', async () => {
-    const { token, userId } = await registerAndLogin(app);
-    const patientId = await createPatient(app, token, userId);
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
 
     const created = await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
@@ -196,20 +195,22 @@ describe('Interventions (e2e)', () => {
       .send({
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
-        episodeIds: ['ep-1'],
+        startEpisodeName: 'Ear infection',
         medicationId: 'med-1',
         doseSource: 'override',
         amountMg: 50,
       })
       .expect(201);
 
+    const episodeId = created.body.episodeIds[0];
+
     await request(app.getHttpServer())
       .patch(`/api/interventions/${created.body.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ resolvesEpisodeIds: ['ep-1'], notes: 'updated' })
+      .send({ resolvesEpisodeIds: [episodeId], notes: 'updated' })
       .expect(200)
       .expect((res) => {
-        expect(res.body.resolvesEpisodeIds).toEqual(['ep-1']);
+        expect(res.body.resolvesEpisodeIds).toEqual([episodeId]);
         expect(res.body.notes).toBe('updated');
       });
 

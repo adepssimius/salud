@@ -1,0 +1,32 @@
+meta {
+  name: List Snapshots
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/er-brief/snapshots
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+script:post-response {
+  if (Array.isArray(res.body) && res.body.length) {
+    bru.setVar('snapshotId', res.body[0].id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

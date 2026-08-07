@@ -12,6 +12,32 @@
 - File uploads (photos/attachments) default to local filesystem under `/data/attachments`; storage backend is env-selectable.
 - No hard dosing stops; client-side warnings only.
 
+## ER Brief snapshot tokens
+
+See `er-brief.md` for the full feature. The one deliberately unauthenticated route in the API:
+
+- Token is 32 bytes from a CSPRNG (`crypto.randomBytes(32)`), base64url-encoded, stored unique in
+  `er_brief_snapshots.token`. The token **is** the capability — anyone holding the link can read
+  the frozen brief, by design (it's meant to be handed to a triage desk or texted to a partner en
+  route). Nothing else about the link grants access: it is read-only, single-purpose, and time-
+  limited.
+- `expiresAt` is mandatory (not nullable) and capped server-side at creation (168 hours / 7 days
+  max, 72-hour default) — there is no "never expires" option. A long-lived unauthenticated link
+  would function like a shared password; capping the lifetime keeps it a handoff artifact, not a
+  standing access grant (P4 — no read-only tiers).
+- The payload is frozen at creation time and never recomputed — reading the link later cannot leak
+  data that entered the record after the snapshot was taken, even if the token is still valid.
+- Missing and expired tokens return the identical 404 `SNAPSHOT_NOT_FOUND` — no signal to
+  distinguish "never existed" from "existed and lapsed," matching the `PATIENT_NOT_FOUND`
+  non-disclosure pattern used everywhere else in the API (api.md → "Resource shape and access
+  control").
+- Revocation is deletion (`DELETE /api/er-brief/snapshots/:id`, authenticated + patient-scoped) —
+  there is no separate "revoked" state to track; a deleted row 404s identically to an expired one.
+- Because the token route bypasses `JwtAuthGuard` entirely, it must never be added to a controller
+  that also serves authenticated routes without an explicit, reviewed exception — keep it in its
+  own controller (`ErBriefPublicController`), the same isolation pattern already used for
+  `auth/login` and `auth/register`.
+
 ## Future/phase 2
 - Native phone app and web clients should support an iMessage-like encryption scheme to authorize/deauthorize sharing of patient data with other caregivers. Encryption is performed client-side; on-device data must be stored encrypted.
 - Keying model (Alice/Bob example):

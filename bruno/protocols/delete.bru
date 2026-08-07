@@ -1,0 +1,16 @@
+meta {
+  name: Delete Protocol
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}protocols/{{protocolId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -35,4 +35,18 @@ export class StorageService {
     }
     return path.join(this.config.basePath, relativePath);
   }
+
+  async write(relativePath: string, buffer: Buffer): Promise<void> {
+    const fullPath = this.resolveLocalPath(relativePath);
+    await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.promises.writeFile(fullPath, buffer);
+  }
+
+  createReadStream(relativePath: string): fs.ReadStream {
+    return fs.createReadStream(this.resolveLocalPath(relativePath));
+  }
+
+  async delete(relativePath: string): Promise<void> {
+    await fs.promises.rm(this.resolveLocalPath(relativePath), { force: true });
+  }
 }

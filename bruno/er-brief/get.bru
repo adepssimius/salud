@@ -1,0 +1,31 @@
+meta {
+  name: Get ER Brief
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/er-brief
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+assert {
+  header: isDefined
+  body: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

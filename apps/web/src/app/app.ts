@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, HostListener, OnInit, inject, signal, computed } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from './core/auth.service';
@@ -43,8 +43,17 @@ export class App implements OnInit {
     this.menuOpen.update((v) => !v);
   }
 
+  // Click-outside-to-close lives here rather than on a (click) handler on <main>: a click handler on
+  // a non-interactive element is a keyboard trap for anyone not using a mouse (and a lint error).
+  // The toggle button stops propagation so opening the menu doesn't immediately close it again.
+  @HostListener('document:click')
   closeMenu() {
     this.menuOpen.set(false);
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape() {
+    this.closeMenu();
   }
 
   logout() {

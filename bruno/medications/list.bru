@@ -1,0 +1,27 @@
+meta {
+  name: List Medications
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications?q={{q}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  q:
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (Array.isArray(body) && body.length) {
+    bru.setVar('medicationId', body[0].id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

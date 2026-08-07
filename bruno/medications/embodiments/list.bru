@@ -1,0 +1,23 @@
+meta {
+  name: List Embodiments
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}/embodiments
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (Array.isArray(body) && body.length) {
+    bru.setVar('embodimentId', body[0].id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

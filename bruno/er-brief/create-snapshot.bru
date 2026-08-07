@@ -1,0 +1,42 @@
+meta {
+  name: Create Snapshot
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/er-brief/snapshots
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:json {
+  {
+    "expiresInHours": 72
+  }
+}
+
+script:post-response {
+  bru.setVar('token', res.body.token);
+}
+
+assert {
+  token: isNotEmpty
+  url: isNotEmpty
+  expiresAt: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

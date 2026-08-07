@@ -1,0 +1,38 @@
+meta {
+  name: Get What's New
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/whats-new
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+assert {
+  since: isNotEmpty
+  events: isDefined
+  advisoriesFired: isDefined
+  nowDue: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Diffs against the caller's own care_team_memberships.lastSeenAt watermark (falls back to the
+  last 24h when never acked). Loading this never acks it — run "Ack What's New" explicitly.
+}

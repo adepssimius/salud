@@ -4,18 +4,40 @@ import { FormBuilder, ReactiveFormsModule, Validators, FormsModule } from '@angu
 import { Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
-import { ObservationType, Patient } from '@salud/shared/types';
-
-interface EntryDraft {
-  type: ObservationType;
-  metadata: any;
-}
+import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
+import { EntryDraft, EntryMetadataFormComponent } from './entry-metadata-form.component';
+import { entrySummary, unitsFor } from '../core/event-display';
+import { errorText } from '../core/error-display';
+import { Advisory, Observation, ObservationType, Patient, TimelineResponse, UnitPreference } from '@salud/shared/types';
 
 @Component({
   selector: 'app-new-observation-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, PhotoThumbnailComponent, EntryMetadataFormComponent],
   template: `
+    <div class="card" *ngIf="firedAdvisories().length; else formCard">
+      <h1>Observation saved</h1>
+      <div class="protocol-card" *ngFor="let a of firedAdvisories()">
+        <div class="protocol-header">
+          <span class="icon">⛔</span>
+          <span class="name">{{ a.payload?.['protocolName'] }}</span>
+        </div>
+        <p class="instruction">{{ a.payload?.['instructionText'] }}</p>
+        <p class="muted small">
+          {{ a.payload?.['triggerMetric'] }}
+          {{ a.payload?.['observedValue'] }}
+          {{ a.payload?.['triggerOperator'] === 'gte' ? '≥' : '≤' }}
+          {{ a.payload?.['triggerValue'] }}
+          — {{ a.payload?.['conditionName'] }}
+        </p>
+        <p class="muted small">Source: {{ a.payload?.['sourceText'] }}</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="primary" (click)="continueToDashboard()">Continue to dashboard</button>
+      </div>
+    </div>
+
+    <ng-template #formCard>
     <div class="card">
       <h1>New Observation</h1>
       <p class="muted">Log an observation with one or more measurement entries.</p>
@@ -64,39 +86,21 @@ interface EntryDraft {
           <span>Resolve selected episodes</span>
         </label>
 
-        <label class="field">
-          <span>Symptom tags (comma separated)</span>
-          <input type="text" formControlName="symptomTags" placeholder="cough, rash" />
-        </label>
+        <app-entry-metadata-form
+          [patientId]="form.getRawValue().patientId"
+          [framingHintFileId]="framingHintFileId()"
+          (typeChange)="onEntryTypeChange($event)"
+          (entryAdded)="addEntry($event)"
+        ></app-entry-metadata-form>
 
-        <div class="entry-builder">
-          <h3>Add entry</h3>
-          <label class="field">
-            <span>Type</span>
-            <select [(ngModel)]="entryType" name="entryType" [ngModelOptions]="{ standalone: true }">
-              <option *ngFor="let t of types" [value]="t">{{ t }}</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Metadata (JSON)</span>
-            <textarea
-              rows="3"
-              [(ngModel)]="entryMetadata"
-              name="entryMetadata"
-              [ngModelOptions]="{ standalone: true }"
-              placeholder='{"bpm":120}'
-            ></textarea>
-          </label>
-          <button type="button" class="secondary" (click)="addEntry()">Add entry</button>
-          <div class="muted small">At least one entry is required.</div>
-          <ul class="entries">
-            <li *ngFor="let e of entries(); let i = index">
-              <span class="pill">{{ e.type }}</span>
-              <code>{{ e.metadata | json }}</code>
-              <button type="button" class="icon-button" (click)="removeEntry(i)">✕</button>
-            </li>
-          </ul>
-        </div>
+        <ul class="entries">
+          <li *ngFor="let e of entries(); let i = index">
+            <span class="pill">{{ e.type }}</span>
+            <app-photo-thumbnail *ngIf="e.type === 'photo'; else entryText" [fileId]="e.metadata?.fileId"></app-photo-thumbnail>
+            <ng-template #entryText><span class="summary">{{ entrySummary(e) }}</span></ng-template>
+            <button type="button" class="icon-button" (click)="removeEntry(i)">✕</button>
+          </li>
+        </ul>
 
         <div class="actions">
           <button type="button" class="secondary" (click)="cancel()">Cancel</button>
@@ -106,6 +110,7 @@ interface EntryDraft {
         </div>
       </form>
     </div>
+    </ng-template>
   `,
   styles: [
     `
@@ -136,6 +141,26 @@ interface EntryDraft {
         flex-direction: column;
         gap: 0.35rem;
       }
+      /* flex-direction is explicit because .field also applies on the combined
+         "field inline-check" label and would otherwise stack the box above its text. */
+      .inline-check {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .episode-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      /* The generic input rule below is meant for text fields; undo it for checkboxes. */
+      .inline-check input[type='checkbox'] {
+        padding: 0;
+        margin: 0;
+        width: auto;
+        accent-color: #22d3ee;
+      }
       input,
       select,
       textarea {
@@ -147,13 +172,6 @@ interface EntryDraft {
       }
       textarea {
         resize: vertical;
-      }
-      .entry-builder {
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        padding-top: 0.75rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
       }
       .entries {
         list-style: none;
@@ -178,11 +196,9 @@ interface EntryDraft {
         font-weight: 700;
         text-transform: capitalize;
       }
-      code {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 0.15rem 0.35rem;
-        border-radius: 6px;
-        font-size: 0.85rem;
+      .summary {
+        font-size: 0.9rem;
+        color: #e2e8f0;
       }
       .actions {
         display: flex;
@@ -219,6 +235,26 @@ interface EntryDraft {
       .small {
         font-size: 0.9rem;
       }
+      .protocol-card {
+        border: 1px solid rgba(248, 113, 113, 0.4);
+        background: rgba(248, 113, 113, 0.08);
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 0.75rem;
+      }
+      .protocol-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .protocol-header .name {
+        font-weight: 700;
+        color: #fecdd3;
+      }
+      .instruction {
+        font-weight: 700;
+        margin: 0.4rem 0;
+      }
     `,
   ],
 })
@@ -234,23 +270,12 @@ export class NewObservationPage implements OnInit {
   saving = signal(false);
   error = signal<string | null>(null);
   entries = signal<EntryDraft[]>([]);
+  firedAdvisories = signal<Advisory[]>([]);
 
-  types: ObservationType[] = [
-    'temperature',
-    'heart_rate',
-    'respiratory_rate',
-    'oxygen_saturation',
-    'pain_score',
-    'weight',
-    'height',
-    'lesion_size',
-    'symptom',
-    'note',
-    'photo',
-  ];
-
-  entryType: ObservationType = 'note';
-  entryMetadata = '';
+  // Mirrors the child form's current type so episode changes only refetch the framing hint when a
+  // photo is actually being composed.
+  entryType: ObservationType = 'temperature';
+  framingHintFileId = signal<string | null>(null);
 
   form = this.fb.nonNullable.group({
     patientId: ['', [Validators.required]],
@@ -259,7 +284,6 @@ export class NewObservationPage implements OnInit {
     episodeSelection: this.fb.control<string[]>([], { nonNullable: true }),
     resolveSelected: [false],
     startEpisodeName: [''],
-    symptomTags: [''],
   });
 
   ngOnInit(): void {
@@ -292,7 +316,7 @@ export class NewObservationPage implements OnInit {
   private loadPatients() {
     const user = this.auth.user();
     if (!user) return;
-    this.api.get<Patient[]>(`/users/${user.id}/patients`).subscribe({
+    this.api.get<Patient[]>(`/patients`).subscribe({
       next: (res) => {
         this.patients.set(res);
         const current = this.form.getRawValue().patientId;
@@ -302,7 +326,7 @@ export class NewObservationPage implements OnInit {
           this.loadEpisodes(pid);
         }
       },
-      error: () => this.error.set('Unable to load patients'),
+      error: (err) => this.error.set(errorText(err, 'Unable to load patients')),
     });
   }
 
@@ -313,14 +337,47 @@ export class NewObservationPage implements OnInit {
     });
   }
 
-  addEntry() {
-    try {
-      const parsed = this.entryMetadata ? JSON.parse(this.entryMetadata) : null;
-      this.entries.set([...this.entries(), { type: this.entryType, metadata: parsed }]);
-      this.entryMetadata = '';
-    } catch (e) {
-      this.error.set('Metadata must be valid JSON');
+  addEntry(draft: EntryDraft) {
+    this.error.set(null);
+    this.entries.set([...this.entries(), draft]);
+  }
+
+  onEntryTypeChange(type: ObservationType) {
+    this.entryType = type;
+    this.error.set(null);
+    if (type === 'photo') {
+      this.refreshFramingHint();
     }
+  }
+
+  // One-line human summary for the pending-entries list, so a caregiver reviewing what they're
+  // about to save reads values rather than field names. Shown in their own units — the entries were
+  // just converted to canonical on the way in, so this converts back for display.
+  entrySummary(entry: EntryDraft): string {
+    return entrySummary(entry, unitsFor(this.auth.user()));
+  }
+
+  private refreshFramingHint() {
+    const { patientId, episodeSelection } = this.form.getRawValue();
+    const episodeId = (episodeSelection || []).find((id) => id !== '__new__');
+    if (!patientId || !episodeId) {
+      this.framingHintFileId.set(null);
+      return;
+    }
+    this.api.get<TimelineResponse>(`/patients/${patientId}/timeline`, { episodeId }).subscribe({
+      next: (res) => {
+        const photoEntries = res.entries
+          .filter((e) => e.kind === 'observation')
+          .flatMap((e) =>
+            ((e.display as any).entries ?? [])
+              .filter((x: any) => x.type === 'photo' && x.metadata?.fileId)
+              .map((x: any) => ({ timestamp: e.timestamp, fileId: x.metadata.fileId as string })),
+          )
+          .sort((a, b) => b.timestamp - a.timestamp);
+        this.framingHintFileId.set(photoEntries.length ? photoEntries[0].fileId : null);
+      },
+      error: () => this.framingHintFileId.set(null),
+    });
   }
 
   removeEntry(idx: number) {
@@ -338,6 +395,7 @@ export class NewObservationPage implements OnInit {
       current.delete(id);
     }
     this.form.patchValue({ episodeSelection: Array.from(current) });
+    if (this.entryType === 'photo') this.refreshFramingHint();
   }
 
   toggleCreateNew(event: Event) {
@@ -352,6 +410,7 @@ export class NewObservationPage implements OnInit {
       current.delete('__new__');
       this.form.patchValue({ episodeSelection: Array.from(current), startEpisodeName: '' });
     }
+    if (this.entryType === 'photo') this.refreshFramingHint();
   }
 
   submit() {
@@ -363,28 +422,45 @@ export class NewObservationPage implements OnInit {
     }
     this.saving.set(true);
     this.error.set(null);
-    const { patientId, observedAt, text, symptomTags, startEpisodeName, episodeSelection, resolveSelected } =
+    const { patientId, observedAt, text, startEpisodeName, episodeSelection, resolveSelected } =
       this.form.getRawValue();
     const episodeIds = (episodeSelection || []).filter((id) => id !== '__new__');
+    // Records the units this caregiver actually had on screen. Entry metadata is already canonical
+    // — this is provenance for whoever reads the entry later (api.md → Observations).
+    const unitPreferenceAtEntry: UnitPreference = {
+      temp: user.preferredTempUnit,
+      weight: user.preferredWeightUnit,
+      length: user.preferredLengthUnit,
+    };
     const payload: any = {
       observedAt: new Date(observedAt).toISOString(),
       text: text ?? undefined,
-      symptomTags: symptomTags ? symptomTags.split(',').map((s) => s.trim()).filter(Boolean) : [],
       startEpisodeName: this.createNewEpisode() ? startEpisodeName || undefined : undefined,
       episodeIds: episodeIds.length ? episodeIds : undefined,
       resolvesEpisodeIds: resolveSelected && episodeIds.length ? episodeIds : undefined,
+      unitPreferenceAtEntry,
       entries: this.entries(),
     };
-    this.api.post(`/patients/${patientId}/observations`, payload).subscribe({
-      next: () => {
+    this.api.post<Observation>(`/patients/${patientId}/observations`, payload).subscribe({
+      next: (res) => {
         this.saving.set(false);
-        this.router.navigateByUrl('/dashboard');
+        // Protocol trips (F-4.10) render as a card the caregiver must acknowledge before moving
+        // on, rather than being swept away by an immediate navigation (frontend.md → "Protocol card").
+        if (res.firedAdvisories?.length) {
+          this.firedAdvisories.set(res.firedAdvisories);
+        } else {
+          this.router.navigateByUrl('/dashboard');
+        }
       },
-      error: () => {
+      error: (err) => {
         this.saving.set(false);
-        this.error.set('Could not save observation.');
+        this.error.set(errorText(err, 'Could not save observation.'));
       },
     });
+  }
+
+  continueToDashboard() {
+    this.router.navigateByUrl('/dashboard');
   }
 
   cancel() {

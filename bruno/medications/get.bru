@@ -1,0 +1,26 @@
+meta {
+  name: Get Medication
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

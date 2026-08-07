@@ -1,0 +1,16 @@
+meta {
+  name: Delete Embodiment
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}embodiments/{{embodimentId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

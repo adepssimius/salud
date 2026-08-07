@@ -1,0 +1,30 @@
+meta {
+  name: Acknowledge Advisory
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}advisories/{{advisoryId}}/ack
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let aid = bru.getVar('advisoryId');
+  if (!aid) {
+    const listReq = await bru.runRequest('advisories/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) aid = list[0].id;
+  }
+  bru.setVar('advisoryId', aid);
+}
+
+assert {
+  acknowledgedByUserId: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

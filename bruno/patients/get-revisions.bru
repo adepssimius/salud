@@ -1,0 +1,32 @@
+meta {
+  name: Get Patient Revisions
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/revisions
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Newest first. Run "Update Patient" at least once first to populate a revision — a freshly-created
+  patient has none. The dedicated code-status PATCH deliberately does not write a revision here
+  (it has its own attribution trail: codeStatusSetByUserId/At).
+}

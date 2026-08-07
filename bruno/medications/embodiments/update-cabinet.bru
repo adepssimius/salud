@@ -1,0 +1,27 @@
+meta {
+  name: Update Embodiment Cabinet Fields
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}embodiments/{{embodimentId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "atHome": true,
+    "runningLow": true
+  }
+}
+
+assert {
+  runningLowFlaggedByUserId: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

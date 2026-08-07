@@ -1,0 +1,16 @@
+meta {
+  name: Delete Condition
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}conditions/{{conditionId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

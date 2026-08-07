@@ -60,12 +60,23 @@ describe('LoginPage', () => {
     expect(navSpy).toHaveBeenCalledWith('/dashboard');
   });
 
-  it('shows error on failure', () => {
+  it('shows a plain sentence for a known error code, not the raw code', () => {
     authMock.login.mockReturnValue(
-      throwError(() => ({ error: { message: 'Invalid' } })),
+      throwError(() => ({ error: { message: 'INVALID_CREDENTIALS' } })),
     );
     component.form.setValue({ email: 'a@example.com', password: 'pw' });
     component.submit();
-    expect(component.error()).toBe('Invalid');
+    expect(component.error()).toBe('That email and password do not match an account. Check both and try again.');
+    expect(component.error()).not.toContain('INVALID_CREDENTIALS');
+  });
+
+  it('falls back to a generic message for framework prose it cannot map', () => {
+    // Regression guard: this is exactly how a raw code used to reach the login screen.
+    authMock.login.mockReturnValue(
+      throwError(() => ({ error: { message: 'Unauthorized' } })),
+    );
+    component.form.setValue({ email: 'a@example.com', password: 'pw' });
+    component.submit();
+    expect(component.error()).toBe('Unable to sign in. Please try again.');
   });
 });

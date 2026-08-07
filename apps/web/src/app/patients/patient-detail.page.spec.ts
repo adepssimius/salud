@@ -46,7 +46,7 @@ describe('PatientDetailPage', () => {
     }).compileComponents();
   });
 
-  it('loads patient and care team', () => {
+  it('loads patient, care team, and conditions', () => {
     apiMock.get.mockReturnValueOnce(
       of({
         id: 'p1',
@@ -58,6 +58,9 @@ describe('PatientDetailPage', () => {
         latestWeightKg: null,
         latestWeightRecordedAt: null,
         myRole: 'parent',
+        codeStatus: null,
+        codeStatusSetByUserId: null,
+        codeStatusSetAt: null,
       }),
     );
     apiMock.get.mockReturnValueOnce(
@@ -68,12 +71,70 @@ describe('PatientDetailPage', () => {
         },
       ]),
     );
+    apiMock.get.mockReturnValueOnce(
+      of([{ id: 'c1', patientId: 'p1', name: 'ALL treatment', status: 'active' }]),
+    );
+    apiMock.get.mockReturnValueOnce(of([]));
 
     const fixture = TestBed.createComponent(PatientDetailPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
     expect(component.patient()?.fullName).toBe('Pat One');
     expect(component.careTeam().length).toBe(1);
+    expect(component.conditions().length).toBe(1);
+    expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/conditions');
+  });
+
+  it('sets code status via the dedicated endpoint', () => {
+    apiMock.get.mockReturnValue(
+      of({
+        id: 'p1',
+        codeStatus: null,
+        codeStatusSetByUserId: null,
+        codeStatusSetAt: null,
+      }),
+    );
+    apiMock.patch.mockReturnValue(
+      of({
+        id: 'p1',
+        fullName: 'Pat One',
+        codeStatus: 'Full code',
+        codeStatusSetByUserId: 'u1',
+        codeStatusSetAt: 1700000000,
+      }),
+    );
+    const fixture = TestBed.createComponent(PatientDetailPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+
+    component.startEditCodeStatus();
+    component.codeStatusDraft = 'Full code';
+    component.saveCodeStatus();
+
+    expect(apiMock.patch).toHaveBeenCalledWith('/patients/p1/code-status', { codeStatus: 'Full code' });
+    expect(component.patient()?.codeStatus).toBe('Full code');
+    expect(component.editingCodeStatus()).toBe(false);
+  });
+
+  it('navigates to new-condition and condition-detail', () => {
+    apiMock.get.mockReturnValue(of({}));
+    const fixture = TestBed.createComponent(PatientDetailPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+
+    component.goToNewCondition();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'conditions', 'new']);
+
+    component.goToCondition('c1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/conditions', 'c1']);
+  });
+
+  it('goToErBrief navigates to the ER Brief page', () => {
+    apiMock.get.mockReturnValue(of({}));
+    const fixture = TestBed.createComponent(PatientDetailPage);
+    fixture.detectChanges();
+    fixture.componentInstance.goToErBrief();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'er-brief']);
   });
 
   it('updates patient details', () => {
@@ -107,7 +168,7 @@ describe('PatientDetailPage', () => {
     const component = fixture.componentInstance;
     jest.spyOn(window, 'confirm').mockReturnValue(true);
     component.deletePatient();
-    expect(apiMock.delete).toHaveBeenCalledWith('/users/u1/patients/p1');
+    expect(apiMock.delete).toHaveBeenCalledWith('/patients/p1');
     expect(routerMock.navigate).toHaveBeenCalledWith(['/profile'], { queryParams: { tab: 'patients' } });
   });
 });

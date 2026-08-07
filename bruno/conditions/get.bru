@@ -1,0 +1,32 @@
+meta {
+  name: Get Condition
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}conditions/{{conditionId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let cid = bru.getVar('conditionId');
+  if (!cid) {
+    const listReq = await bru.runRequest('conditions/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) cid = list[0].id;
+  }
+  bru.setVar('conditionId', cid);
+}
+
+assert {
+  episodeIds: isDefined
+  scheduleIds: isDefined
+  protocols: isDefined
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

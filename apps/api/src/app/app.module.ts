@@ -8,6 +8,17 @@ import { PatientsModule } from './patients/patients.module';
 import { ObservationsModule } from './observations/observations.module';
 import { InterventionsModule } from './interventions/interventions.module';
 import { EpisodesModule } from './episodes/episodes.module';
+import { MedicationsModule } from './medications/medications.module';
+import { DosingModule } from './dosing/dosing.module';
+import { AdvisoriesModule } from './advisories/advisories.module';
+import { SchedulesModule } from './schedules/schedules.module';
+import { TimelineModule } from './timeline/timeline.module';
+import { ConditionsModule } from './conditions/conditions.module';
+import { ProtocolsModule } from './protocols/protocols.module';
+import { ReactionsModule } from './reactions/reactions.module';
+import { ErBriefModule } from './er-brief/er-brief.module';
+import { WhatsNewModule } from './whats-new/whats-new.module';
+import { FilesModule } from './files/files.module';
 
 @Module({
   imports: [
@@ -18,6 +29,17 @@ import { EpisodesModule } from './episodes/episodes.module';
     ObservationsModule,
     InterventionsModule,
     EpisodesModule,
+    MedicationsModule,
+    DosingModule,
+    AdvisoriesModule,
+    SchedulesModule,
+    TimelineModule,
+    ConditionsModule,
+    ProtocolsModule,
+    ReactionsModule,
+    ErBriefModule,
+    WhatsNewModule,
+    FilesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

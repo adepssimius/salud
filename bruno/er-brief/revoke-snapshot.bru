@@ -1,0 +1,21 @@
+meta {
+  name: Revoke Snapshot
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}er-brief/snapshots/{{snapshotId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Run "List Snapshots" first to populate {{snapshotId}} — the create-snapshot response
+  intentionally returns only the token (the external capability), not the row's internal id.
+}

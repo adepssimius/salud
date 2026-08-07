@@ -1,0 +1,36 @@
+meta {
+  name: Create Weight-Based Guideline
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}/guidelines
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "source": "AAP Clinical Report — Fever and Antipyretic Use in Children (2011)",
+    "type": "weight_based",
+    "mgPerKg": 15,
+    "maxMgPerDose": 1000,
+    "maxMgPerDay": 4000,
+    "minIntervalHours": 4
+  }
+}
+
+script:post-response {
+  bru.setVar('guidelineId', res.body.id);
+}
+
+assert {
+  id: isNotEmpty
+  source: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

@@ -31,6 +31,45 @@ export const patients = sqliteTable('patients', {
   ownedByUserId: text('owned_by_user_id')
     .notNull()
     .references(() => users.id),
+  codeStatus: text('code_status'),
+  codeStatusSetByUserId: text('code_status_set_by_user_id').references(() => users.id),
+  codeStatusSetAt: integer('code_status_set_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const conditions = sqliteTable('conditions', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  name: text('name').notNull(),
+  diagnosisText: text('diagnosis_text'),
+  status: text('status', { enum: ['active', 'resolved'] }).notNull(),
+  baselines: text('baselines'), // JSON array of strings
+  devices: text('devices'), // JSON array of strings
+  contacts: text('contacts'), // JSON array of {name, role, phone}
+  createdByUserId: text('created_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const protocols = sqliteTable('protocols', {
+  id: text('id').primaryKey(),
+  conditionId: text('condition_id')
+    .notNull()
+    .references(() => conditions.id),
+  name: text('name').notNull(),
+  triggerMetric: text('trigger_metric', {
+    enum: ['temperature', 'heart_rate', 'respiratory_rate', 'oxygen_saturation', 'pain_score'],
+  }).notNull(),
+  triggerOperator: text('trigger_operator', { enum: ['gte', 'lte'] }).notNull(),
+  triggerValue: real('trigger_value').notNull(),
+  instructionText: text('instruction_text').notNull(),
+  sourceText: text('source_text').notNull(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
@@ -47,6 +86,7 @@ export const careTeamMemberships = sqliteTable('care_team_memberships', {
     enum: ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'],
   }).notNull(),
   permissions: text('permissions', { enum: ['full'] }).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
@@ -56,6 +96,7 @@ export const episodes = sqliteTable('episodes', {
   patientId: text('patient_id')
     .notNull()
     .references(() => patients.id),
+  conditionId: text('condition_id').references(() => conditions.id),
   name: text('name').notNull(),
   startedAtType: text('started_at_type', { enum: ['observation', 'intervention'] }).notNull(),
   startedAtId: text('started_at_id').notNull(),
@@ -78,9 +119,6 @@ export const observations = sqliteTable('observations', {
   observedAt: integer('observed_at', { mode: 'timestamp' }).notNull(),
   text: text('text'),
   unitPreferenceAtEntry: text('unit_preference_at_entry'), // JSON string
-  symptomTags: text('symptom_tags'), // JSON array string
-  episodeTags: text('episode_tags'), // JSON array string
-  resolvesEpisodeIds: text('resolves_episode_ids'), // JSON array string
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
@@ -102,6 +140,7 @@ export const observationEntries = sqliteTable('observation_entries', {
       'lesion_size',
       'symptom',
       'note',
+      'tag',
       'photo',
     ],
   }).notNull(),
@@ -120,13 +159,22 @@ export const interventions = sqliteTable('interventions', {
     .references(() => users.id),
   performedAt: integer('performed_at', { mode: 'timestamp' }).notNull(),
   type: text('type', { enum: ['medication_dose', 'dressing_change'] }).notNull(),
-  interventionScheduleId: text('intervention_schedule_id').references(
-    () => interventionSchedules.id,
-  ),
-  episodeTags: text('episode_tags'), // JSON array string
-  resolvesEpisodeIds: text('resolves_episode_ids'), // JSON array string
+  scheduleId: text('schedule_id').references(() => interventionSchedules.id),
   notes: text('notes'),
   metadata: text('metadata'), // JSON string for type-specific payload
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const episodesEventsPivot = sqliteTable('episodes_events_pivot', {
+  id: text('id').primaryKey(),
+  episodeId: text('episode_id')
+    .notNull()
+    .references(() => episodes.id),
+  eventType: text('event_type', { enum: ['observation', 'intervention'] }).notNull(),
+  eventId: text('event_id').notNull(),
+  startsEpisode: integer('starts_episode', { mode: 'boolean' }).default(false).notNull(),
+  resolvesEpisode: integer('resolves_episode', { mode: 'boolean' }).default(false).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
@@ -134,6 +182,7 @@ export const interventions = sqliteTable('interventions', {
 export const medications = sqliteTable('medications', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
+  brandNames: text('brand_names'), // JSON array string
   description: text('description'),
   tags: text('tags'), // JSON array string
   defaultActive: integer('default_active', { mode: 'boolean' }).default(true).notNull(),
@@ -153,6 +202,11 @@ export const medicationEmbodiments = sqliteTable('medication_embodiments', {
     enum: ['tablet', 'capsule', 'ml', 'drop', 'other'],
   }).notNull(),
   notes: text('notes'),
+  atHome: integer('at_home', { mode: 'boolean' }).default(false).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }),
+  runningLow: integer('running_low', { mode: 'boolean' }).default(false).notNull(),
+  runningLowFlaggedByUserId: text('running_low_flagged_by_user_id').references(() => users.id),
+  runningLowFlaggedAt: integer('running_low_flagged_at', { mode: 'timestamp' }),
 });
 
 export const medicationGuidelines = sqliteTable('medication_guidelines', {
@@ -178,6 +232,25 @@ export const medicationGuidelines = sqliteTable('medication_guidelines', {
   notes: text('notes'),
 });
 
+export const adverseReactions = sqliteTable('adverse_reactions', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  description: text('description').notNull(),
+  occurredAt: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+  recordedByUserId: text('recorded_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  severity: text('severity', { enum: ['warning', 'danger'] }).notNull(),
+  scopeType: text('scope_type', { enum: ['embodiment', 'medication', 'tag'] }).notNull(),
+  medicationId: text('medication_id').references(() => medications.id),
+  embodimentId: text('embodiment_id').references(() => medicationEmbodiments.id),
+  tag: text('tag'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
 export const interventionSchedules = sqliteTable('intervention_schedules', {
   id: text('id').primaryKey(),
   patientId: text('patient_id')
@@ -189,6 +262,7 @@ export const interventionSchedules = sqliteTable('intervention_schedules', {
     () => medicationEmbodiments.id,
   ),
   episodeId: text('episode_id').references(() => episodes.id),
+  conditionId: text('condition_id').references(() => conditions.id),
   label: text('label').notNull(),
   doseMg: real('dose_mg'),
   doseMl: real('dose_ml'),
@@ -211,20 +285,73 @@ export const interventionSchedules = sqliteTable('intervention_schedules', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
 
-export const symptomTags = sqliteTable('symptom_tags', {
-  id: text('id').primaryKey(),
-  label: text('label').notNull(),
-  category: text('category', { enum: ['respiratory', 'GI', 'derm', 'other'] }).notNull(),
-});
-
 export const fileAssets = sqliteTable('file_assets', {
   id: text('id').primaryKey(),
   bucket: text('bucket').notNull(),
   path: text('path').notNull(),
   contentType: text('content_type').notNull(),
   sizeBytes: integer('size_bytes').notNull(),
+  patientId: text('patient_id').references(() => patients.id),
   createdByUserId: text('created_by_user_id')
     .notNull()
     .references(() => users.id),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const advisories = sqliteTable('advisories', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  type: text('type', {
+    enum: [
+      'atypical_dose',
+      'stale_weight',
+      'expired_embodiment',
+      'running_low',
+      'reaction_warning',
+      'reaction_danger',
+      'protocol_fired',
+    ],
+  }).notNull(),
+  severity: text('severity', { enum: ['info', 'warning', 'danger'] }).notNull(),
+  sourceType: text('source_type', {
+    enum: ['guideline', 'embodiment', 'reaction', 'protocol'],
+  }),
+  sourceId: text('source_id'),
+  contextType: text('context_type', { enum: ['observation', 'intervention'] }),
+  contextId: text('context_id'),
+  payload: text('payload'), // JSON string
+  acknowledgedByUserId: text('acknowledged_by_user_id').references(() => users.id),
+  acknowledgedAt: integer('acknowledged_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+export const erBriefSnapshots = sqliteTable('er_brief_snapshots', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  episodeId: text('episode_id').references(() => episodes.id),
+  token: text('token').notNull().unique(),
+  payload: text('payload').notNull(), // JSON string — frozen ErBrief response
+  createdByUserId: text('created_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const revisions = sqliteTable('revisions', {
+  id: text('id').primaryKey(),
+  entityType: text('entity_type', {
+    enum: ['observation', 'intervention', 'condition', 'patient'],
+  }).notNull(),
+  entityId: text('entity_id').notNull(),
+  snapshot: text('snapshot').notNull(), // JSON string — full prior client-facing state
+  editedByUserId: text('edited_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  editedAt: integer('edited_at', { mode: 'timestamp' }).default(now()).notNull(),
 });

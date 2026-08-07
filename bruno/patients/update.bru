@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}users/{{userId}}/patients/{{patientId}}
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}
   body: json
   auth: inherit
 }
@@ -17,19 +17,17 @@ body:json {
 }
 
 vars:pre-request {
-  patientId: d85d5367-ce33-4d91-a955-9345f67dec99
+  ~patientId: d85d5367-ce33-4d91-a955-9345f67dec99
 }
 
 script:pre-request {
-  // if (!bru.getVar("patientId")) {
-  //   console.log("No patientId set. Getting a random one.");
-  //   const patientsReq = await bru.runRequest("patients/list");
-  //   const patients = patientsReq.data;
-  //   const patient = patients[Math.floor(Math.random()*patients.length)];
-  //   bru.setVar('patientId', patient.id);
-  // }
-  const patientId = bru.getRequestVar('patientId')
-  bru.setVar('patientId', patientId)
+  let pid = bru.getRequestVar('patientId') || bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
 }
 
 settings {

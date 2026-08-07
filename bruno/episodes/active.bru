@@ -1,0 +1,23 @@
+meta {
+  name: List Active Episodes
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}episodes/active
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (Array.isArray(body) && body.length) {
+    bru.setVar('episodeId', body[0].id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

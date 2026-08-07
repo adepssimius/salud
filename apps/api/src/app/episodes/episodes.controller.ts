@@ -20,4 +20,14 @@ export class EpisodesController {
   async listActive(@Request() req: any) {
     return this.episodes.listActiveForUser(req.user.userId);
   }
+
+  // Must be declared after 'episodes/active' — NestJS matches routes in
+  // declaration order, and ':episodeId' would otherwise swallow 'active'.
+  @Get('episodes/:episodeId')
+  async getById(
+    @Request() req: any,
+    @Param('episodeId', new ParseUUIDPipe({ version: '4' })) episodeId: string,
+  ) {
+    return this.episodes.getById(episodeId, req.user.userId);
+  }
 }

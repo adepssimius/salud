@@ -1,0 +1,16 @@
+meta {
+  name: List Protocols
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}conditions/{{conditionId}}/protocols
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

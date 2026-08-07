@@ -1,0 +1,16 @@
+meta {
+  name: Delete Guideline
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}guidelines/{{guidelineId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

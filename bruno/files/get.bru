@@ -1,0 +1,28 @@
+meta {
+  name: Get File
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}files/{{fileId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  if (!bru.getVar('fileId')) {
+    console.log('No fileId set. Run "Upload File" first.');
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Streams the raw bytes back with the stored Content-Type (api.md → "Files"). Access control
+  mirrors every other patient-scoped read — 404 FILE_NOT_FOUND both when the file doesn't exist
+  and when the caller isn't on the owning patient's care team.
+}

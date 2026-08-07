@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
+import { errorText } from '../core/error-display';
 import { CommonModule } from '@angular/common';
 
 @Component({
@@ -135,7 +136,7 @@ export class LoginPage {
       },
       error: (err) => {
         this.loading.set(false);
-        this.error.set(err?.error?.message ?? 'Unable to sign in. Please try again.');
+        this.error.set(errorText(err, 'Unable to sign in. Please try again.'));
       },
     });
   }
