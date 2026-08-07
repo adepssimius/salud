@@ -203,6 +203,10 @@ export interface Episode {
   startedAt?: number | null; // epoch seconds
   endedAt?: number | null; // epoch seconds
   notes?: string | null;
+  // Only returned by GET /api/episodes/:episodeId, not by the list routes. Ids only — for the
+  // hydrated events, call GET /api/patients/:patientId/timeline?episodeId=...
+  observationIds?: string[];
+  interventionIds?: string[];
   createdAt?: number;
   updatedAt?: number;
 }

@@ -89,6 +89,10 @@ describe('Episodes (e2e)', () => {
     expect(getRes.body.status).toBe('active');
     expect(getRes.body.observationIds).toEqual([obsRes.body.id]);
     expect(getRes.body.interventionIds).toEqual([]);
+    // Derived timestamps, resolved from the linked start event — the single-episode route returns
+    // the same shape the list route does (api.md → Episodes).
+    expect(getRes.body.startedAt).toBe(obsRes.body.observedAt);
+    expect(getRes.body.endedAt).toBeNull();
   });
 
   it('reflects resolution and includes the resolving intervention id', async () => {
@@ -130,6 +134,9 @@ describe('Episodes (e2e)', () => {
     expect(getRes.body.endedAtId).toBe(intRes.body.id);
     expect(getRes.body.observationIds).toEqual([obsRes.body.id]);
     expect(getRes.body.interventionIds).toEqual([intRes.body.id]);
+    // Once resolved, endedAt resolves from the linked resolving event rather than staying null.
+    expect(getRes.body.startedAt).toBe(obsRes.body.observedAt);
+    expect(getRes.body.endedAt).toBe(intRes.body.performedAt);
   });
 
   it('returns 404 for a non-member and 400 for a malformed id', async () => {

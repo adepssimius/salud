@@ -117,13 +117,17 @@ export class EpisodesService {
       status: row.status,
       startedAtType: row.startedAtType,
       startedAtId: row.startedAtId,
-      endedAtType: row.endedAtType,
-      endedAtId: row.endedAtId,
-      notes: row.notes,
+      endedAtType: row.endedAtType ?? null,
+      endedAtId: row.endedAtId ?? null,
+      // Same derived fields listForPatient returns — a single-episode read shouldn't hand back a
+      // less-usable shape than the list route (api.md → Episodes).
+      startedAt: await this.resolveEventTimestamp(row.startedAtType, row.startedAtId),
+      endedAt: row.endedAtId ? await this.resolveEventTimestamp(row.endedAtType, row.endedAtId) : null,
+      notes: row.notes ?? null,
       observationIds: Array.from(new Set<string>(observationIds)),
       interventionIds: Array.from(new Set<string>(interventionIds)),
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      createdAt: normalizeTs(row.createdAt),
+      updatedAt: normalizeTs(row.updatedAt),
     };
   }
 
