@@ -1,6 +1,4 @@
-* {
-  box-sizing: border-box;
-}
+/* The border-box reset moved to src/styles.css — scoped here, it only ever reached the shell. */
 
 :host {
   display: block;

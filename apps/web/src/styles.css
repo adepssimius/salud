@@ -1,1 +1,20 @@
-/* You can add global styles to this file, and also import other style files */
+/*
+ * Global styles for the Salud web app.
+ *
+ * Anything here escapes Angular's per-component style scoping, so it applies to every page. Note the
+ * specificity consequence: an emulated component rule carries an extra [_ngcontent-*] attribute
+ * (+0,1,0), so a page's own `.card` always beats a global `.card`. That is deliberate — pages can
+ * still override, and it means adopting a global rule can be done page by page without a flag day.
+ */
+
+/*
+ * The border-box reset. This lived in app.css, which is component-scoped to the shell, so only
+ * app.html's own elements got it — every routed page rendered content-box. That made declared widths
+ * untruthful: a card saying `max-width: 720px` actually measured 762px once its padding and border
+ * were added on. Pages already assume otherwise in 13 places that pair `width: 100%` with padding.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
