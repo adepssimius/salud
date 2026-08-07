@@ -95,6 +95,7 @@ const DOSE_MARKER_Y = 230;
             [attr.width]="band.width"
             [attr.height]="chartHeight"
             class="episode-band"
+            (click)="goToEpisode(band.id)"
           >
             <title>{{ band.name }}</title>
           </rect>
@@ -186,6 +187,10 @@ const DOSE_MARKER_Y = 230;
       }
       .episode-band {
         fill: rgba(148, 163, 184, 0.08);
+        cursor: pointer;
+      }
+      .episode-band:hover {
+        fill: rgba(148, 163, 184, 0.18);
       }
       .temp-line {
         fill: none;
@@ -383,5 +388,9 @@ export class TimelinePage implements OnInit {
 
   backToPatient() {
     this.router.navigate(['/patients', this.patientId]);
+  }
+
+  goToEpisode(episodeId: string) {
+    this.router.navigate(['/episodes', episodeId]);
   }
 }

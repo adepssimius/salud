@@ -142,4 +142,11 @@ describe('TimelinePage', () => {
     fixture.componentInstance.backToPatient();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
   });
+
+  it('goToEpisode navigates to the episode detail page when a band is clicked', () => {
+    const fixture = TestBed.createComponent(TimelinePage);
+    fixture.detectChanges();
+    fixture.componentInstance.goToEpisode('ep1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
+  });
 });
