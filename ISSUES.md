@@ -256,17 +256,29 @@ the strip correctly with the countdown omitted when no guideline supplies an int
 
 ---
 
-### 9. 🟡 No episode detail view in the web app
+### 9. ✅ No episode detail view in the web app
 **Correction to original review:** I said `GET /api/episodes/:episodeId` is "spec'd but not routed."
 **That's stale** — it exists at `apps/api/src/app/episodes/episodes.controller.ts:26` **[verified]**.
-The API side is done.
+The API side was done; it needed one addition (`getById` now returns the same derived
+`startedAt`/`endedAt` the list route does, plus raw `observationIds`/`interventionIds`).
 
-**Remaining:** The web has nowhere to click into an episode. Timeline bands are hover-tooltip only
-(`timeline.page.ts`, `<title>` inside the `<rect>`), so an episode is visible but not navigable.
+**Route landed flat, not nested:** `episodes/:id`, not `patients/:id/episodes/:episodeId` — matches
+the other top-level resource routes (`/conditions/:id`, `/medications/:id`) and keeps the URL stable
+regardless of how the caregiver navigated in.
 
-**Fix:** An `episodes/episode-detail.page.ts` at `patients/:id/episodes/:episodeId` — the episode's
-events, its medications, a resolve action, and a link to the ER Brief scoped to that episode. Make
-the timeline bands clickable into it.
+**No direct resolve endpoint, by design:** the new page's "Resolve this episode" action doesn't call
+one — it hands off to `/observations/new?patientId=&resolveEpisodeId=`, which pre-selects and
+pre-checks "resolve" on the matching episode, because episodes only close as a side effect of a
+logged observation (see `CLAUDE.md` → Episode model).
+
+**Events come from the existing episode-filtered timeline**, not new server-side aggregation —
+`GET /patients/:patientId/timeline?episodeId=` already existed and already resolves medication names
+and hydrated entries, so the page makes two requests (`GET /episodes/:id` + that route) instead of
+duplicating `TimelineService` logic behind a circular module dependency.
+
+Wired click-through from all 4 places an episode was previously visible but not navigable: timeline
+bands, the dashboard's active-episode cards, condition-detail's nested episodes, and the (caregiver,
+non-frozen) ER Brief's prior-episodes list.
 
 ---
 
