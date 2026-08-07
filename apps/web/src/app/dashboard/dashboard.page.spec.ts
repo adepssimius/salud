@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { DashboardPage } from './dashboard.page';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
@@ -12,6 +12,7 @@ describe('DashboardPage', () => {
 
   const emptyPayload = {
     lastDoses: [],
+    whatsNew: [],
     activeEpisodes: [],
     upcomingSchedules: [],
     shoppingList: [],
@@ -20,7 +21,13 @@ describe('DashboardPage', () => {
 
   beforeEach(async () => {
     apiMock = {
-      get: jest.fn().mockReturnValue(of(emptyPayload)),
+      // Answers /dashboard and nothing else. A path-blind mockReturnValue used to hand the dashboard
+      // payload to every url, which is how the whats-new fan-out went untested for so long — the
+      // page asked /patients, got an object, read `.length` as undefined, and silently bailed. Any
+      // stray request now fails loudly instead of being quietly satisfied.
+      get: jest.fn().mockImplementation((path: string) =>
+        path === '/dashboard' ? of(emptyPayload) : throwError(() => new Error(`unexpected GET ${path}`)),
+      ),
       post: jest.fn(),
     };
     authMock = {
@@ -185,35 +192,101 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('shows a while-you-were-asleep card only for patients with a non-empty diff', () => {
-    apiMock.get.mockImplementation((path: string) => {
-      if (path === '/dashboard') return of(emptyPayload);
-      if (path === '/patients') {
-        return of([
-          { id: 'p1', fullName: 'Has News' },
-          { id: 'p2', fullName: 'Nothing New' },
-        ]);
-      }
-      if (path === '/patients/p1/whats-new') {
-        return of({ since: 1700000000, events: [{ id: 'e1' }], advisoriesFired: [], nowDue: [] });
-      }
-      if (path === '/patients/p2/whats-new') {
-        return of({ since: 1700000000, events: [], advisoriesFired: [], nowDue: [] });
-      }
-      return of(null);
+  describe('while you were asleep', () => {
+    const summary = (over: Record<string, unknown>) => ({
+      patientId: 'p1',
+      patientName: 'Kiddo',
+      since: 1700000000,
+      eventCount: 0,
+      advisoryCount: 0,
+      nowDueCount: 0,
+      ...over,
     });
+
+    it('renders a card only for patients with a non-empty diff — the server sends all-zero rows too', () => {
+      apiMock.get.mockReturnValue(
+        of({
+          ...emptyPayload,
+          whatsNew: [
+            summary({ patientId: 'p1', patientName: 'Has News', eventCount: 1 }),
+            summary({ patientId: 'p2', patientName: 'Nothing New' }),
+          ],
+        }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      const comp = fixture.componentInstance;
+
+      expect(comp.whatsNewSummaries().length).toBe(1);
+      expect(comp.whatsNewSummaries()[0].patientName).toBe('Has News');
+      const text = fixture.nativeElement.textContent;
+      expect(text).toContain('While you were asleep');
+      expect(text).toContain('Has News');
+      expect(text).not.toContain('Nothing New');
+
+      comp.goToWhatsNew('p1');
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'whats-new']);
+    });
+
+    // The regression guard for ISSUES.md #10: the counts used to cost GET /patients plus one
+    // GET /patients/:id/whats-new per patient on top of the dashboard request.
+    it('reads the counts off the dashboard payload instead of fanning out per patient', () => {
+      apiMock.get.mockReturnValue(of({ ...emptyPayload, whatsNew: [summary({ eventCount: 3 })] }));
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+
+      expect(apiMock.get).toHaveBeenCalledTimes(1);
+      expect(apiMock.get).toHaveBeenCalledWith('/dashboard');
+      expect(apiMock.get).not.toHaveBeenCalledWith('/patients');
+    });
+
+    it('pluralizes each clause and joins them with separators', () => {
+      apiMock.get.mockReturnValue(
+        of({
+          ...emptyPayload,
+          whatsNew: [summary({ eventCount: 1, advisoryCount: 2, nowDueCount: 1 })],
+        }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      const text = fixture.nativeElement.textContent.replace(/\s+/g, ' ');
+
+      expect(text).toContain('1 new event ·');
+      expect(text).not.toContain('1 new events');
+      expect(text).toContain('2 advisories fired ·');
+      expect(text).toContain('1 due now');
+    });
+
+    it('omits a zero clause entirely rather than reading "0 new events"', () => {
+      apiMock.get.mockReturnValue(
+        of({ ...emptyPayload, whatsNew: [summary({ eventCount: 0, advisoryCount: 1 })] }),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      const text = fixture.nativeElement.textContent;
+
+      expect(text).toContain('1 advisory fired');
+      expect(text).not.toContain('0 new event');
+    });
+  });
+
+  it('surfaces a message when the dashboard fails to load, rather than rendering blank', () => {
+    apiMock.get.mockReturnValue(throwError(() => new Error('boom')));
     const fixture = TestBed.createComponent(DashboardPage);
     fixture.detectChanges();
     const comp = fixture.componentInstance;
 
-    expect(comp.whatsNewSummaries().length).toBe(1);
-    expect(comp.whatsNewSummaries()[0].patientName).toBe('Has News');
-    const text = fixture.nativeElement.textContent;
-    expect(text).toContain('While you were asleep');
-    expect(text).toContain('Has News');
-    expect(text).not.toContain('Nothing New');
+    expect(comp.dashboard()).toBeNull();
+    expect(comp.error()).toBe('Could not load the dashboard.');
+    expect(fixture.nativeElement.textContent).toContain('Could not load the dashboard.');
+  });
 
-    comp.goToWhatsNew('p1');
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'whats-new']);
+  it('surfaces a message when restock fails', () => {
+    apiMock.post.mockReturnValue(throwError(() => new Error('boom')));
+    const fixture = TestBed.createComponent(DashboardPage);
+    fixture.detectChanges();
+    fixture.componentInstance.restock('emb-1');
+
+    expect(fixture.componentInstance.error()).toBe('Could not mark that as restocked.');
   });
 });

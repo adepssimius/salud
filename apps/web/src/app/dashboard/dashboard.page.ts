@@ -1,21 +1,12 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
-import { forkJoin, of } from 'rxjs';
-import { catchError } from 'rxjs/operators';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { nextDoseLabel, timeAgo, relativeTime } from '../core/relative-time';
-import { DashboardPayload, Patient, WhatsNewResponse } from '@salud/shared/types';
-
-interface WhatsNewSummary {
-  patientId: string;
-  patientName: string;
-  eventCount: number;
-  advisoryCount: number;
-  nowDueCount: number;
-}
+import { errorText } from '../core/error-display';
+import { DashboardPayload } from '@salud/shared/types';
 
 @Component({
   selector: 'app-dashboard-page',
@@ -67,10 +58,19 @@ interface WhatsNewSummary {
               <div class="row-main">
                 <strong>{{ w.patientName }}</strong>
               </div>
+              <!-- Every clause is conditional: a patient with no new events but a fired advisory
+                   should read "1 advisory fired", not "0 new events · 1 advisory fired". -->
               <div class="muted small">
-                {{ w.eventCount }} new event{{ w.eventCount === 1 ? '' : 's' }}
-                <span *ngIf="w.advisoryCount"> · {{ w.advisoryCount }} advisor{{ w.advisoryCount === 1 ? 'y' : 'ies' }} fired</span>
-                <span *ngIf="w.nowDueCount"> · {{ w.nowDueCount }} due now</span>
+                <span *ngIf="w.eventCount">{{ w.eventCount }} new event{{ w.eventCount === 1 ? '' : 's' }}</span>
+                <span *ngIf="w.advisoryCount"
+                  >{{ w.eventCount ? ' · ' : '' }}{{ w.advisoryCount }} advisor{{
+                    w.advisoryCount === 1 ? 'y' : 'ies'
+                  }}
+                  fired</span
+                >
+                <span *ngIf="w.nowDueCount"
+                  >{{ w.eventCount || w.advisoryCount ? ' · ' : '' }}{{ w.nowDueCount }} due now</span
+                >
               </div>
             </button>
           </li>
@@ -133,6 +133,7 @@ interface WhatsNewSummary {
         *ngIf="
           dashboard() &&
           !dashboard()!.lastDoses.length &&
+          !whatsNewSummaries().length &&
           !dashboard()!.activeEpisodes.length &&
           !dashboard()!.upcomingSchedules.length &&
           !dashboard()!.shoppingList.length &&
@@ -141,6 +142,11 @@ interface WhatsNewSummary {
       >
         Nothing needs attention right now.
       </p>
+
+      <!-- An unreachable API must say so. A blank dashboard reads as "nothing has been logged",
+           which is the worst possible answer on the screen used to decide whether a dose was
+           already given (frontend.md → Errors & failure messages). -->
+      <p class="error" *ngIf="error()">{{ error() }}</p>
     </div>
   `,
   styles: [
@@ -164,6 +170,9 @@ interface WhatsNewSummary {
       }
       .muted {
         color: #cbd5e1;
+      }
+      .error {
+        color: #fca5a5;
       }
       .small {
         font-size: 0.85rem;
@@ -320,65 +329,39 @@ export class DashboardPage implements OnInit {
   private readonly auth = inject(AuthService);
 
   dashboard = signal<DashboardPayload | null>(null);
-  whatsNewSummaries = signal<WhatsNewSummary[]>([]);
+  error = signal<string | null>(null);
+
+  // The server emits a row per accessible patient, all-zero rows included; hiding the empty ones is
+  // this page's call (frontend.md → While You Were Asleep). Nothing changed since you last looked is
+  // genuinely nothing — unlike the Last doses strip, whose empty state is itself the answer.
+  whatsNewSummaries = computed(() =>
+    (this.dashboard()?.whatsNew ?? []).filter((w) => w.eventCount || w.advisoryCount || w.nowDueCount),
+  );
 
   ngOnInit(): void {
     const user = this.auth.user();
     if (!user && this.auth.token) {
       this.auth.me().subscribe({
-        next: () => {
-          this.load();
-          this.loadWhatsNew();
-        },
+        next: () => this.load(),
         error: () => this.auth.logout(),
       });
     } else {
       this.load();
-      this.loadWhatsNew();
     }
   }
 
+  // One request for the whole page. The WYWA counts used to cost an extra GET /patients plus one
+  // GET /patients/:id/whats-new per patient; they now ride along on the dashboard payload.
   private load() {
     this.api.get<DashboardPayload>('/dashboard').subscribe({
-      next: (res) => this.dashboard.set(res),
-      error: () => this.dashboard.set(null),
-    });
-  }
-
-  private loadWhatsNew() {
-    this.api.get<Patient[]>('/patients').subscribe({
-      next: (patients) => {
-        if (!patients.length) {
-          this.whatsNewSummaries.set([]);
-          return;
-        }
-        forkJoin(
-          patients.map((p) =>
-            this.api.get<WhatsNewResponse>(`/patients/${p.id}/whats-new`).pipe(
-              catchError(() => of(null)),
-            ),
-          ),
-        ).subscribe((results) => {
-          const summaries: WhatsNewSummary[] = [];
-          results.forEach((res, i) => {
-            if (!res) return;
-            const eventCount = res.events.length;
-            const advisoryCount = res.advisoriesFired.length;
-            const nowDueCount = res.nowDue.length;
-            if (eventCount || advisoryCount || nowDueCount) {
-              summaries.push({
-                patientId: patients[i].id,
-                patientName: patients[i].fullName,
-                eventCount,
-                advisoryCount,
-                nowDueCount,
-              });
-            }
-          });
-          this.whatsNewSummaries.set(summaries);
-        });
+      next: (res) => {
+        this.dashboard.set(res);
+        this.error.set(null);
       },
-      error: () => this.whatsNewSummaries.set([]),
+      error: (err) => {
+        this.dashboard.set(null);
+        this.error.set(errorText(err, 'Could not load the dashboard.'));
+      },
     });
   }
 
@@ -417,6 +400,7 @@ export class DashboardPage implements OnInit {
   restock(embodimentId: string) {
     this.api.post(`/embodiments/${embodimentId}/restock`, {}).subscribe({
       next: () => this.load(),
+      error: (err) => this.error.set(errorText(err, 'Could not mark that as restocked.')),
     });
   }
 
