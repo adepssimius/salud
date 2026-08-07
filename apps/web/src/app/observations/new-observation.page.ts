@@ -1,7 +1,7 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
@@ -67,7 +67,7 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
           <span>Episodes</span>
           <div class="episode-list">
             <label class="inline-check" *ngFor="let ep of activeEpisodes()">
-              <input type="checkbox" [value]="ep.id" (change)="toggleEpisode(ep.id, $event)" />
+              <input type="checkbox" [value]="ep.id" [checked]="isEpisodeSelected(ep.id)" (change)="toggleEpisode(ep.id, $event)" />
               <span>{{ ep.name }}</span>
             </label>
             <label class="inline-check">
@@ -262,6 +262,7 @@ export class NewObservationPage implements OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder);
 
   patients = signal<Patient[]>([]);
@@ -286,6 +287,11 @@ export class NewObservationPage implements OnInit {
     startEpisodeName: [''],
   });
 
+  // Set when arriving from an episode's "Resolve this episode" action
+  // (episode-detail.page.ts) — resolution is deliberately only ever a side effect of a logged
+  // observation, never a direct edit, so that page hands off here instead of calling an API itself.
+  private resolveEpisodeIdParam: string | null = null;
+
   ngOnInit(): void {
     // Prefill observedAt with current datetime-local value
     const now = new Date();
@@ -293,6 +299,10 @@ export class NewObservationPage implements OnInit {
       .toISOString()
       .slice(0, 16);
     this.form.patchValue({ observedAt: localIso });
+
+    const patientIdParam = this.route.snapshot.queryParamMap.get('patientId');
+    if (patientIdParam) this.form.patchValue({ patientId: patientIdParam });
+    this.resolveEpisodeIdParam = this.route.snapshot.queryParamMap.get('resolveEpisodeId');
 
     const user = this.auth.user();
     if (!user && this.auth.token) {
@@ -332,7 +342,16 @@ export class NewObservationPage implements OnInit {
 
   private loadEpisodes(patientId: string) {
     this.api.get<Array<{ id: string; name: string }>>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
-      next: (eps) => this.activeEpisodes.set(eps),
+      next: (eps) => {
+        this.activeEpisodes.set(eps);
+        if (this.resolveEpisodeIdParam && eps.some((ep) => ep.id === this.resolveEpisodeIdParam)) {
+          this.form.patchValue({
+            episodeSelection: [this.resolveEpisodeIdParam],
+            resolveSelected: true,
+          });
+          this.resolveEpisodeIdParam = null; // only ever apply this once, on the first successful load
+        }
+      },
       error: () => this.activeEpisodes.set([]),
     });
   }
@@ -384,6 +403,10 @@ export class NewObservationPage implements OnInit {
     const next = [...this.entries()];
     next.splice(idx, 1);
     this.entries.set(next);
+  }
+
+  isEpisodeSelected(id: string): boolean {
+    return this.form.getRawValue().episodeSelection.includes(id);
   }
 
   toggleEpisode(id: string, event: Event) {

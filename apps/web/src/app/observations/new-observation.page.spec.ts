@@ -3,12 +3,13 @@ import { of, throwError } from 'rxjs';
 import { NewObservationPage } from './new-observation.page';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 
 describe('NewObservationPage', () => {
   let apiMock: any;
   let authMock: any;
   let routerMock: any;
+  let routeMock: any;
 
   beforeEach(async () => {
     apiMock = {
@@ -29,6 +30,7 @@ describe('NewObservationPage', () => {
       logout: jest.fn(),
     };
     routerMock = { navigateByUrl: jest.fn(), navigate: jest.fn() };
+    routeMock = { snapshot: { queryParamMap: new Map() } };
 
     await TestBed.configureTestingModule({
       imports: [NewObservationPage],
@@ -36,6 +38,7 @@ describe('NewObservationPage', () => {
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
         { provide: Router, useValue: routerMock },
+        { provide: ActivatedRoute, useValue: routeMock },
       ],
     }).compileComponents();
   });
@@ -229,5 +232,43 @@ describe('NewObservationPage', () => {
     comp.onEntryTypeChange('photo');
 
     expect(comp.framingHintFileId()).toBe('old-file');
+  });
+
+  it('prefills the patient and pre-checks the episode to resolve, arriving from episode-detail\'s "Resolve" action', () => {
+    routeMock.snapshot.queryParamMap = new Map([
+      ['patientId', 'p1'],
+      ['resolveEpisodeId', 'ep1'],
+    ]);
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/episodes')) return of([{ id: 'ep1', name: 'Rash watch' }]);
+      if (path === '/patients') return of([{ id: 'p1', fullName: 'Kiddo' }]);
+      return of([]);
+    });
+    const fixture = TestBed.createComponent(NewObservationPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    expect(comp.form.getRawValue().patientId).toBe('p1');
+    expect(comp.form.getRawValue().episodeSelection).toEqual(['ep1']);
+    expect(comp.form.getRawValue().resolveSelected).toBe(true);
+    expect(comp.isEpisodeSelected('ep1')).toBe(true);
+  });
+
+  it('ignores a resolveEpisodeId that is not among the patient\'s active episodes', () => {
+    routeMock.snapshot.queryParamMap = new Map([
+      ['patientId', 'p1'],
+      ['resolveEpisodeId', 'stale-episode'],
+    ]);
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/episodes')) return of([{ id: 'ep1', name: 'Rash watch' }]);
+      if (path === '/patients') return of([{ id: 'p1', fullName: 'Kiddo' }]);
+      return of([]);
+    });
+    const fixture = TestBed.createComponent(NewObservationPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    expect(comp.form.getRawValue().episodeSelection).toEqual([]);
+    expect(comp.form.getRawValue().resolveSelected).toBe(false);
   });
 });
