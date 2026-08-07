@@ -711,6 +711,32 @@ export interface DashboardPatientLastDoses {
   doses: DashboardLastDose[]; // most recent first
 }
 
+/**
+ * The "While You Were Asleep" diff reduced to counts, so the dashboard card renders from the one
+ * dashboard request instead of calling GET /patients/:id/whats-new per patient. The full hydrated
+ * diff still lives on that endpoint — it's what whats-new.page.ts renders.
+ *
+ * Like DashboardPatientLastDoses, one row per accessible patient, **all-zero rows included**.
+ * frontend.md's "the card shows only when the diff is non-empty" is a client render rule over this
+ * array, not a filter the server performs — keeping the row makes "nothing changed" distinguishable
+ * from "this patient dropped out of the payload".
+ */
+export interface DashboardWhatsNewSummary {
+  patientId: string;
+  patientName: string;
+  /** This caller's own watermark for this patient; 24h ago when they have never acked. */
+  since: number; // epoch seconds
+  /** Observations + interventions since `since`, on clinical time. Advisories are counted below. */
+  eventCount: number;
+  /**
+   * Every advisory type created since `since`, **acknowledged ones included** — so this is NOT the
+   * same number as `DashboardPayload.unacknowledgedAdvisories.length`.
+   */
+  advisoryCount: number;
+  /** Present-tense: what is due right now, independent of the watermark. */
+  nowDueCount: number;
+}
+
 export interface DashboardActiveEpisode {
   patientId: string;
   patientName: string;
@@ -741,6 +767,7 @@ export interface DashboardShoppingListItem {
 
 export interface DashboardPayload {
   lastDoses: DashboardPatientLastDoses[];
+  whatsNew: DashboardWhatsNewSummary[];
   activeEpisodes: DashboardActiveEpisode[];
   upcomingSchedules: DashboardUpcomingSchedule[];
   shoppingList: DashboardShoppingListItem[];

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
   advisories,
@@ -17,6 +17,13 @@ import { PatientsService } from '../patients/patients.service';
 import { ObservationsService } from '../observations/observations.service';
 import { InterventionsService } from '../interventions/interventions.service';
 import { EpisodesService } from '../episodes/episodes.service';
+import {
+  advisoriesSince,
+  interventionsSince,
+  isNowDue,
+  observationsSince,
+  whatsNewSince,
+} from '../whats-new/whats-new-window';
 
 function normalizeTs(value: any): number | null {
   if (value === null || value === undefined) return null;
@@ -163,17 +170,29 @@ export class TimelineService {
     };
   }
 
-  private async accessiblePatients(userId: string): Promise<Array<{ id: string; fullName: string }>> {
+  // lastSeenAt rides along free: this already reads the caller's care_team_memberships rows, and the
+  // watermark lives on that very row — so the whats-new counts below cost no extra query to scope.
+  private async accessiblePatients(
+    userId: string,
+  ): Promise<Array<{ id: string; fullName: string; lastSeenAt: number | null }>> {
     const db = this.db.db as any;
     const rows = await db
-      .select({ patient: patients })
+      .select({ patient: patients, lastSeenAt: careTeamMemberships.lastSeenAt })
       .from(careTeamMemberships)
       .leftJoin(patients, eq(careTeamMemberships.patientId, patients.id))
       .where(eq(careTeamMemberships.userId, userId));
-    const byId = new Map<string, { id: string; fullName: string }>();
+    const byId = new Map<string, { id: string; fullName: string; lastSeenAt: number | null }>();
     for (const r of rows) {
+      // First row wins on a duplicate membership, matching WhatsNewService.getMembership's
+      // arbitrary .limit(1). There's no unique index on (patient_id, user_id), so "pick the
+      // newest watermark" would be more correct in isolation but would make the dashboard and the
+      // per-patient endpoint disagree — which is the one failure mode that matters here.
       if (r.patient?.id && !byId.has(r.patient.id)) {
-        byId.set(r.patient.id, { id: r.patient.id, fullName: r.patient.fullName });
+        byId.set(r.patient.id, {
+          id: r.patient.id,
+          fullName: r.patient.fullName,
+          lastSeenAt: normalizeTs(r.lastSeenAt),
+        });
       }
     }
     return Array.from(byId.values()).sort((a, b) => a.fullName.localeCompare(b.fullName));
@@ -241,6 +260,59 @@ export class TimelineService {
         .sort((a, b) => b.lastDoseAt - a.lastDoseAt);
       return { patientId: p.id, patientName: p.fullName, doses };
     });
+  }
+
+  // The "While You Were Asleep" diff as counts (api.md → GET /api/dashboard). The dashboard card
+  // only ever needed three integers per patient, but used to fan out to GET .../whats-new once per
+  // patient to get them — each of which fully hydrates a timeline. This answers all patients in
+  // three batched queries plus zero for nowDueCount, and the window rules come from
+  // whats-new-window.ts so these numbers can't drift from what the per-patient endpoint reports.
+  //
+  // Watermarks differ per patient, so this is an OR of per-patient AND-pairs rather than one
+  // inArray + one threshold: `min(since)` across patients collapses to the 24h fallback the moment
+  // any one caregiver has never acked, which would fetch a whole day to answer a ten-minute question.
+  private async buildWhatsNewSummaries(
+    accessible: Array<{ id: string; fullName: string; lastSeenAt: number | null }>,
+    upcomingSchedules: Array<{ patientId: string; nextDueAt: number | null }>,
+    nowTs: number,
+  ) {
+    if (!accessible.length) return [];
+    const db = this.db.db as any;
+    const sinceById = new Map(accessible.map((p) => [p.id, whatsNewSince(p.lastSeenAt, nowTs)]));
+
+    // Project the one column each tally needs — no metadata JSON, no entries join. That's what
+    // keeps this cheap for a caregiver who hasn't opened the app in three weeks.
+    const tally = async (table: any, column: any, predicate: (id: string, since: number) => any) => {
+      const rows = await db
+        .select({ patientId: column })
+        .from(table)
+        .where(or(...accessible.map((p) => predicate(p.id, sinceById.get(p.id)!))));
+      const counts = new Map<string, number>();
+      for (const r of rows) counts.set(r.patientId, (counts.get(r.patientId) ?? 0) + 1);
+      return counts;
+    };
+
+    const [obsCounts, intCounts, advCounts] = await Promise.all([
+      tally(observations, observations.patientId, observationsSince),
+      tally(interventions, interventions.patientId, interventionsSince),
+      tally(advisories, advisories.patientId, advisoriesSince),
+    ]);
+
+    // No query of its own — getDashboard has already fetched every active schedule for every
+    // accessible patient, which is a strict superset of what this needs.
+    const nowDueCounts = new Map<string, number>();
+    for (const s of upcomingSchedules) {
+      if (isNowDue(s.nextDueAt, nowTs)) nowDueCounts.set(s.patientId, (nowDueCounts.get(s.patientId) ?? 0) + 1);
+    }
+
+    return accessible.map((p) => ({
+      patientId: p.id,
+      patientName: p.fullName,
+      since: sinceById.get(p.id)!,
+      eventCount: (obsCounts.get(p.id) ?? 0) + (intCounts.get(p.id) ?? 0),
+      advisoryCount: advCounts.get(p.id) ?? 0,
+      nowDueCount: nowDueCounts.get(p.id) ?? 0,
+    }));
   }
 
   private async buildActiveEpisodeSummary(episodeRow: any) {
@@ -323,6 +395,9 @@ export class TimelineService {
 
   async getDashboard(userId: string) {
     const db = this.db.db as any;
+    // One clock read for the whole aggregation. Two Date.now() calls milliseconds apart can flag a
+    // schedule overdue:false while simultaneously counting it in nowDueCount.
+    const nowTs = Math.floor(Date.now() / 1000);
     const accessible = await this.accessiblePatients(userId);
     const patientIds = accessible.map((p) => p.id);
 
@@ -354,7 +429,6 @@ export class TimelineService {
         .select()
         .from(interventionSchedules)
         .where(and(inArray(interventionSchedules.patientId, patientIds), eq(interventionSchedules.status, 'active')));
-      const nowTs = Math.floor(Date.now() / 1000);
       upcomingSchedules = scheduleRows.map((r: any) => {
         const nextDueAt = normalizeTs(r.nextDueAt);
         return {
@@ -368,6 +442,10 @@ export class TimelineService {
         };
       });
     }
+
+    // Ordering here is a dependency, not style: this consumes upcomingSchedules (built just above)
+    // to derive nowDueCount without a second schedules query. Moving it earlier yields silent zeros.
+    const whatsNew = await this.buildWhatsNewSummaries(accessible, upcomingSchedules, nowTs);
 
     const embodimentRows = await db
       .select()
@@ -408,6 +486,6 @@ export class TimelineService {
       }));
     }
 
-    return { lastDoses, activeEpisodes, upcomingSchedules, shoppingList, unacknowledgedAdvisories };
+    return { lastDoses, whatsNew, activeEpisodes, upcomingSchedules, shoppingList, unacknowledgedAdvisories };
   }
 }
