@@ -174,6 +174,7 @@ describe('Dashboard (e2e)', () => {
     expect(dashboard.body.activeEpisodes.length).toBe(0);
     expect(dashboard.body.upcomingSchedules.length).toBe(0);
     expect(dashboard.body.lastDoses.length).toBe(0);
+    expect(dashboard.body.whatsNew.length).toBe(0);
   });
 
   describe('lastDoses', () => {
@@ -289,6 +290,158 @@ describe('Dashboard (e2e)', () => {
       const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
       expect(row.doses[0].nextAllowedAt).toEqual(dose.body.metadata.nextAllowedAt);
       expect(row.doses[0].isAtypicalLastDose).toBe(dose.body.metadata.isAtypical);
+    });
+  });
+
+  describe('whatsNew', () => {
+    // Own patient per test, like lastDoses above but for a sharper reason: the watermark is per
+    // (patient, user) and ack MUTATES it, so tests sharing a patient would leak state into each
+    // other in whatever order Jest happens to run them.
+    async function newPatient(name = 'Whats New Patient') {
+      const res = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: name, dateOfBirth: '2020-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      return res.body.id as string;
+    }
+
+    async function logObservation(pid: string, hoursAgo = 0) {
+      return request(app.getHttpServer())
+        .post(`/api/patients/${pid}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
+          entries: [{ type: 'temperature', metadata: { value: 38.2, unit: 'C', method: 'oral' } }],
+        })
+        .expect(201);
+    }
+
+    // doseSource: 'override' is flagged atypical, which writes an advisory — that's how these tests
+    // get an advisoryCount without needing a protocol producer that doesn't exist yet.
+    async function logDose(pid: string, hoursAgo = 0) {
+      return request(app.getHttpServer())
+        .post(`/api/patients/${pid}/interventions`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          performedAt: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
+          type: 'medication_dose',
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          doseSource: 'override',
+          amountMg: 120,
+        })
+        .expect(201);
+    }
+
+    async function whatsNewRow(pid: string, asToken = token) {
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${asToken}`)
+        .expect(200);
+      return dashboard.body.whatsNew.find((w: any) => w.patientId === pid);
+    }
+
+    it('counts observations and interventions as events, keeping advisories separate', async () => {
+      const pid = await newPatient();
+      await logObservation(pid);
+      await logDose(pid);
+
+      const row = await whatsNewRow(pid);
+      expect(row.eventCount).toBe(2);
+      // Not folded into eventCount: the timeline merge carries only protocol_fired advisories, so
+      // counting "whatever the timeline returns" would both miss types and double-count that one.
+      expect(row.advisoryCount).toBeGreaterThan(0);
+    });
+
+    it('applies the 24h fallback window on clinical time when never acked', async () => {
+      const pid = await newPatient();
+      await logObservation(pid, 25);
+      await logObservation(pid, 23);
+
+      const row = await whatsNewRow(pid);
+      expect(row.eventCount).toBe(1);
+    });
+
+    it('still returns a row with zero counts for a patient with nothing new', async () => {
+      const pid = await newPatient('Quiet Patient');
+
+      const row = await whatsNewRow(pid);
+      expect(row).toBeDefined();
+      expect(row.eventCount).toBe(0);
+      expect(row.advisoryCount).toBe(0);
+      expect(row.nowDueCount).toBe(0);
+      // The client hides all-zero rows; the server must still emit them so "nothing changed" stays
+      // distinguishable from "this patient fell out of the payload" (api.md → GET /api/dashboard).
+    });
+
+    // The test that earns whats-new-window.ts: it fails the moment someone tidies one of the
+    // boundary comparisons on either side and the card starts disagreeing with the page.
+    it('agrees exactly with GET /patients/:id/whats-new', async () => {
+      const pid = await newPatient();
+      await logObservation(pid);
+      await logDose(pid);
+
+      const row = await whatsNewRow(pid);
+      const wywa = await request(app.getHttpServer())
+        .get(`/api/patients/${pid}/whats-new`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(row.eventCount).toBe(wywa.body.events.length);
+      expect(row.advisoryCount).toBe(wywa.body.advisoriesFired.length);
+      expect(row.nowDueCount).toBe(wywa.body.nowDue.length);
+      expect(row.since).toBe(wywa.body.since);
+    });
+
+    it('collapses to zero once the caregiver acks', async () => {
+      const pid = await newPatient();
+      await logObservation(pid);
+      expect((await whatsNewRow(pid)).eventCount).toBe(1);
+
+      // Watermarks are epoch seconds and the event boundary is inclusive, so an ack in the same
+      // second as the observation would not exclude it.
+      await new Promise((r) => setTimeout(r, 1100));
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/whats-new/ack`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const after = await whatsNewRow(pid);
+      expect(after.eventCount).toBe(0);
+      expect(after.advisoryCount).toBe(0);
+    });
+
+    it('keeps watermarks per caregiver — one acking does not clear it for the other', async () => {
+      const pid = await newPatient();
+      const other = await registerAndLogin(app);
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/care-team`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ userId: other.userId, role: 'parent' })
+        .expect(201);
+      await logObservation(pid);
+
+      await new Promise((r) => setTimeout(r, 1100));
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/whats-new/ack`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      expect((await whatsNewRow(pid)).eventCount).toBe(0);
+      expect((await whatsNewRow(pid, other.token)).eventCount).toBe(1);
+    });
+
+    // Events key on clinical time, advisories on when the row was written — so a backdated dose is
+    // already outside the window while the advisory it fired is brand new. Asserted so nobody
+    // "corrects" the two onto the same clock.
+    it('counts an advisory fired by a backdated dose even though the dose itself is out of window', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 25);
+
+      const row = await whatsNewRow(pid);
+      expect(row.eventCount).toBe(0);
+      expect(row.advisoryCount).toBeGreaterThan(0);
     });
   });
 });
