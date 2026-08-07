@@ -171,4 +171,12 @@ describe('ConditionDetailPage', () => {
     comp.backToPatient();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
   });
+
+  it('goToEpisode navigates to the episode detail page for a nested episode', () => {
+    const fixture = TestBed.createComponent(ConditionDetailPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.goToEpisode('ep1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
+  });
 });

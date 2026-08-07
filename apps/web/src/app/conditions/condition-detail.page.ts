@@ -210,10 +210,10 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
         </div>
         <ul class="row-list">
           <li *ngFor="let ep of episodes()">
-            <div class="row static">
+            <button type="button" class="row" (click)="goToEpisode(ep.id)">
               <span class="name">{{ ep.name }}</span>
               <span class="muted small" *ngIf="ep.startedAt">started {{ ep.startedAt * 1000 | date: 'short' }}</span>
-            </div>
+            </button>
           </li>
         </ul>
       </div>
@@ -398,9 +398,6 @@ const TRIGGER_METRICS: ProtocolTriggerMetric[] = [
         font: inherit;
         cursor: pointer;
         text-align: left;
-      }
-      .row.static {
-        cursor: default;
       }
       .name {
         font-weight: 700;
@@ -630,6 +627,10 @@ export class ConditionDetailPage implements OnInit {
 
   goToSchedule(id: string) {
     this.router.navigate(['/schedules', id]);
+  }
+
+  goToEpisode(id: string) {
+    this.router.navigate(['/episodes', id]);
   }
 
   backToPatient() {
