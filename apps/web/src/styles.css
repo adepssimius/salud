@@ -18,3 +18,58 @@
 *::after {
   box-sizing: border-box;
 }
+
+/*
+ * Theme tokens.
+ *
+ * The palette was 68 distinct literals repeated across 25 files, with drift that was clearly
+ * accidental rather than intended — two different "muted grey" hexes, ten alphas of
+ * rgba(255,255,255), nine of the danger red. Each value below is the one the most files already
+ * used, so adopting a token is a no-op at the point of adoption; the drifted copies collapse onto
+ * it as each page migrates. Counts in comments are how many files used that exact literal.
+ */
+:root {
+  /* surfaces */
+  --bg: #0f172a;
+  /* Same hex as --on-accent today, but a different role: popovers and menus that sit above the
+     page. Kept separate so one can move without dragging the other. */
+  --bg-elevated: #0b1224;
+  --surface: rgba(255, 255, 255, 0.04); /* 18 — card chrome */
+  --surface-raised: rgba(255, 255, 255, 0.06); /* 16 — inputs, chips */
+  --surface-sunken: rgba(255, 255, 255, 0.03); /* 7 — nested rows */
+
+  /* borders */
+  --border: rgba(255, 255, 255, 0.08); /* 22 */
+  --border-strong: rgba(255, 255, 255, 0.15); /* 12 — absorbs the 8 files at 0.12 */
+
+  /* text */
+  --text: #e2e8f0; /* 22 */
+  --text-muted: #cbd5e1; /* 23 */
+  --text-dim: #94a3b8; /* 7 — timestamps, secondary metadata */
+
+  /* accent */
+  --accent: #0ea5e9; /* 18 — gradient stop 1 */
+  --accent-bright: #22d3ee; /* 19 — gradient stop 2 */
+  --accent-soft: #7dd3fc; /* 16 — links, chip text */
+  --accent-focus: #38bdf8; /* 4 — focus rings, nav hover */
+  --on-accent: #0b1224; /* 19 — text on a filled accent surface */
+  --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-bright));
+  --accent-bg: rgba(34, 211, 238, 0.15); /* 9 */
+  --accent-border: rgba(34, 211, 238, 0.35); /* 11 */
+  --accent-glow: 0 8px 20px rgba(34, 211, 238, 0.35);
+
+  /* danger */
+  --danger-text: #fca5a5; /* 21 */
+  --danger-bg: rgba(248, 113, 113, 0.15);
+  --danger-border: rgba(248, 113, 113, 0.4);
+
+  /* neutral chip */
+  --neutral-bg: rgba(148, 163, 184, 0.15);
+  --neutral-border: rgba(148, 163, 184, 0.35);
+
+  /* radii */
+  --radius-card: 12px;
+  --radius-control: 10px;
+  --radius-input: 8px;
+  --radius-pill: 999px;
+}

@@ -3,8 +3,8 @@
 :host {
   display: block;
   min-height: 100vh;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg);
+  color: var(--text);
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -37,14 +37,14 @@
 }
 
 .nav-actions a {
-  color: #e2e8f0;
+  color: var(--text);
   text-decoration: none;
   font-weight: 600;
   opacity: 0.9;
 }
 
 .nav-actions a:hover {
-  color: #38bdf8;
+  color: var(--accent-focus);
 }
 
 /* The menu positions against this wrapper, since it can't live inside the toggle button. */
@@ -59,17 +59,17 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.65rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   /* A <button> would otherwise take the UA's font and text colour. */
-  color: #e2e8f0;
+  color: var(--text);
   font: inherit;
 }
 
 .profile:focus-visible {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 
@@ -85,9 +85,12 @@
   position: absolute;
   top: 110%;
   right: 0;
-  background: #0b1224;
+  background: var(--bg-elevated);
+  /* Deliberately still a literal: this is one of the 8 places at 0.12 that will collapse onto
+     --border-strong (0.15) with the rest of the normalization. Kept as-is so introducing the
+     tokens changes no rendered pixel. */
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   min-width: 160px;
   padding: 0.35rem;
   display: flex;
@@ -101,10 +104,10 @@
 .menu button {
   text-align: left;
   padding: 0.5rem 0.65rem;
-  border-radius: 8px;
+  border-radius: var(--radius-input);
   border: none;
   background: transparent;
-  color: #e2e8f0;
+  color: var(--text);
   text-decoration: none;
   font-weight: 600;
   cursor: pointer;
@@ -113,13 +116,13 @@
 .menu a:hover,
 .menu button:hover {
   background: rgba(56, 189, 248, 0.1);
-  color: #38bdf8;
+  color: var(--accent-focus);
 }
 
 .app-content {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   padding: 1.5rem;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
