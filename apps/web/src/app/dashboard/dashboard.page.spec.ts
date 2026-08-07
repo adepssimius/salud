@@ -48,11 +48,11 @@ describe('DashboardPage', () => {
     expect(fixture.componentInstance.dashboard()).toEqual(emptyPayload);
   });
 
-  it('navigates to the timeline for an episode', () => {
+  it('navigates to the episode detail page', () => {
     const fixture = TestBed.createComponent(DashboardPage);
     fixture.detectChanges();
-    fixture.componentInstance.goToTimeline('p1');
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'timeline']);
+    fixture.componentInstance.goToEpisode('ep1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
   });
 
   it('logDose navigates to new-intervention with scheduleId query param', () => {

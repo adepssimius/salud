@@ -99,7 +99,7 @@ interface WhatsNewSummary {
         <h2>Active episodes</h2>
         <ul class="episode-list">
           <li *ngFor="let ep of dashboard()!.activeEpisodes">
-            <button type="button" class="episode-card" (click)="goToTimeline(ep.patientId)">
+            <button type="button" class="episode-card" (click)="goToEpisode(ep.episodeId)">
               <div class="row-main">
                 <strong>{{ ep.name }}</strong>
                 <span class="muted">— {{ ep.patientName }}</span>
@@ -406,8 +406,8 @@ export class DashboardPage implements OnInit {
     this.router.navigate(['/schedules', scheduleId]);
   }
 
-  goToTimeline(patientId: string) {
-    this.router.navigate(['/patients', patientId, 'timeline']);
+  goToEpisode(episodeId: string) {
+    this.router.navigate(['/episodes', episodeId]);
   }
 
   logDose(scheduleId: string) {
