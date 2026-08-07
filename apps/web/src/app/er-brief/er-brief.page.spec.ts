@@ -107,4 +107,11 @@ describe('ErBriefPage', () => {
     fixture.componentInstance.backToPatient();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
   });
+
+  it('goToEpisode navigates to the episode detail page for a prior episode', () => {
+    const fixture = TestBed.createComponent(ErBriefPage);
+    fixture.detectChanges();
+    fixture.componentInstance.goToEpisode('ep-prior');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep-prior']);
+  });
 });

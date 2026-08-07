@@ -148,8 +148,10 @@ import {
             <h2>Prior episodes under this condition</h2>
             <ul>
               <li *ngFor="let pe of b.body.priorEpisodes">
-                {{ pe.name }} — {{ pe.status }}
-                <span *ngIf="pe.startedAt"> — started {{ pe.startedAt * 1000 | date: 'mediumDate' }}</span>
+                <button type="button" class="link" (click)="goToEpisode(pe.id)">
+                  {{ pe.name }} — {{ pe.status }}
+                  <span *ngIf="pe.startedAt"> — started {{ pe.startedAt * 1000 | date: 'mediumDate' }}</span>
+                </button>
               </li>
             </ul>
           </div>
@@ -273,6 +275,17 @@ import {
       h2 {
         margin: 0 0 0.5rem;
         font-size: 1.05rem;
+      }
+      .link {
+        background: none;
+        border: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        padding: 0;
+        text-decoration: underline;
+        text-decoration-color: rgba(226, 232, 240, 0.3);
       }
       .events {
         list-style: none;
@@ -478,5 +491,9 @@ export class ErBriefPage implements OnInit {
 
   backToPatient() {
     this.router.navigate(['/patients', this.patientId]);
+  }
+
+  goToEpisode(episodeId: string) {
+    this.router.navigate(['/episodes', episodeId]);
   }
 }
