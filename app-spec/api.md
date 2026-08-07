@@ -431,6 +431,29 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - `nextAllowedAt` is the frozen value written into the dose's metadata at log time (see
         "Dosing engine"), not a live recomputation. `null` means "no guideline supplied an
         interval" — that is *no guidance*, not *cannot give*.
+    - `whatsNew`: `[ { patientId, patientName, since, eventCount, advisoryCount, nowDueCount } ]`
+      — the "While You Were Asleep" diff reduced to counts, so the dashboard card renders from the
+      one dashboard request instead of fanning out to `GET .../whats-new` per patient. `since` is the
+      caller's own watermark for that patient, identical to the WYWA endpoint's field.
+      - **One entry per accessible patient, always — including all-zero rows**, same contract as
+        `lastDoses` above. frontend.md's "the card shows only when the diff is non-empty" is a
+        *client render rule* applied over this array, not a filter the server performs; an
+        always-emitted row keeps "diff computed, nothing new" distinguishable from "patient missing
+        because something broke".
+      - `eventCount` counts observations + interventions since `since`, on **clinical time**
+        (`observedAt`/`performedAt`), matching what `GET .../whats-new` puts in `events`. Advisories
+        are deliberately *not* included — they have their own count, and the timeline merge would
+        otherwise double-count `protocol_fired`.
+      - `advisoryCount` counts **every advisory type** created since `since`, on `createdAt`, and
+        **includes acknowledged ones**. It is therefore *not* the same number as
+        `unacknowledgedAdvisories.length` on this same payload.
+      - `nowDueCount` is **present-tense**, not watermark-relative — what is due *right now*, for the
+        same reason the WYWA endpoint's `nowDue` is (see "While You Were Asleep"). Note this counts
+        schedules due at-or-before now, which is one second wider than
+        `upcomingSchedules[].overdue`; don't derive one from the other.
+      - The card and the WYWA page are computed at two different request times, so an event landing
+        between them can legitimately make the card say 3 and the page show 4. That is staleness, not
+        a defect — the definitions are shared in code precisely so a genuine mismatch can't happen.
     - `activeEpisodes`: `[ { patientId, patientName, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
       — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
       episode", which the patient-scoped 24h `lastDoses` above deliberately does not.

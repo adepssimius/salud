@@ -193,9 +193,18 @@ message on a 404 — no distinction between missing and expired, mirroring the A
   action calls `POST .../whats-new/ack`. Loading the page does **not** ack; only the button does,
   so a caregiver who opens it, gets pulled away, and closes the tab hasn't silently consumed the
   briefing.
-- Dashboard card: per patient with active care-team membership, shown only when the diff is
-  non-empty (an empty diff means nothing changed — the card simply doesn't render, no "all clear"
-  placeholder needed).
+- Dashboard card: reads the `whatsNew` counts already on `GET /api/dashboard` — it does **not** call
+  `GET .../whats-new` itself. The per-patient endpoint stays the *page's* data source, where the full
+  hydrated diff is actually rendered; the card only ever needed three integers, and fanning out for
+  them cost one request per patient.
+  - Shown only when the diff is non-empty (an empty diff means nothing changed — the card simply
+    doesn't render, no "all clear" placeholder needed). **This is a render rule the client applies**;
+    the server emits a row per accessible patient including all-zero ones (api.md → `GET
+    /api/dashboard`). Contrast the "Last doses" strip above, which deliberately *does* render its
+    empty state: "nothing given in 24 hours" is a clinical answer, "nothing changed since you looked"
+    is genuinely nothing.
+  - A count of zero is never rendered as a clause — a patient with no new events but one advisory
+    reads "1 advisory fired", not "0 new events · 1 advisory fired".
 
 ## Corrections
 - Any entity detail view for a correctable type (observation, intervention, condition, patient)
@@ -246,6 +255,9 @@ message on a 404 — no distinction between missing and expired, mirroring the A
   (below), not a message a page composes.
 - **Any action that can fail must show something.** A save whose failure produces no visible change —
   no error, no cleared spinner — is a defect, not an acceptable degradation.
+- **That applies to reads, too.** A page whose load failure renders as an empty page is indistinguishable
+  from "there's nothing here", which is the worst possible answer on a screen a caregiver consults to
+  decide whether something has already been done. An unreachable API must say so.
 
 ## App shell & routing
 - Basic routing for auth, profile, and dashboard; auth routes should not surface profile/logout affordances.
