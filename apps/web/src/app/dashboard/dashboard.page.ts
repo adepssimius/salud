@@ -155,49 +155,11 @@ import { DashboardPayload } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 1rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1.05rem;
-      }
-      .muted {
-        color: #cbd5e1;
-      }
-      .error {
-        color: #fca5a5;
-      }
-      .small {
-        font-size: 0.85rem;
       }
       .actions {
-        display: flex;
+        justify-content: flex-start;
         gap: 0.5rem;
         flex-wrap: wrap;
-      }
-      .primary {
-        padding: 0.7rem 1.1rem;
-        border: none;
-        border-radius: 10px;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      .secondary {
-        padding: 0.7rem 1.1rem;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: transparent;
-        color: #e2e8f0;
-        cursor: pointer;
       }
       .secondary.small {
         padding: 0.4rem 0.7rem;

@@ -150,48 +150,15 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 1rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
       }
       h1 {
-        margin: 0;
         font-size: 1.8rem;
       }
-      .subtext {
-        margin: 0;
-        color: #cbd5e1;
-      }
       .card-header {
-        display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
       }
       .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
         font-size: 0.95rem;
-      }
-      input,
-      select {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      input:focus,
-      select:focus {
-        outline: 2px solid #38bdf8;
-        border-color: transparent;
       }
       .preferences {
         display: grid;
@@ -202,28 +169,6 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
       .primary {
         margin-top: 0.25rem;
         padding: 0.75rem 1rem;
-        border-radius: 10px;
-        border: none;
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .muted {
-        color: #cbd5e1;
-      }
-      .secondary {
-        padding: 0.55rem 0.85rem;
-        border-radius: 10px;
-        border: 1px solid rgba(34, 211, 238, 0.4);
-        background: transparent;
-        color: #e0f2fe;
-        font-weight: 700;
-        cursor: pointer;
       }
       .patient-list {
         list-style: none;
@@ -260,23 +205,7 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         flex-wrap: wrap;
       }
       .pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.15rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        color: #7dd3fc;
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        font-weight: 700;
         text-transform: capitalize;
-      }
-      .error {
-        color: #fca5a5;
-      }
-      .pill-success {
-        background: rgba(34, 197, 94, 0.2);
-        border-color: rgba(34, 197, 94, 0.5);
-        color: #bbf7d0;
       }
     `,
   ],
