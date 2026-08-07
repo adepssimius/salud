@@ -119,59 +119,11 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      .muted {
-        color: #cbd5e1;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
-      /* flex-direction is explicit because .field also applies on the combined
-         "field inline-check" label and would otherwise stack the box above its text. */
-      .inline-check {
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        gap: 0.35rem;
       }
       .episode-list {
         display: flex;
         flex-wrap: wrap;
         gap: 0.75rem;
-      }
-      /* The generic input rule below is meant for text fields; undo it for checkboxes. */
-      .inline-check input[type='checkbox'] {
-        padding: 0;
-        margin: 0;
-        width: auto;
-        accent-color: #22d3ee;
-      }
-      input,
-      select,
-      textarea {
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-      }
-      textarea {
-        resize: vertical;
       }
       .entries {
         list-style: none;
@@ -187,40 +139,10 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
         gap: 0.5rem;
       }
       .pill {
-        display: inline-flex;
-        padding: 0.15rem 0.5rem;
-        border-radius: 999px;
-        background: rgba(34, 211, 238, 0.15);
-        border: 1px solid rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-        font-weight: 700;
         text-transform: capitalize;
       }
       .summary {
         font-size: 0.9rem;
-        color: #e2e8f0;
-      }
-      .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.6rem;
-        margin-top: 0.5rem;
-      }
-      .primary,
-      .secondary {
-        padding: 0.65rem 1rem;
-        border-radius: 10px;
-        font-weight: 700;
-        border: none;
-        cursor: pointer;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
         color: #e2e8f0;
       }
       .icon-button {
@@ -228,12 +150,6 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
         background: transparent;
         color: #e2e8f0;
         cursor: pointer;
-      }
-      .error {
-        color: #fca5a5;
-      }
-      .small {
-        font-size: 0.9rem;
       }
       .protocol-card {
         border: 1px solid rgba(248, 113, 113, 0.4);

@@ -14,8 +14,8 @@ import { InterventionSchedule } from '@salud/shared/types';
       <button type="button" class="link" (click)="backToDashboard()">&larr; Dashboard</button>
       <h1>{{ s.label }}</h1>
       <div class="row">
-        <span class="pill">{{ s.type === 'medication_dose' ? 'Medication' : 'Dressing change' }}</span>
-        <span class="pill" [class.pill-active]="s.status === 'active'">{{ s.status }}</span>
+        <span class="pill pill-neutral">{{ s.type === 'medication_dose' ? 'Medication' : 'Dressing change' }}</span>
+        <span class="pill pill-neutral" [class.pill-active]="s.status === 'active'">{{ s.status }}</span>
         <span class="pill pill-danger" *ngIf="s.adherence.overdue">overdue</span>
       </div>
 
@@ -68,29 +68,9 @@ import { InterventionSchedule } from '@salud/shared/types';
         display: flex;
         flex-direction: column;
         gap: 0.85rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-      h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1.05rem;
-      }
-      .muted {
-        color: #cbd5e1;
       }
       .link {
         align-self: flex-start;
-        background: none;
-        border: none;
-        color: #7dd3fc;
-        cursor: pointer;
-        padding: 0;
       }
       .row {
         display: flex;
@@ -98,25 +78,13 @@ import { InterventionSchedule } from '@salud/shared/types';
         align-items: center;
       }
       .pill {
-        display: inline-flex;
-        padding: 0.15rem 0.6rem;
-        border-radius: 999px;
-        background: rgba(148, 163, 184, 0.15);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        color: #cbd5e1;
-        font-size: 0.8rem;
-        font-weight: 700;
         text-transform: capitalize;
       }
+      /* Puts an accent-coloured pill back over the neutral base for the active state. */
       .pill-active {
-        background: rgba(34, 211, 238, 0.15);
-        border-color: rgba(34, 211, 238, 0.35);
-        color: #7dd3fc;
-      }
-      .pill-danger {
-        background: rgba(248, 113, 113, 0.15);
-        border-color: rgba(248, 113, 113, 0.4);
-        color: #fca5a5;
+        background: var(--accent-bg);
+        border-color: var(--accent-border);
+        color: var(--accent-soft);
       }
       .adherence {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -146,33 +114,9 @@ import { InterventionSchedule } from '@salud/shared/types';
         color: #cbd5e1;
       }
       .actions {
-        display: flex;
+        justify-content: flex-start;
         gap: 0.5rem;
         flex-wrap: wrap;
-      }
-      .primary,
-      .secondary {
-        padding: 0.6rem 1rem;
-        border-radius: 10px;
-        font-weight: 700;
-        border: none;
-        cursor: pointer;
-      }
-      .primary {
-        background: linear-gradient(135deg, #0ea5e9, #22d3ee);
-        color: #0b1224;
-      }
-      .primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .secondary {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #e2e8f0;
-      }
-      .error {
-        color: #fca5a5;
       }
     `,
   ],
