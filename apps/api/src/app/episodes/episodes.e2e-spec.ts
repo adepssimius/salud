@@ -185,5 +185,11 @@ describe('Episodes (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(activeRes.body.some((e: any) => e.name === 'Active check')).toBe(true);
+    // Regression marker for ISSUES #20: this route's createdAt/updatedAt leaked as ISO strings
+    // while getById/listForPatient in this same file normalized theirs. The full wire-contract
+    // sweep lives in persistence/timestamps.e2e-spec.ts; this just names the file.
+    const active = activeRes.body.find((e: any) => e.name === 'Active check');
+    expect(Number.isInteger(active.createdAt)).toBe(true);
+    expect(Number.isInteger(active.updatedAt)).toBe(true);
   });
 });

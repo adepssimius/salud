@@ -79,6 +79,10 @@ describe('Observations (e2e)', () => {
       .expect(201);
 
     expect(createRes.body.entries.length).toBe(2);
+    // Regression marker for ISSUES #20: createdAt/updatedAt leaked as ISO strings here. The full
+    // wire-contract sweep lives in persistence/timestamps.e2e-spec.ts; this just names the file.
+    expect(Number.isInteger(createRes.body.createdAt)).toBe(true);
+    expect(Number.isInteger(createRes.body.updatedAt)).toBe(true);
 
     const listRes = await request(app.getHttpServer())
       .get(`/api/patients/${patientId}/observations`)
