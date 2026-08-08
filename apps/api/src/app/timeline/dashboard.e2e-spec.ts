@@ -379,6 +379,19 @@ describe('Dashboard (e2e)', () => {
     // boundary comparisons on either side and the card starts disagreeing with the page.
     it('agrees exactly with GET /patients/:id/whats-new', async () => {
       const pid = await newPatient();
+
+      // Ack first so `since` on both sides is the same *stored* watermark rather than each side
+      // taking whatsNewSince's fallback branch and computing its own Math.floor(Date.now()/1000).
+      // With lastSeenAt null, row.since (read mid dashboard-aggregation) and wywa.body.since (read
+      // on a later, separate request) straddle enough real time that a whole-second boundary
+      // landing between them made this an intermittent off-by-one — ISSUES #21, not a bug in
+      // either side, just two clocks compared. See the fallback-branch test below for that case.
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/whats-new/ack`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      await new Promise((r) => setTimeout(r, 1100));
+
       await logObservation(pid);
       await logDose(pid);
 
@@ -392,6 +405,24 @@ describe('Dashboard (e2e)', () => {
       expect(row.advisoryCount).toBe(wywa.body.advisoriesFired.length);
       expect(row.nowDueCount).toBe(wywa.body.nowDue.length);
       expect(row.since).toBe(wywa.body.since);
+    });
+
+    it('agrees on the 24h fallback since when the caregiver has never acked', async () => {
+      const pid = await newPatient();
+      await logObservation(pid);
+
+      const row = await whatsNewRow(pid);
+      const wywa = await request(app.getHttpServer())
+        .get(`/api/patients/${pid}/whats-new`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(row.eventCount).toBe(wywa.body.events.length);
+      // Unlike the acked case above, there's no stored watermark here — both sides independently
+      // compute Math.floor(Date.now()/1000) - 24h moments apart, across a full dashboard
+      // aggregation and a second HTTP round trip, so a 1-second disagreement is expected and not a
+      // bug. This is the case ISSUES #21 turned out to actually be.
+      expect(Math.abs(row.since - wywa.body.since)).toBeLessThanOrEqual(1);
     });
 
     it('collapses to zero once the caregiver acks', async () => {
