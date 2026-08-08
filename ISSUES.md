@@ -588,7 +588,7 @@ which is the expected outcome.
 
 ---
 
-### 21. 🟡 `yarn test:api` fails roughly 1 run in 5-10, on a different suite each time
+### 21. ✅ `yarn test:api` fails roughly 1 run in 5-10, on a different suite each time
 
 **The mechanism this issue describes is wrong, and its own evidence disproves it.** Jest runs test
 *files* strictly sequentially within a worker — file A's `afterAll` fully completes before file B's
@@ -633,17 +633,18 @@ DI-resolution regressions. `maxWorkers` capping was evaluated and **skipped**: p
 already comfortable (worst suite 7.87s against the 20s `testTimeout`, 39%; p95 4.98s), so there was no
 timeout-margin problem left to spend a commit narrowing.
 
-**Still open — a second, separate flake mechanism exists, is likely the *larger* contributor to the
-originally reported rate, and is NOT fixed by (a).** Discovered during this investigation's
-verification, not caused by it — the exact same signature appeared in the very first diagnostic run,
-against unmodified pre-session code. Refiled with its own evidence as **#25**, since it's a distinct
-bug with a distinct (and currently unknown) root cause, not a loose end of this one.
+**e. ✅ Fixed 2026-08-08 — a second, separate flake mechanism, discovered during this investigation's
+verification and likely the *larger* contributor to the originally reported rate.** Not caused by (a)
+or any of (b)-(d) — the exact same signature appeared in the very first diagnostic run, against
+unmodified pre-session code. Refiled with its own evidence, research, fix, and verification as
+**#25**, since it was a distinct bug with a distinct root cause, not a loose end of this one. Both
+constituent problems this issue turned out to bundle are now closed.
 
 **Historical note kept for anyone reading old CI logs:** the merged PR "fix(api): stop er-brief e2e
 from flaking on the default hook timeout" (raising `testTimeout` to 20s) was very likely also masking
-#25 below, not (only) the genuine margin problem its message describes — #25 produces failures that
-have nothing to do with timing out, so raising the timeout wouldn't fix them, but it would have
-reduced how often CI happened to sample a slow moment where #25's odds were highest.
+#25, not (only) the genuine margin problem its message describes — #25's failures had nothing to do
+with timing out, so raising the timeout wouldn't have fixed them, but it would have reduced how often
+CI happened to sample a slow moment where #25's odds were highest.
 
 ---
 
@@ -697,43 +698,43 @@ alone omits them.
 
 ---
 
-### 25. 🔴 A second `yarn test:api` flake mechanism — spurious wrong-status HTTP responses, unrelated
+### 25. ✅ A second `yarn test:api` flake mechanism — spurious wrong-status HTTP responses, unrelated
 to #21's clock race
 
 **Surfaced while verifying #21's fix.** Requests that are byte-identical to ones succeeding
-elsewhere in the *same test file*, seconds apart, occasionally come back with a coherent but wrong
+elsewhere in the *same test file*, seconds apart, occasionally came back with a coherent but wrong
 status: a 401 on a route whose token worked one line earlier, a 404 on a route another test in the
 same file hits successfully, a 400 with no validation reason. Not the `since` off-by-one #21 fixed —
-none of these touch a timestamp — and not a hook timeout either (`grep "Exceeded timeout of"` across
-every run below: zero hits).
+none of these touch a timestamp — and not a hook timeout either.
 
-**Evidence this predates today's four #21 commits and isn't caused by any of them:**
-- The exact same signature (`GET /api/dashboard` → 404, everything else in the file passing) appeared
-  in the *very first* diagnostic run of this investigation, against unmodified pre-session code.
-- Reproduced identically with commits 1-3 landed and #21-d (`isolatedModules`) both present and
-  absent (checked via `git stash`) — ruled out as a suspect for both.
-- Reproduces **solo** (zero cross-suite/cross-worker contention: 2/40 lone `dashboard.e2e-spec.ts`
-  runs) and under full-suite parallelism (4 root occurrences / 20 full runs — one of which,
-  `er-brief.e2e-spec.ts` run 8, cascaded into 7 reported failures because its `beforeAll` has no
-  `try/catch`, so one bad setup call fails every test gated behind it — still one root cause, not
-  seven independent ones).
-- At **~20% of full runs**, this is closer to — and quite possibly the dominant contributor to — the
-  rate #21 originally reported ("1 in 5-10") than the clock race was, which only ever hit one
-  specific assertion.
+**Root cause, now well-supported (not just a hypothesis).** Reading supertest 6.3.4's actual source
+(`serverAddress()`: `if (!addr) this._server = app.listen(0)`, then `.end()` closes that server once
+the response resolves) confirms every e2e suite's `app.init()`-only pattern makes supertest do its own
+listen/close cycle on **every single request** — hundreds of bind/close operations per run, not 18.
+Superagent's default `agent: false` (`Connection: close`, confirmed at the wire level) rules out stale
+keep-alive socket reuse, and in-process same-file races are structurally impossible (every request is
+sequentially `await`ed). That leaves cross-process, OS-level ephemeral-port churn as the remaining
+candidate — and it has independent public corroboration: **nestjs/nest#15239** (open, untriaged)
+documents the identical symptom, down to literal cross-protocol bytes bleeding into an HTTP response
+buffer, from hammering an unlisten'd Nest app via supertest; **supertest#667** separately flags that
+supertest's implicit `.listen(0)` sets `SO_REUSEADDR`, which "can conflict with any other process ...
+using `SO_REUSEADDR` on a port in the ephemeral range" — exactly what this repo's ~11 parallel Jest
+workers doing this per-request churn would produce. Neither GitHub issue is maintainer-confirmed, so
+this isn't a proven mechanism, but it's the only one that matches the exact symptom shape, this repo's
+actual code path, and has corroboration beyond this investigation.
 
-**Working hypothesis, not confirmed:** every `request(app.getHttpServer())` call (supertest 6.3.4 /
-superagent 8.1.2) does its own ephemeral `.listen(0)` + response + `.close()` cycle, since no e2e
-suite calls `app.listen(port)`. Suites that fire many such calls back-to-back (`er-brief`'s `beforeAll`
-alone does ~16) create heavy listen/close churn on OS-assigned ephemeral ports. A response that is
-internally consistent (a real 401/404/400, not a connection error) but wrong for the request sent is
-consistent with a very-recently-freed ephemeral port being reused before the prior listener's closure
-fully completes — but this was not verified against superagent/Node internals and is offered as a
-starting point, not a diagnosis.
+**Fixed 2026-08-08, and the fix doesn't depend on the mechanism being 100% certain.** Added
+`await app.listen(0);` immediately after `await app.init();` in all 18 e2e-spec `beforeAll` blocks.
+`serverAddress()`'s own logic means an already-bound server (`app.address()` truthy) makes supertest
+skip its implicit listen/close entirely for the rest of the file — bind/close operations drop from
+~1-per-HTTP-request to exactly 1-per-suite (18 total across a whole run), removing the churn any
+candidate mechanism needs to fire, regardless of which one is exactly right.
 
-**Not investigated:** whether `.set('Agent', ...)`-ing a dedicated `http.Agent` per suite, or having
-each suite's `beforeAll` call `app.listen(0)` once and reuse that bound server for every request in
-the file (rather than relying on supertest's implicit per-call ephemeral listen), changes the rate.
-That's the natural next experiment.
+**Verified at the same statistical bar #21 used.** Pre-fix baseline (this issue, same session): 2/40
+solo `dashboard.e2e-spec.ts` runs, 4/20 full-suite root occurrences. Post-fix: **0/40 solo runs and
+0/20 full-suite runs** reproduced the wrong-status signature — 60/60 clean. `yarn test:api`,
+`yarn lint:api`, `yarn build:api` all green; no response-body changes anywhere (the fix only touches
+when a socket is bound, not any handler).
 
 ---
 
@@ -781,10 +782,9 @@ so the list below is re-sequenced.
 | 9 | **Cleanup** | 15b, 23 | Mechanical, low-risk. |
 | 10 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
 | 11 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
-| 12 | ~~**Correctness**~~ ✅ (20) / **CI, partial** (21) | ~~20~~, 21 | **20 done 2026-08-07.** Was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole behind it as #24. **21's clock-race sub-cause fixed 2026-08-08** — its documented mechanism (`DATA_DIR` contamination) was wrong; the real bug was a two-clock race in one assertion. A second, likely-larger flake mechanism was found during verification and refiled as #25, since it's a distinct, unsolved bug — #21 stays open until it's addressed. |
+| 12 | ~~**Correctness + CI**~~ ✅ | ~~20, 21, 25~~ | **All done 2026-08-08.** 20 was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole as #24. 21 turned out to bundle two unrelated bugs, not one: a two-clock race in one dashboard assertion, and a separate supertest ephemeral-port-churn issue causing spurious wrong-status responses (~20% of full runs) — refiled and fixed as #25 once isolated. `yarn test:api` is now trustworthy: 0/60 reproductions across both mechanisms' post-fix verification runs. |
 | 13 | **Follow-up from #20** | 24 | `Episode`'s optional timestamps are what let #20's third site pass unnoticed; low urgency since #20 itself is fixed. |
-| 14 | **The real CI blocker** | 25 | ~20% of full `yarn test:api` runs still fail from a mechanism unrelated to #21's clock race — spurious wrong-status HTTP responses. Root cause unconfirmed; a hypothesis and a next experiment are written up, not a fix. This is very likely more disruptive day-to-day than #21 ever was. |
-| 15 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
+| 14 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
 
 ## Conventions for working these
 
