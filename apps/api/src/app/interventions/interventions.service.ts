@@ -65,8 +65,8 @@ export class InterventionsService {
       notes: row.notes ?? null,
       scheduleId: row.scheduleId ?? null,
       metadata,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      createdAt: normalizeTs(row.createdAt),
+      updatedAt: normalizeTs(row.updatedAt),
     };
   }
 

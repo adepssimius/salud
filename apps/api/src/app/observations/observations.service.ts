@@ -53,8 +53,8 @@ export class ObservationsService {
         metadata: e.metadata ? JSON.parse(e.metadata) : null,
       })),
       unitPreferenceAtEntry: row.unitPreferenceAtEntry ? JSON.parse(row.unitPreferenceAtEntry) : null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      createdAt: normalizeTs(row.createdAt),
+      updatedAt: normalizeTs(row.updatedAt),
     };
   }
 
