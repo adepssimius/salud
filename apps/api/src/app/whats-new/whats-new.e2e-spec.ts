@@ -37,6 +37,10 @@ describe('While You Were Asleep (e2e)', () => {
       migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
     });
     await app.init();
+    // Explicit bind (ISSUES #25): without this, supertest rebinds/closes an ephemeral port on
+    // every single request instead of once per suite -- the leading suspect for the flake where
+    // a request occasionally gets a real but wrong response (401/404 on a route that just worked).
+    await app.listen(0);
 
     owner = await registerAndLogin(app);
     caregiver = await registerAndLogin(app);
