@@ -13,7 +13,7 @@ import { EpisodesService } from '../episodes/episodes.service';
 import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
-import { normalizeTs } from '../persistence/time';
+import { normalizeTs, toDate } from '../persistence/time';
 
 @Injectable()
 export class InterventionsService {
@@ -363,7 +363,7 @@ export class InterventionsService {
     // dose-affecting fields changed — the underlying guideline/weight/embodiment state may
     // have moved since this dose was logged.
     if (row.type === 'medication_dose' && metadata.medicationId) {
-      const performedAtDate = row.performedAt instanceof Date ? row.performedAt : new Date(row.performedAt * 1000);
+      const performedAtDate = toDate(row.performedAt)!;
       const doseEvaluation = await this.dosingService.evaluate(row.patientId, userId, {
         medicationId: metadata.medicationId,
         embodimentId: metadata.medicationEmbodimentId,

@@ -8,7 +8,7 @@ import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
-import { normalizeTs } from '../persistence/time';
+import { normalizeTs, toDate } from '../persistence/time';
 
 interface TimingConfig {
   frequencyHours: number | null;
@@ -88,7 +88,7 @@ export class SchedulesService {
 
   private async computeAdherence(row: any) {
     const loggedCount = await this.loggedCount(row.id);
-    const startAt = row.startAt instanceof Date ? row.startAt : new Date(normalizeTs(row.startAt)! * 1000);
+    const startAt = toDate(row.startAt)!;
     const now = new Date();
     let expectedCount = 0;
     if (now > startAt) {
@@ -296,7 +296,7 @@ export class SchedulesService {
           base = new Date(lastPerformedAtTs * 1000);
           strictlyAfter = true;
         } else {
-          base = row.startAt instanceof Date ? row.startAt : new Date(normalizeTs(row.startAt)! * 1000);
+          base = toDate(row.startAt)!;
           strictlyAfter = false;
         }
         const next = this.computeNextDueAt(timing, base, strictlyAfter);
