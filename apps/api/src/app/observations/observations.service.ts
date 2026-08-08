@@ -14,6 +14,7 @@ import { UpdateObservationDto } from './dto/update-observation.dto';
 import { EpisodesService } from '../episodes/episodes.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class ObservationsService {
@@ -37,7 +38,7 @@ export class ObservationsService {
   }
 
   private mapObservation(row: any, entries: any[], episodeIds: string[] = [], resolvesEpisodeIds: string[] = []) {
-    const observedAt = row.observedAt instanceof Date ? Math.floor(row.observedAt.getTime() / 1000) : row.observedAt;
+    const observedAt = normalizeTs(row.observedAt);
     return {
       id: row.id,
       patientId: row.patientId,
@@ -188,7 +189,7 @@ export class ObservationsService {
       .orderBy(desc(observations.observedAt));
 
     const filtered = rows.filter((row: any) => {
-      const ts = row.observedAt instanceof Date ? Math.floor(row.observedAt.getTime() / 1000) : row.observedAt;
+      const ts = normalizeTs(row.observedAt);
       if (params.from && ts < params.from) return false;
       if (params.to && ts > params.to) return false;
       return true;
@@ -288,8 +289,7 @@ export class ObservationsService {
 
     if (dto.entries) {
       await db.delete(observationEntries).where(eq(observationEntries.observationId, id));
-      const observedAtTs =
-        row.observedAt instanceof Date ? Math.floor(row.observedAt.getTime() / 1000) : row.observedAt;
+      const observedAtTs = normalizeTs(row.observedAt);
       for (const entry of dto.entries) {
         await db.insert(observationEntries).values({
           id: entry.id ?? randomUUID(),

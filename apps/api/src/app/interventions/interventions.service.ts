@@ -13,6 +13,7 @@ import { EpisodesService } from '../episodes/episodes.service';
 import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class InterventionsService {
@@ -51,7 +52,7 @@ export class InterventionsService {
   }
 
   private mapIntervention(row: any, episodeIds: string[] = [], resolvesEpisodeIds: string[] = []) {
-    const performedAt = row.performedAt instanceof Date ? Math.floor(row.performedAt.getTime() / 1000) : row.performedAt;
+    const performedAt = normalizeTs(row.performedAt);
     const metadata = row.metadata ? JSON.parse(row.metadata) : {};
     return {
       id: row.id,
@@ -250,7 +251,7 @@ export class InterventionsService {
       .orderBy(desc(interventions.performedAt));
 
     const filtered = rows.filter((row: any) => {
-      const ts = row.performedAt instanceof Date ? Math.floor(row.performedAt.getTime() / 1000) : row.performedAt;
+      const ts = normalizeTs(row.performedAt);
       if (params.from && ts < params.from) return false;
       if (params.to && ts > params.to) return false;
       const metadata = row.metadata ? JSON.parse(row.metadata) : {};
