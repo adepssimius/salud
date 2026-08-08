@@ -590,21 +590,60 @@ which is the expected outcome.
 
 ### 21. 🟡 `yarn test:api` fails roughly 1 run in 5-10, on a different suite each time
 
-**Confirmed pre-existing** — reproduced on unchanged `HEAD` before #13, in both parallel and
-`--runInBand` mode, landing on `dashboard.e2e-spec.ts` one time and `observations.e2e-spec.ts`
-another.
+**The mechanism this issue describes is wrong, and its own evidence disproves it.** Jest runs test
+*files* strictly sequentially within a worker — file A's `afterAll` fully completes before file B's
+`beforeAll` begins — and all 18 e2e-ish suites set `process.env.DATA_DIR` as the first statement of
+their own `beforeAll`, immediately before building their DI container. There is no interleaving
+window for cross-suite contamination, and separate workers have entirely separate `process.env`.
+Decisively: this issue says it reproduced under `--runInBand`, where every suite shares one process
+*and still runs strictly sequentially* — if sequential single-process execution reproduces it,
+concurrent env mutation cannot be the cause. All the other candidate paths were checked and cleared
+too: no un-awaited promises in any spec, no Nest lifecycle hooks existed at all (fixed below, but as
+a real shutdown bug, not a flake cause), and `resolveDataDir()`'s `fs.mkdirSync` side effect only
+ever recreates a suite's *own* tmpdir.
 
-**Mechanism:** 16 e2e suites each assign the *process-global* `process.env.DATA_DIR = tmpDir` in
-their `beforeAll`, and `resolveDataDir()` (`persistence/paths.ts:6`) reads that env var when the
-DI container builds the DB connection. Jest reuses worker processes across suites, so suites can
-resolve each other's data directory. In `--runInBand` all 16 share one process.
+**a. ✅ Fixed 2026-08-08 — a real clock race, not env contamination.**
+`dashboard.e2e-spec.ts`'s `'agrees exactly with GET /patients/:id/whats-new'` test used a patient
+that never acks, so `care_team_memberships.last_seen_at` is `null` and both `row.since`
+(`timeline.service.ts:396`, read mid dashboard-aggregation) and `wywa.body.since`
+(`whats-new.service.ts:30`, read on a later, separate request) independently fall through
+`whatsNewSince`'s fallback branch — each computing its own `Math.floor(Date.now()/1000)`. The
+`.toBe()` equality failed whenever a whole-second boundary landed in the real time between those two
+clock reads (the rest of the dashboard aggregation, response serialization, a supertest socket
+teardown, a JWT guard, a membership lookup) — p ≈ Δt_ms/1000, which matches the reported rate and
+explains why `dashboard.e2e-spec.ts` was one of the two suites originally observed failing.
 
-Related: the merged PR "fix(api): stop er-brief e2e from flaking on the default hook timeout" was
-treating a symptom of the same class.
+**Confirmed live, not inferred:** 40 solo runs of the suite alone (zero cross-suite contention)
+reproduced the exact off-by-one signature twice — e.g. `Expected: 1786076403, Received: 1786076402`
+— proving it was structural, not load-caused. Fixed by acking first, so `since` resolves to the same
+*stored* watermark on both sides instead of two clock reads; a second test covers the never-acked
+fallback branch, which can legitimately disagree by up to a second and is asserted with that
+tolerance. **Verified fixed:** 0/40 solo runs and 0/20 full-suite runs reproduced the signature
+post-fix (60 run-throughs total, several hitting that exact test).
 
-**Fix options:** give each suite a unique `DATA_DIR` that cannot collide and pass it explicitly
-rather than through `process.env`, or set `maxWorkers: 1` plus per-suite teardown, or inject the data
-dir as a Nest provider override in the testing module so it never touches the environment.
+Also landed while investigating, all found reading the persistence boundary this required touching:
+**b.** `DatabaseService` never released its DB handle on shutdown — zero `OnModuleDestroy` existed
+anywhere in the API and `main.ts` never called `enableShutdownHooks()`. Fixed; verified live via a
+built server, `lsof`-confirmed open sqlite fd, `SIGTERM`, clean exit within 1s. **c.**
+`database.providers.ts` eagerly imported `pg` + `mysql2` + both non-sqlite drizzle dialects
+(~237ms/require) on a path that's always sqlite in every suite — now lazy. **d.** `ts-jest` was
+type-checking every test file's whole `AppModule` graph on every run; `isolatedModules` skips that in
+the jest transform only (`build:api`/`lint:api` unaffected) — verified with ~13 full-suite runs, zero
+DI-resolution regressions. `maxWorkers` capping was evaluated and **skipped**: post-(c)+(d) margin is
+already comfortable (worst suite 7.87s against the 20s `testTimeout`, 39%; p95 4.98s), so there was no
+timeout-margin problem left to spend a commit narrowing.
+
+**Still open — a second, separate flake mechanism exists, is likely the *larger* contributor to the
+originally reported rate, and is NOT fixed by (a).** Discovered during this investigation's
+verification, not caused by it — the exact same signature appeared in the very first diagnostic run,
+against unmodified pre-session code. Refiled with its own evidence as **#25**, since it's a distinct
+bug with a distinct (and currently unknown) root cause, not a loose end of this one.
+
+**Historical note kept for anyone reading old CI logs:** the merged PR "fix(api): stop er-brief e2e
+from flaking on the default hook timeout" (raising `testTimeout` to 20s) was very likely also masking
+#25 below, not (only) the genuine margin problem its message describes — #25 produces failures that
+have nothing to do with timing out, so raising the timeout wouldn't fix them, but it would have
+reduced how often CI happened to sample a slow moment where #25's odds were highest.
 
 ---
 
@@ -658,6 +697,71 @@ alone omits them.
 
 ---
 
+### 25. 🔴 A second `yarn test:api` flake mechanism — spurious wrong-status HTTP responses, unrelated
+to #21's clock race
+
+**Surfaced while verifying #21's fix.** Requests that are byte-identical to ones succeeding
+elsewhere in the *same test file*, seconds apart, occasionally come back with a coherent but wrong
+status: a 401 on a route whose token worked one line earlier, a 404 on a route another test in the
+same file hits successfully, a 400 with no validation reason. Not the `since` off-by-one #21 fixed —
+none of these touch a timestamp — and not a hook timeout either (`grep "Exceeded timeout of"` across
+every run below: zero hits).
+
+**Evidence this predates today's four #21 commits and isn't caused by any of them:**
+- The exact same signature (`GET /api/dashboard` → 404, everything else in the file passing) appeared
+  in the *very first* diagnostic run of this investigation, against unmodified pre-session code.
+- Reproduced identically with commits 1-3 landed and #21-d (`isolatedModules`) both present and
+  absent (checked via `git stash`) — ruled out as a suspect for both.
+- Reproduces **solo** (zero cross-suite/cross-worker contention: 2/40 lone `dashboard.e2e-spec.ts`
+  runs) and under full-suite parallelism (4 root occurrences / 20 full runs — one of which,
+  `er-brief.e2e-spec.ts` run 8, cascaded into 7 reported failures because its `beforeAll` has no
+  `try/catch`, so one bad setup call fails every test gated behind it — still one root cause, not
+  seven independent ones).
+- At **~20% of full runs**, this is closer to — and quite possibly the dominant contributor to — the
+  rate #21 originally reported ("1 in 5-10") than the clock race was, which only ever hit one
+  specific assertion.
+
+**Working hypothesis, not confirmed:** every `request(app.getHttpServer())` call (supertest 6.3.4 /
+superagent 8.1.2) does its own ephemeral `.listen(0)` + response + `.close()` cycle, since no e2e
+suite calls `app.listen(port)`. Suites that fire many such calls back-to-back (`er-brief`'s `beforeAll`
+alone does ~16) create heavy listen/close churn on OS-assigned ephemeral ports. A response that is
+internally consistent (a real 401/404/400, not a connection error) but wrong for the request sent is
+consistent with a very-recently-freed ephemeral port being reused before the prior listener's closure
+fully completes — but this was not verified against superagent/Node internals and is offered as a
+starting point, not a diagnosis.
+
+**Not investigated:** whether `.set('Agent', ...)`-ing a dedicated `http.Agent` per suite, or having
+each suite's `beforeAll` call `app.listen(0)` once and reuse that bound server for every request in
+the file (rather than relying on supertest's implicit per-call ephemeral listen), changes the rate.
+That's the natural next experiment.
+
+---
+
+### 26. 🟡 The e2e suites never install `main.ts`'s `ValidationPipe`
+
+**Surfaced while investigating #21.** `main.ts` applies `new ValidationPipe({ whitelist: true,
+transform: true })` globally; no e2e suite's `Test.createTestingModule(...)` setup does the same. Yet
+26 assertions across 9 suites `expect(400)` on malformed bodies — meaning those 400s are coming from
+service-level checks, and **the validation layer itself has zero test coverage**, and diverges
+silently from what's actually deployed. Also: `app.spec.ts` never calls `setGlobalPrefix('api')`
+either, so it asserts `GET /` where the deployed app serves `GET /api`. Fixing both changes response
+bodies for the 26 assertions (whitelist/transform can alter what counts as invalid), so it's its own
+change, not a drive-by.
+
+---
+
+### 27. 🟢 Two small persistence findings from the #21 investigation, neither urgent
+
+- **`resolveDataDir()`'s silent fallback.** If the preferred `mkdirSync('/data')` ever throws, every
+  suite (and a misconfigured deployment) silently retargets `process.cwd()/data` — the developer's
+  live SQLite database in this repo — with no warning. Unreachable today on a working machine, but a
+  loaded gun; at minimum it should log when it takes the fallback branch.
+- **`resolveDataDir()` performs a `fs.mkdirSync` side effect inside a function named `resolve*`**, and
+  runs 3+ times per DI container (twice via `resolveDatabaseConfig`, once via `resolveStorageConfig`).
+  Separating "compute the path" from "ensure it exists" would be a small clarity win, not a bug.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -677,8 +781,10 @@ so the list below is re-sequenced.
 | 9 | **Cleanup** | 15b, 23 | Mechanical, low-risk. |
 | 10 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
 | 11 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
-| 12 | ~~**Correctness**~~ ✅ (20) / **CI** (21) | ~~20~~, 21 | **20 done 2026-08-07.** Was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole behind it as #24. #21 is why the suite is untrustworthy — still open. |
+| 12 | ~~**Correctness**~~ ✅ (20) / **CI, partial** (21) | ~~20~~, 21 | **20 done 2026-08-07.** Was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole behind it as #24. **21's clock-race sub-cause fixed 2026-08-08** — its documented mechanism (`DATA_DIR` contamination) was wrong; the real bug was a two-clock race in one assertion. A second, likely-larger flake mechanism was found during verification and refiled as #25, since it's a distinct, unsolved bug — #21 stays open until it's addressed. |
 | 13 | **Follow-up from #20** | 24 | `Episode`'s optional timestamps are what let #20's third site pass unnoticed; low urgency since #20 itself is fixed. |
+| 14 | **The real CI blocker** | 25 | ~20% of full `yarn test:api` runs still fail from a mechanism unrelated to #21's clock race — spurious wrong-status HTTP responses. Root cause unconfirmed; a hypothesis and a next experiment are written up, not a fix. This is very likely more disruptive day-to-day than #21 ever was. |
+| 15 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
 
 ## Conventions for working these
 
