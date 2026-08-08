@@ -187,8 +187,8 @@ export class EpisodesService {
         endedAtType: r.episode.endedAtType,
         endedAtId: r.episode.endedAtId,
         notes: r.episode.notes,
-        createdAt: r.episode.createdAt,
-        updatedAt: r.episode.updatedAt,
+        createdAt: normalizeTs(r.episode.createdAt),
+        updatedAt: normalizeTs(r.episode.updatedAt),
       }));
   }
 }
