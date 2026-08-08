@@ -5,10 +5,7 @@ import { DatabaseService } from '../persistence/database.service';
 import { medications } from '../../db/schema';
 import { CreateMedicationDto } from './dto/create-medication.dto';
 import { UpdateMedicationDto } from './dto/update-medication.dto';
-
-function normalizeTs(value: any): number {
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class MedicationsService {
