@@ -2,6 +2,25 @@
 
 Base stack: NestJS REST API. All routes require authenticated user (email/password session). Responses use JSON. Validation errors return HTTP 400 with machine-readable codes.
 
+## Conventions
+
+**Timestamps in responses are integers of epoch seconds** (UTC), or `null`. This holds for stored
+columns (`createdAt`, `updatedAt`, `acknowledgedAt`, `lastSeenAt`), for derived fields (`startedAt`,
+`endedAt`, `lastDoseAt`, `nextDueAt`, `frozenAt`, `expiresAt`, `since`), and for timestamps nested
+inside a composite response — `TimelineEntry.display`, `ErBrief.body.events`, `WhatsNewResponse.events`,
+`Revision.snapshot`, and the intervention returned by `POST /api/schedules/:scheduleId/log`.
+**No endpoint returns an ISO string in a response body.**
+
+Request bodies are the deliberate opposite: datetime inputs (`observedAt`, `performedAt`, `startAt`,
+`endAt`) are ISO 8601 datetime strings, validated by `class-validator`. A client composes a datetime
+from a picker on the way in, and renders from an integer on the way out without parsing.
+
+Storage is SQLite integer epoch seconds, and Drizzle maps `{ mode: 'timestamp' }` columns to `Date`
+on read, so the coercion at the persistence boundary is not optional.
+`apps/api/src/app/persistence/time.ts` (`normalizeTs`/`toDate`) is the single implementation. A mapper
+that copies a row's timestamp field through unconverted ships a `Date`, which serializes as an ISO
+string and silently violates this rule.
+
 ## Auth
 - `POST /api/auth/login`
   - Body: `{ email, password }`
@@ -85,6 +104,9 @@ where the caller is a member but the specific action is forbidden.
     now consistent between the list and single-item routes.
 - `GET /api/episodes/active`
   - Returns all active episodes for patients on the requester’s care team.
+  - Each item carries the episode's `createdAt`/`updatedAt` (epoch seconds) plus a denormalized
+    `patientName`. Unlike the other two episode routes it does **not** resolve derived
+    `startedAt`/`endedAt` — the dashboard resolves those itself from the linked event.
 
 ## Conditions
 

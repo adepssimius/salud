@@ -1,5 +1,8 @@
 # Data Model Spec
 
+`datetime` fields below describe the **stored column**. On the wire every one of these is epoch
+seconds — see `api.md` → Conventions.
+
 ## Entities
 
 ### User (Caregiver)
