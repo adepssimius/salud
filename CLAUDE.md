@@ -113,9 +113,11 @@ Note `/users/me` and `/users/search` stay — those are genuinely identity-scope
 - **`this.db.db as any`** is the established (unlovely) escape hatch for the multi-dialect Drizzle union
   type. Follow it rather than inventing a new abstraction mid-feature.
 - **Timestamps**: stored as SQLite integer epoch **seconds**; Drizzle hands back `Date` for
-  `{ mode: 'timestamp' }` columns, so services normalize with
-  `x instanceof Date ? Math.floor(x.getTime()/1000) : x` before returning. API responses use epoch seconds;
-  request bodies take ISO datetime strings.
+  `{ mode: 'timestamp' }` columns. Cross that boundary with `normalizeTs`/`toDate` from
+  `apps/api/src/app/persistence/time.ts` — never hand-roll the coercion, and never copy a row's
+  timestamp field straight into a response object. It serializes as an ISO string and nothing
+  catches it (that was ISSUES #20, on three mappers at once). API responses use epoch seconds;
+  request bodies take ISO datetime strings. `app-spec/api.md` → Conventions is the contract.
 - **JSON-in-text columns**: `metadata`, `tags`, `explicit_times`, `unit_preference_at_entry` are
   `text` holding JSON. Services `JSON.stringify` on write and `JSON.parse` on read. No typed metadata
   validation yet (`observations.service.ts:42`).
