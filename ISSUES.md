@@ -384,15 +384,47 @@ plus a new test proving the timeline curve converts under an explicit `AuthServi
 
 ---
 
-### 13. 🔴 `normalizeTs` redefined in 14 API services
-**Correction to original review:** I said ~8. It is **14** **[verified]** — `patients`, `whats-new`,
-`embodiments`, `medications`, `advisories`, `er-brief`, `reactions`, `schedules`, `episodes`,
-`conditions`, `dosing`, `revisions`, `timeline`, `protocols`. Two more (`observations`,
-`interventions`) inline the same `x instanceof Date ? Math.floor(x.getTime()/1000) : x` expression
-without naming it.
+### 13. ✅ `normalizeTs` redefined in 14 API services
+**Correction to original review:** I said ~8. It is **14** **[verified]** — and two more services
+inline the same expression without naming it.
 
-**Fix:** One `apps/api/src/app/common/time.ts` exporting `normalizeTs`; delete the 14 local copies.
-Purely mechanical, no behavior change, well covered by existing e2e tests.
+**Fixed 2026-08-07** as `apps/api/src/app/persistence/time.ts`, exporting `normalizeTs` and its
+reverse twin `toDate`. There are now **zero** `instanceof Date` expressions in the API outside that
+module: 14 definitions and 8 inline copies collapsed into one.
+
+**Three things the issue understated:**
+- **The inline copies were 8, not 2** — `observations` ×4, `interventions` ×3, plus the reverse
+  coercion. Unnamed copies are the ones most likely to drift next, since nobody greps for an
+  expression, so they were folded in rather than left behind.
+- **`medications.service.ts` had already drifted** — no null guard, typed `number` instead of
+  `number | null`. Swapped with no compensating `!`: `apps/api` compiles with `strict` **off** (the
+  only `"strict": true` in the workspace is `libs/shared/types`), so an assertion there would be
+  inert syntax that merely looks like it enforces something.
+- **`observations.service.ts`'s weight watermark guarded on truthiness**, not null, so a raw epoch
+  `0` mapped to `null`. Replacing it *tightens* the invariant — the guard on the next line reads
+  `null` as "no weight ever recorded", so `0 → null` would have let a backdated 1969 weight overwrite
+  a 1970 one, exactly what that guard exists to prevent.
+
+**Location: `persistence/`, not the `common/` the issue proposed.** No `common/` directory exists,
+and the convention here is a plain non-Nest module colocated with the concern that owns it
+(`paths.ts`, `storage.config.ts`, `whats-new-window.ts`). This helper is owned by `db/schema.ts`
+declaring 44 columns as `{ mode: 'timestamp' }` — naming that in the path says why it exists.
+
+**On "no behavior change":** true for 13 of the 14, and verified rather than asserted. Both sides of
+the change were captured against a freshly-migrated DB from a real running server, with volatile
+fields replaced by their *type* so a leaked `Date` serialising as an ISO string would show up.
+All six endpoint bodies (`medications`, `schedules`, `er-brief`, the unauthenticated shared brief,
+`timeline`, `patient`) came back **byte-identical**, and the backdated-weight guard was exercised
+end-to-end.
+
+One genuine delta, unreachable and deliberately kept: `toDate(null)!` is now `null` and throws on
+`.getTime()`, where the old expression produced `new Date(0)` and carried on with 1970-based
+adherence math. Both columns are NOT NULL, so this is silently-wrong becoming loud.
+
+**Also added `persistence/time.spec.ts`**, against the API's e2e-only precedent, because the e2e
+suite cannot see this module's failure mode — **no spec anywhere asserts a timestamp's type**, and
+the ones that exist either compare two endpoint values that would regress together or use
+`toBeGreaterThan(0)`, which a leaked `Date` passes via `valueOf`.
 
 ---
 
@@ -486,6 +518,75 @@ refactor is how a large diff becomes unreviewable. It is a one-line move.
 
 ---
 
+### 20. 🔴 `observations` and `interventions` return `createdAt`/`updatedAt` as ISO strings
+
+**Found while verifying #13, and worth more than #13 was.** Confirmed live against a running server:
+
+```
+GET /api/patients/:id/timeline
+  observation  observedAt: 1785578400   createdAt: "2026-08-07T20:30:49.000Z"
+  intervention performedAt: 1785582000  createdAt: "2026-08-07T20:30:49.000Z"
+```
+
+Every other endpoint returns those two fields as **epoch integers**. `observations.service.ts:55-56`
+and `interventions.service.ts:67-68` are the only mappers in the API that pass them through raw, and
+Drizzle hands back a `Date` for `{ mode: 'timestamp' }` columns — so they serialize as ISO strings.
+
+`libs/shared/types/src/lib/types.ts` declares `Observation.createdAt: number`. **This is live drift
+against the shared type on the two highest-traffic entities**, and it is exactly the kind of thing
+the one-way type rule is supposed to prevent — but nothing enforces it, because `apps/api` compiles
+with `strict` off and the `pickX` mappers have no return annotations.
+
+**Fix:** wrap both in `normalizeTs` (now one import away). But this is a **response-shape change**,
+so per CLAUDE.md and `app-spec/README.md` the spec gets checked and updated first, with approval —
+and it is worth checking whether any web page is parsing these as dates today.
+
+---
+
+### 21. 🟡 `yarn test:api` fails roughly 1 run in 5-10, on a different suite each time
+
+**Confirmed pre-existing** — reproduced on unchanged `HEAD` before #13, in both parallel and
+`--runInBand` mode, landing on `dashboard.e2e-spec.ts` one time and `observations.e2e-spec.ts`
+another.
+
+**Mechanism:** 16 e2e suites each assign the *process-global* `process.env.DATA_DIR = tmpDir` in
+their `beforeAll`, and `resolveDataDir()` (`persistence/paths.ts:6`) reads that env var when the
+DI container builds the DB connection. Jest reuses worker processes across suites, so suites can
+resolve each other's data directory. In `--runInBand` all 16 share one process.
+
+Related: the merged PR "fix(api): stop er-brief e2e from flaking on the default hook timeout" was
+treating a symptom of the same class.
+
+**Fix options:** give each suite a unique `DATA_DIR` that cannot collide and pass it explicitly
+rather than through `process.env`, or set `maxWorkers: 1` plus per-suite teardown, or inject the data
+dir as a Nest provider override in the testing module so it never touches the environment.
+
+---
+
+### 22. 🟢 Two more timestamp idioms left un-extracted
+
+Deliberately out of #13's scope, both now one import from a home in `persistence/time.ts`:
+- **`nowTs()`** — `Math.floor(Date.now() / 1000)` at 7 production sites (`whats-new:34`,
+  `er-brief:311`, `advisories:176`, `schedules:116`, `timeline:159,217,400`). A different concern
+  from the Drizzle shim.
+- **`toTs(d: Date)`** — 6 sites that already know they hold a `Date`. Adding it now would create two
+  ways to do one thing, since `normalizeTs(d)` already returns the right answer.
+
+---
+
+### 23. 🟢 `schedules.service.ts:62` is dead syntax — **not a bug, do not "fix" it**
+
+```ts
+const base = strictlyAfter ? from.getTime() : from.getTime();
+```
+
+Both branches are identical, so the ternary is a no-op. **Behavior is correct** — the branch
+`strictlyAfter` is meant to drive lives on the next line, in `offsetMs`. Filed as dead syntax to be
+deleted, explicitly flagged because someone reading it as "a bug" would change `base` and break the
+frequency math.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -501,9 +602,11 @@ so the list below is re-sequenced.
 | 5 | ~~**Episode detail**~~ ✅ | ~~9~~ | **Done 2026-08-07.** Route landed flat, not nested; resolve hands off to the entry form rather than a new endpoint — see #9. |
 | 6 | ~~**Dashboard N+1**~~ ✅ | ~~10~~ | **Done 2026-08-07.** The stated fix would have created a module cycle; the real one needed no new module at all — see #10. Surfaced #16 and #17. |
 | 7 | ~~**CSS + bundle**~~ ✅ | ~~11, 15a~~ | **Done 2026-08-07.** Lazy routes fixed the budget (572→303 kB), not the CSS; the CSS work is 41% fewer inline lines plus a token system — see #11. |
-| 8 | **Cleanup** | 13, 15b | Mechanical, low-risk. |
-| 9 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
-| 10 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
+| 8 | ~~**normalizeTs**~~ ✅ | ~~13~~ | **Done 2026-08-07.** 14 definitions + 8 inline copies into one module; response bodies verified byte-identical. Surfaced #20–#23. |
+| 9 | **Cleanup** | 15b, 23 | Mechanical, low-risk. |
+| 10 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
+| 11 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
+| 12 | **Correctness + CI** | 20, 21 | #20 is live drift against the shared type on the two busiest entities and needs a spec decision. #21 is why the suite is untrustworthy. |
 
 ## Conventions for working these
 
