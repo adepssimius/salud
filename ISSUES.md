@@ -518,7 +518,7 @@ refactor is how a large diff becomes unreviewable. It is a one-line move.
 
 ---
 
-### 20. 🔴 `observations` and `interventions` return `createdAt`/`updatedAt` as ISO strings
+### 20. ✅ `observations` and `interventions` return `createdAt`/`updatedAt` as ISO strings
 
 **Found while verifying #13, and worth more than #13 was.** Confirmed live against a running server:
 
@@ -528,18 +528,63 @@ GET /api/patients/:id/timeline
   intervention performedAt: 1785582000  createdAt: "2026-08-07T20:30:49.000Z"
 ```
 
-Every other endpoint returns those two fields as **epoch integers**. `observations.service.ts:55-56`
-and `interventions.service.ts:67-68` are the only mappers in the API that pass them through raw, and
-Drizzle hands back a `Date` for `{ mode: 'timestamp' }` columns — so they serialize as ISO strings.
+**Fixed 2026-08-07.** `observations.service.ts:56-57` and `interventions.service.ts:68-69`
+(`mapObservation`/`mapIntervention`) now wrap both fields in `normalizeTs`, same as every other
+mapper. `libs/shared/types/src/lib/types.ts` already declared `Observation.createdAt: number` — this
+was live drift against an existing shared-type contract, not a new rule.
 
-`libs/shared/types/src/lib/types.ts` declares `Observation.createdAt: number`. **This is live drift
-against the shared type on the two highest-traffic entities**, and it is exactly the kind of thing
-the one-way type rule is supposed to prevent — but nothing enforces it, because `apps/api` compiles
-with `strict` off and the `pickX` mappers have no return annotations.
+**Correction to the original review's explanation:** it isn't "`strict` off + missing return
+annotations." `row` is typed `any` in these mappers, so `row.createdAt` is `any`, which is assignable
+to `number` under `strict` too — a return-type annotation only catches missing/excess properties, not
+`any` widening. Nothing in the type system was ever going to catch this; only a runtime wire-contract
+test could, which is why one now exists (below).
 
-**Fix:** wrap both in `normalizeTs` (now one import away). But this is a **response-shape change**,
-so per CLAUDE.md and `app-spec/README.md` the spec gets checked and updated first, with approval —
-and it is worth checking whether any web page is parsing these as dates today.
+**Three raw sites, not the two reported, plus a fourth affected surface:**
+- `observations.service.ts:56-57` and `interventions.service.ts:68-69` — the two named above.
+- **`episodes.service.ts:190-191` (`listActiveForUser`, reached by `GET /api/episodes/active`) — not
+  in the original issue.** The same file's `getById` and `listForPatient` already normalized
+  correctly; only this third route had drifted. Fixed in its own commit so it's visible in the log.
+- `POST /api/schedules/:scheduleId/log` returns the created intervention and inherited the
+  `interventions.service.ts` fix for free — worth calling out since it wasn't in the issue's blast
+  radius either.
+
+Blast radius beyond the three direct sites: `Observation`/`Intervention` objects are re-emitted whole
+as `TimelineEntry.display`, so `/timeline`, `/whats-new`, and `/er-brief` (plus its frozen
+`er_brief_snapshots.payload`) all carried the same bug and are fixed by the same three lines.
+`GET /api/dashboard` does **not** touch these fields (it builds fresh summary objects) and was used
+as a must-be-empty control during verification — confirmed unchanged.
+
+**Spec:** `app-spec/api.md` gained a `## Conventions` section stating the epoch-seconds response rule
+explicitly (it previously lived only in `types.ts` and `CLAUDE.md`), plus a note on what
+`GET /api/episodes/active` returns and doesn't. `CLAUDE.md`'s Timestamps bullet now points at
+`persistence/time.ts` instead of quoting the pre-#13 inline idiom.
+
+**Tests:** new `apps/api/src/app/persistence/timestamps.e2e-spec.ts` walks every response body
+recursively, checking every key matching `/At$/` (with named exclusions for non-timestamp `*At` keys)
+against `Number.isInteger(v) && v < 4_000_000_000` — the upper bound catches a
+milliseconds-instead-of-seconds regression that a bare `Number.isInteger` check would miss. Run
+against unfixed code first to confirm it failed at exactly the three sites above (16/20 checks
+failing, the 4 already-correct routes passing as controls), then confirmed convergence to 20/20
+across the fix commits. One-line regression markers were also added to
+`observations.e2e-spec.ts`, `interventions.e2e-spec.ts`, and `episodes.e2e-spec.ts` so a future
+failure names a file.
+
+**Verified live**, not just via the test suite: a before/after HTTP capture against a real running
+server (pinned fixture data, volatile fields replaced by type tags) showed the diff was exactly
+`{createdAt, updatedAt}` flipping from `<str:iso>` to `<int>` at every path they appear, and nothing
+else — including `/observations/:id/revisions` after a `PATCH`, proving the fix reaches *new*
+revision snapshots. Old `revisions.snapshot` rows captured before the fix keep their ISO strings
+(never rewritten, never expire) — confirmed this doesn't break anything: `revision-history.component.ts`
+renders `snapshot | json`, which treats a string and a number identically, and it's the only revision
+UI, wired to `patient`/`condition` entities whose mappers were never buggy. No deployed instance of
+salud exists yet, so no backfill was done or needed. `er_brief_snapshots.payload` has the same
+self-heals-in-≤168h property noted under #13's follow-ups (`er-brief.md:94-96` documents snapshots as
+frozen-forever-until-expiry) — but that argument does **not** extend to revisions, which never expire;
+verified live via the public `/brief/:token` page, which reads none of the affected fields and
+renders identically regardless of shape. Zero web code reads `.createdAt`/`.updatedAt` off these two
+entities outside two already-normalized, already-epoch-assuming call sites, so browser verification
+(`/timeline`, `/whats-new`, patient detail, `/brief/:token`) was a not-a-gap: nothing looked different,
+which is the expected outcome.
 
 ---
 
@@ -587,6 +632,32 @@ frequency math.
 
 ---
 
+### 24. 🟡 The `Episode` shared type is optional everywhere, and `GET /api/episodes/active` is
+effectively untyped
+
+**Surfaced while closing #20.** `types.ts:203-211` declares `createdAt`, `updatedAt`, `startedAt`, and
+`endedAt` all optional on `Episode`, so a response missing any of them still compiles — the loophole
+that let `listActiveForUser`'s ISO-string leak (#20) pass unnoticed for as long as it did. Fixing #20
+did not fix this: the mappers now happen to return the right runtime values, but nothing in the type
+would stop the next regression from reintroducing an `undefined` or a `Date`.
+
+It's also worse than "optional" on that one route specifically:
+- `listActiveForUser` (`episodes.service.ts`, backing `GET /api/episodes/active`) returns a
+  denormalized `patientName` field that appears on **no shared type at all** — dashboard consumers
+  read it off an untyped/`any` shape.
+- The same route omits `startedAt`/`endedAt`, which both other episode routes (`getById`,
+  `listForPatient`) resolve and return. One of three episode endpoints disagrees with the other two
+  on what an "episode" response looks like.
+
+**Fix shape (not done — deliberately left to a future pass, per the #20 plan's decision to fix the
+three mapper sites and leave typing alone):** either tighten `Episode.createdAt`/`updatedAt` to
+non-optional (they're NOT NULL columns; every mapper has always produced them) and give
+`listActiveForUser`'s shape its own named type — e.g. `ActiveEpisodeSummary extends Episode` adding
+`patientName`, and either resolving `startedAt`/`endedAt` there too or documenting why that route
+alone omits them.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -606,7 +677,8 @@ so the list below is re-sequenced.
 | 9 | **Cleanup** | 15b, 23 | Mechanical, low-risk. |
 | 10 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
 | 11 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
-| 12 | **Correctness + CI** | 20, 21 | #20 is live drift against the shared type on the two busiest entities and needs a spec decision. #21 is why the suite is untrustworthy. |
+| 12 | ~~**Correctness**~~ ✅ (20) / **CI** (21) | ~~20~~, 21 | **20 done 2026-08-07.** Was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole behind it as #24. #21 is why the suite is untrustworthy — still open. |
+| 13 | **Follow-up from #20** | 24 | `Episode`'s optional timestamps are what let #20's third site pass unnoticed; low urgency since #20 itself is fixed. |
 
 ## Conventions for working these
 
