@@ -4,7 +4,14 @@
     "outDir": "../../dist/out-tsc",
     "module": "commonjs",
     "moduleResolution": "node10",
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    // ts-jest reads this to skip type-checking and transpile file-by-file (per ts.transpileModule).
+    // Separate project from tsconfig.app.json, so this affects only the jest transform — yarn
+    // build:api and yarn lint:api still type-check the app in full. Relies on emitDecoratorMetadata
+    // (tsconfig.base.json) emitting design:paramtypes from syntax alone, which every Nest
+    // constructor injection here supports: always a concrete class or an explicit @Inject(TOKEN),
+    // never a bare interface. Verified: full apps/api suite green after enabling this.
+    "isolatedModules": true
   },
   "include": [
     "jest.config.ts",
