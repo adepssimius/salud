@@ -18,6 +18,9 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  // Without this, OnModuleDestroy hooks (e.g. DatabaseService closing the DB connection) never run
+  // on SIGTERM/SIGINT and the process exits with the driver handle still open.
+  app.enableShutdownHooks();
   const port = process.env.PORT || 3000;
   await app.listen(port);
   Logger.log(
