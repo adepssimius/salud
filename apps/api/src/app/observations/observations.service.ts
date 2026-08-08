@@ -66,11 +66,7 @@ export class ObservationsService {
     const db = this.db.db as any;
     const rows = await db.select().from(patients).where(eq(patients.id, patientId)).limit(1);
     const current = rows[0];
-    const currentRecordedAt = current?.latestWeightRecordedAt
-      ? current.latestWeightRecordedAt instanceof Date
-        ? Math.floor(current.latestWeightRecordedAt.getTime() / 1000)
-        : current.latestWeightRecordedAt
-      : null;
+    const currentRecordedAt = normalizeTs(current?.latestWeightRecordedAt);
     if (currentRecordedAt !== null && observedAtTs < currentRecordedAt) {
       return;
     }
