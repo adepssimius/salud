@@ -8,11 +8,7 @@ import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 interface TimingConfig {
   frequencyHours: number | null;

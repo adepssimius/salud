@@ -4,11 +4,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { revisions } from '../../db/schema';
 import { Revision, RevisionEntityType } from '@salud/shared/types';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class RevisionsService {

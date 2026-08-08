@@ -5,11 +5,7 @@ import { DatabaseService } from '../persistence/database.service';
 import { medicationEmbodiments, medications } from '../../db/schema';
 import { CreateEmbodimentDto } from './dto/create-embodiment.dto';
 import { UpdateEmbodimentDto } from './dto/update-embodiment.dto';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class EmbodimentsService {

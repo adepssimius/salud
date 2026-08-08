@@ -24,11 +24,7 @@ import {
   observationsSince,
   whatsNewSince,
 } from '../whats-new/whats-new-window';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a

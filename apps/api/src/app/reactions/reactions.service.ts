@@ -4,11 +4,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { adverseReactions, careTeamMemberships } from '../../db/schema';
 import { CreateReactionDto } from './dto/create-reaction.dto';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class ReactionsService {

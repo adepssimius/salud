@@ -25,14 +25,10 @@ import {
   SharedErBriefResponse,
   TimelineEntry,
 } from '@salud/shared/types';
+import { normalizeTs } from '../persistence/time';
 
 const DEFAULT_SNAPSHOT_HOURS = 72;
 const MAX_SNAPSHOT_HOURS = 168;
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
 
 function ageFromDob(dateOfBirth: string): { ageYears: number; ageMonths: number } {
   const dob = new Date(dateOfBirth);

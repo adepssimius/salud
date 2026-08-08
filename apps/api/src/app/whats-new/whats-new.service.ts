@@ -5,11 +5,7 @@ import { advisories, careTeamMemberships, interventionSchedules } from '../../db
 import { TimelineService } from '../timeline/timeline.service';
 import { advisoriesSince, isNowDue, whatsNewSince } from './whats-new-window';
 import { AckWhatsNewResponse, TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class WhatsNewService {

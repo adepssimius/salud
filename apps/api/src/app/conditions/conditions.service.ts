@@ -12,11 +12,7 @@ import {
 import { CreateConditionDto } from './dto/create-condition.dto';
 import { UpdateConditionDto } from './dto/update-condition.dto';
 import { RevisionsService } from '../revisions/revisions.service';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class ConditionsService {

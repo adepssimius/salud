@@ -15,11 +15,7 @@ import {
   AgeBandGuidance,
   WeightBasedGuidance,
 } from '@salud/shared/types';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 export interface DoseEvaluationInput {
   medicationId: string;

@@ -6,11 +6,7 @@ import { protocols } from '../../db/schema';
 import { ConditionsService } from '../conditions/conditions.service';
 import { CreateProtocolDto } from './dto/create-protocol.dto';
 import { UpdateProtocolDto } from './dto/update-protocol.dto';
-
-function normalizeTs(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-}
+import { normalizeTs } from '../persistence/time';
 
 @Injectable()
 export class ProtocolsService {
