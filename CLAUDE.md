@@ -155,12 +155,29 @@ Episodes are manual frames over the timeline, e.g. "Fever Jan 2025".
   setting the flag on the existing membership row — so `getById` derives `episodeIds` from
   non-resolving rows and `resolvesEpisodeIds` from resolving rows. Keep that in mind before "fixing" it.
 
-## Migrations (proof-of-concept policy)
+## Migrations
 
-Migrations are deliberately **flattened to one file** while pre-release. On a schema change:
-update `apps/api/src/db/schema.ts`, regenerate so a single `0000_*.sql` remains, `rm data/salud.db`,
-re-run migrate. Do not accumulate incremental migrations yet. The e2e specs run `migrate()` against a
-temp SQLite dir, so a stale/missing migration file breaks every API e2e suite at once.
+**Migrations accumulate. Do not flatten them.** The old proof-of-concept policy (regenerate a
+single `0000_*.sql`, `rm data/salud.db`, re-migrate) ended when salud.bpd.sh went live — Drizzle
+keys `__drizzle_migrations` on each file's hash, so an edited `0000` is a different migration to
+a database that already ran the old one. On a schema change: update `apps/api/src/db/schema.ts`,
+`yarn drizzle-kit generate` a **new** file, `yarn drizzle-kit migrate`. Never edit an applied one.
+
+The generated SQL ships in the API image through the `assets` entry in `apps/api/webpack.config.js`,
+and `main.ts` applies pending migrations at boot before it listens. Both halves matter: drop the
+asset copy and the container starts against an empty database with no schema and no error until
+the first query. The e2e specs run `migrate()` themselves against a temp SQLite dir, so a
+stale/missing migration file breaks every API e2e suite at once.
+
+## Deployment
+
+Deployed at **salud.bpd.sh** on the jl-k3s cluster; manifests live in the sibling `k8s-infra`
+repo under `apps/salud/`. Two images (`salud-api`, `salud-web`) published to GHCR on every push
+to `main` as `main-<run>-<sha>`; Flux image automation commits the bump, so **merging to `main`
+is the deploy**. SQLite on a ReadWriteOnce Ceph PVC at `/data`, which is why the api runs one
+replica with `strategy: Recreate`. Authelia forward-auth (`group:admins`) gates the host in front
+of the app's own JWT login. In production the API fails fast on a missing/weak `JWT_SECRET` and
+on an unwritable `/data` rather than degrading silently. Full detail in `app-spec/deployment.md`.
 
 ## Uncommitted work in progress (as of this writing)
 
@@ -194,4 +211,5 @@ Spec file map: `product.md` (vision, roles, MVP scope) · `data-model.md` (entit
 integrity rules) · `api.md` (endpoints, bodies, error codes) · `frontend.md` (nav, auth, profile,
 entry-form behavior) · `security.md` (auth, Phase-2 key model) · `persistence.md` + `tooling.md`
 (Drizzle, env-selectable DB/storage, Bruno) · `repo-structure.md` (Nx layout, type-sharing rules) ·
-`development.md` (migrations, seeding, curl verification).
+`development.md` (migrations, seeding, curl verification) · `deployment.md` (cluster topology,
+Authelia gate, release flow).

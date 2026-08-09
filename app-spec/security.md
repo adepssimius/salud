@@ -4,6 +4,20 @@
 - Use email/password authentication for phase 1.
 - Store password hashes using Argon2 (argon2id recommended) with strong parameters (memory/time tuned for server profile).
 - Issue JWT access tokens on login (as defined in API spec); all API routes require auth and must revalidate patient care team membership.
+- `JWT_SECRET` is read in exactly one place (`apps/api/src/app/config/env.ts`). Outside
+  production a well-known development fallback is used so local work needs no setup. When
+  `NODE_ENV=production` the API refuses to boot if it is unset, shorter than 32 characters, or
+  still set to that development value — an unsigned-in-practice deployment must fail loudly
+  rather than issue forgeable tokens.
+
+## Deployment perimeter
+
+The deployed instance additionally sits behind Authelia forward-auth requiring `group:admins`
+(see `deployment.md`). This is a perimeter in front of the app, not a replacement for its auth:
+the API still requires its own JWT on every route and still re-checks care-team membership. The
+app does not read `Remote-User` or any other proxy-supplied identity header, so nothing about
+being behind the proxy weakens the in-app checks — and nothing about the proxy should be assumed
+present by application code.
 
 ## Data handling (phase 1)
 - Single-household scope; no cross-household sharing.
@@ -37,6 +51,12 @@ See `er-brief.md` for the full feature. The one deliberately unauthenticated rou
   that also serves authenticated routes without an explicit, reviewed exception — keep it in its
   own controller (`ErBriefPublicController`), the same isolation pattern already used for
   `auth/login` and `auth/register`.
+- **Known gap:** on the deployed instance this route is not actually reachable by its intended
+  audience. Authelia gates the whole `salud.bpd.sh` host with `group:admins`, so a share link
+  handed to an ER clinician hits the login portal, not the brief. The application-level design
+  above is unchanged and correct; making it work end to end needs an Authelia `bypass` rule
+  scoped to `^/api/er-brief/shared/` and `^/brief/`. Deliberately deferred — until then, treat
+  the feature as internal-only.
 
 ## Future/phase 2
 - Native phone app and web clients should support an iMessage-like encryption scheme to authorize/deauthorize sharing of patient data with other caregivers. Encryption is performed client-side; on-device data must be stored encrypted.

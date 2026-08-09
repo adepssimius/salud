@@ -19,6 +19,7 @@ import { ReactionsModule } from './reactions/reactions.module';
 import { ErBriefModule } from './er-brief/er-brief.module';
 import { WhatsNewModule } from './whats-new/whats-new.module';
 import { FilesModule } from './files/files.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { FilesModule } from './files/files.module';
     ErBriefModule,
     WhatsNewModule,
     FilesModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

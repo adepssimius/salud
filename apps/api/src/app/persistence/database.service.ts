@@ -3,6 +3,7 @@ import {
   DATABASE_CONNECTION_TOKEN,
   DatabaseConnection,
 } from './database.providers';
+import { runMigrations } from './migrator';
 
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
@@ -17,6 +18,23 @@ export class DatabaseService implements OnModuleDestroy {
 
   get db() {
     return this.connection.db;
+  }
+
+  // main.ts calls this before listening so a fresh container/volume gets its schema. The e2e
+  // suites drive drizzle's migrator directly against a temp dir instead, so they don't depend
+  // on the bundled assets being present.
+  async runMigrations() {
+    await runMigrations(this.connection);
+  }
+
+  // Cheap liveness check for the readiness probe. Deliberately dialect-specific: the sqlite
+  // driver is synchronous and has no `query`, so there is no one call that covers all three.
+  async ping(): Promise<void> {
+    if (this.connection.client === 'sqlite') {
+      this.connection.raw.prepare('select 1').get();
+    } else {
+      await this.connection.raw.query('select 1');
+    }
   }
 
   // Nest calls this on app.close() unconditionally; main.ts additionally calls

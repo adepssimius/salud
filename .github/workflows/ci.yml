@@ -25,7 +25,9 @@ jobs:
 
   publish:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/')
+    # Every push to main publishes, not just tags — Flux's image automation watches these and
+    # commits the bump to k8s-infra, so merging to main is the deploy. Pull requests never publish.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,12 +46,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/adepssimius/salud-${{ matrix.image }}
-          tags: type=ref,event=tag
-          flavor: latest=false
+      # Main builds get `main-<run number>-<short sha>`; explicit tags keep publishing under the
+      # tag verbatim.
+      #
+      # The run number rather than a timestamp is deliberate on both counts: it is identical
+      # across every job in this matrix, so api and web can never drift onto different tags the
+      # way two independently-computed timestamps could; and it is monotonic, so Flux's
+      # ImagePolicy can sort it numerically without depending on fixed-width formatting. Flux
+      # only matches the `main-` form, so cutting a tag pins a release without deploying it.
+      - name: Compute image tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=main-${{ github.run_number }}-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: docker/build-push-action@v6
         with:
@@ -57,5 +69,7 @@ jobs:
           file: apps/${{ matrix.image }}/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/adepssimius/salud-${{ matrix.image }}:${{ steps.tag.outputs.value }}
+          # Without this each publish recompiles the whole workspace once per matrix image.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

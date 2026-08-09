@@ -9,6 +9,7 @@ import { PersistenceModule } from '../persistence/persistence.module';
 import { JwtAuthGuard } from './jwt.guard';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { resolveJwtSecret } from '../config/env';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { UsersController } from './users.controller';
     PassportModule,
     JwtModule.registerAsync({
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') ?? 'dev-secret',
+        secret: resolveJwtSecret(config),
         signOptions: { expiresIn: '1d' },
       }),
       inject: [ConfigService],

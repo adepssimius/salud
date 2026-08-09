@@ -753,10 +753,14 @@ change, not a drive-by.
 
 ### 27. 🟢 Two small persistence findings from the #21 investigation, neither urgent
 
-- **`resolveDataDir()`'s silent fallback.** If the preferred `mkdirSync('/data')` ever throws, every
-  suite (and a misconfigured deployment) silently retargets `process.cwd()/data` — the developer's
-  live SQLite database in this repo — with no warning. Unreachable today on a working machine, but a
-  loaded gun; at minimum it should log when it takes the fallback branch.
+- ~~**`resolveDataDir()`'s silent fallback.**~~ **Fixed 2026-08-08**, when the app became
+  deployable — the fallback turned from a loaded gun into a live one, since a PVC mounted with the
+  wrong owner would have meant every patient record and attachment silently landing on the pod's
+  ephemeral filesystem and vanishing on the next restart. `resolveDataDir()` now throws when
+  `NODE_ENV=production`, and additionally `fs.accessSync(W_OK)`s the directory, because
+  `mkdirSync({recursive:true})` succeeds on an existing directory regardless of its mode — the
+  read-only-mount case the original note was really about. The cwd fallback still applies outside
+  production so local dev and the e2e suites are unaffected.
 - **`resolveDataDir()` performs a `fs.mkdirSync` side effect inside a function named `resolve*`**, and
   runs 3+ times per DI container (twice via `resolveDatabaseConfig`, once via `resolveStorageConfig`).
   Separating "compute the path" from "ensure it exists" would be a small clarity win, not a bug.
@@ -792,5 +796,5 @@ so the list below is re-sequenced.
   behavior needs the spec updated **first**, with approval.
 - Every endpoint change needs three things: a Jest/supertest case, a Bruno request, and a real
   curl/browser check against a running server.
-- Migrations stay flattened to a single `0000_*.sql` while pre-release.
+- Migrations accumulate — never edit or regenerate an applied one (see `app-spec/development.md`).
 - Don't commit without explicit consent.
