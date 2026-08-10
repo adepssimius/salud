@@ -25,13 +25,21 @@ script:pre-request {
 body:json {
   {
     "notes": "Updated via Bruno",
-    "metadata": {
-      "isAtypical": true
-    }
+    "amountMg": 200
   }
 }
 
 settings {
   encodeUrl: true
   timeout: 0
+}
+
+docs {
+  The type-specific fields are named individually — `metadata` is NOT a writable field, on create or
+  update. This request used to send `{"metadata": {"isAtypical": true}}`, which was a demonstration
+  of ISSUES #28 rather than a legitimate call: the blob was merged last, so a client could write
+  over the dosing engine's own verdict. A `metadata` object in the body is stripped now.
+
+  Changing `amountMg` re-runs the atypical evaluation, so the response's `metadata.isAtypical` and
+  `atypicalReason` reflect the new amount against the applicable guideline.
 }

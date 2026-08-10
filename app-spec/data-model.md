@@ -246,6 +246,12 @@ comparison time, not at write time.
   - `side: enum('left','right','bilateral','n/a')`
   - `dressingType: string`
 
+**This list is closed, and the blob is composed server-side.** Every key above is either a named,
+validated field of the create/update body or resolved by the API itself; there is no
+client-contributed remainder, and a `metadata` object in a request body is stripped rather than
+merged (api.md → Interventions). Unlike an observation entry's metadata — which is genuinely
+per-type client data, validated against a schema — an intervention's is a computed record.
+
 ### Medication
 - `id: uuid`
 - `name: string`
@@ -440,6 +446,11 @@ the snapshot's contents do.
   - `performedAt` earlier than the immediately preceding same-medication dose's own `nextAllowedAt`
     — reason `interval_too_short`.
   - None of these ever blocks the save (N-3, P1) — see `advisories.md` → "No hard stops".
+  - **`isAtypical`/`atypicalReason` are only ever written by this evaluation.** They are the
+    permanent trace that a dose didn't follow guidance (F-2.4), so a client cannot set or clear
+    them — not through a named field, and not through the `metadata` blob, which is server-composed
+    (above). "Never blocks the save" is about not stopping a caregiver; it is not licence to save
+    without the flag.
 - `resolvesEpisodeIds` on observations/interventions must be a subset of episodes they are linked to via pivot.
 - Every episode id an observation or intervention references — in `episodeIds` or
   `resolvesEpisodeIds` — must belong to the **same patient as the event**. Without this an event on

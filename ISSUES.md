@@ -792,10 +792,22 @@ change, not a drive-by.
 
 ---
 
-### 28. 🔴 A client can overwrite server-resolved dose fields through `metadata` passthrough
+### 28. ✅ A client can overwrite server-resolved dose fields through `metadata` passthrough
 
-**Found during the 2026-08-09 QA-findings batch; deliberately left out of it** — it is a distinct
-defect from the required-field and bounds work that batch covered, and it deserves its own change.
+**Fixed 2026-08-09.** The fix went further than either option this entry proposed. Both of them
+assumed a client legitimately contributes *something* to the blob — and it doesn't. `api.md` never
+documented `metadata` as a request field; the web never sent one (its only `metadata` is on weight
+*observation* entries); no test used one; and `data-model.md`'s "Intervention metadata" list is a
+closed set where every key is either a named, validated DTO field or resolved by the engine. The
+one client that did send it was `bruno/interventions/update.bru`, sending `{"isAtypical": true}` —
+a demonstration of the bug rather than a use of the feature.
+
+So the passthrough was **removed outright**, on create and update, from the API DTOs and the shared
+types. A `metadata` object in a request body is now stripped like any other unrecognized field.
+That is strictly stronger than reordering the merge, which would still have let arbitrary junk keys
+into the stored blob.
+
+The original note, kept for the record:
 
 **Where:** `create-intervention.dto.ts` declares `metadata?: Record<string, any>` with no validation
 at all, and `interventions.service.ts` merges it **last** into the persisted blob
@@ -859,7 +871,7 @@ so the list below is re-sequenced.
 | 12 | ~~**Correctness + CI**~~ ✅ | ~~20, 21, 25~~ | **All done 2026-08-08.** 20 was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole as #24. 21 turned out to bundle two unrelated bugs, not one: a two-clock race in one dashboard assertion, and a separate supertest ephemeral-port-churn issue causing spurious wrong-status responses (~20% of full runs) — refiled and fixed as #25 once isolated. `yarn test:api` is now trustworthy: 0/60 reproductions across both mechanisms' post-fix verification runs. |
 | 13 | ~~**Follow-up from #20**~~ ✅ | ~~24~~ | **Done 2026-08-09.** The type change alone was cosmetic — the return annotations were the actual fix. |
 | 14 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
-| 15 | **Follow-ups from the QA-findings batch** | 28, 29, 30 | #28 is the only 🔴 of the three and is a real integrity hole — a client can erase an atypical-dose flag. #29 and #30 are both "the third time is when you extract it" items. |
+| 15 | **Follow-ups from the QA-findings batch** | ~~28~~, 29, 30 | **#28 done 2026-08-09** — removing the passthrough entirely beat both fixes the entry proposed. #29 and #30 are both "the third time is when you extract it" items. |
 
 ## Conventions for working these
 

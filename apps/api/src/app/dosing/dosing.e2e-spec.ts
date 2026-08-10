@@ -412,4 +412,42 @@ describe('Dosing engine (e2e)', () => {
     expect(check.body.guidance.weightBased.computedMl).toBeNull();
     expect(check.body.guidance.weightBased.concentrationMgPerMl).toBeNull();
   });
+  // ISSUES #28. `metadata` used to be spread in *last*, over the top of everything the engine had
+  // just computed. The atypical flag is the permanent trace that a dose didn't follow guidance
+  // (F-2.4), so a client able to clear it can erase that trace with nothing in the record to show
+  // it happened.
+  it('ignores a client-supplied metadata blob rather than letting it overwrite the engine', async () => {
+    const dose = await logDose(patientId, {
+      medicationId,
+      medicationEmbodimentId: embodimentId,
+      doseSource: 'override',
+      amountMg: 5000,
+      metadata: {
+        isAtypical: false,
+        atypicalReason: null,
+        guidelineId: '11111111-1111-4111-8111-111111111111',
+        nextAllowedAt: 0,
+        weightKgUsed: 999,
+        somethingMadeUp: 'nope',
+      },
+    } as any);
+
+    // The engine's verdict stands: 5000 mg on a toddler is over the per-dose cap, and an override
+    // with no schedule behind it is atypical on its own.
+    expect(dose.metadata.isAtypical).toBe(true);
+    expect(dose.metadata.atypicalReason).toContain('exceeds_max_per_dose');
+    expect(dose.metadata.guidelineId).not.toBe('11111111-1111-4111-8111-111111111111');
+    expect(dose.metadata.weightKgUsed).not.toBe(999);
+    // And nothing unrecognized reaches the blob at all.
+    expect(dose.metadata.somethingMadeUp).toBeUndefined();
+
+    // Same on the update path, which had its own merge.
+    const patched = await request(app.getHttpServer())
+      .patch(`/api/interventions/${dose.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ metadata: { isAtypical: false, atypicalReason: null } })
+      .expect(200);
+    expect(patched.body.metadata.isAtypical).toBe(true);
+    expect(patched.body.metadata.atypicalReason).toContain('exceeds_max_per_dose');
+  });
 });

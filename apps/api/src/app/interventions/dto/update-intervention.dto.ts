@@ -90,7 +90,4 @@ export class UpdateInterventionDto {
   @IsOptional()
   @IsString()
   dressingType?: string;
-
-  @IsOptional()
-  metadata?: Record<string, any>;
 }

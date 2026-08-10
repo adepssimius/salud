@@ -172,8 +172,12 @@ export class InterventionsService {
       isAtypical: reasons.length > 0,
       atypicalReason: reasons.length ? reasons.join(',') : null,
       nextAllowedAt: resolvedNextAllowedAt,
-      ...dto.metadata,
     };
+    // No `...dto.metadata` spread. It used to sit here, last, so a request could land
+    // `isAtypical: false` on top of the engine's own verdict and erase the permanent trace that a
+    // dose didn't follow guidance (F-2.4). Every key above is a named, validated field of the DTO
+    // or resolved just now; the blob is a closed set (data-model.md -> Intervention metadata), so
+    // there is nothing legitimate for a client to contribute here.
 
     await db.insert(interventions).values({
       id,
@@ -347,10 +351,9 @@ export class InterventionsService {
     const updates: Record<string, any> = {};
     if (dto.notes !== undefined) updates.notes = dto.notes;
 
-    let metadata = row.metadata ? JSON.parse(row.metadata) : {};
-    if (dto.metadata) {
-      metadata = { ...metadata, ...dto.metadata };
-    }
+    // The stored blob, then the named fields the client actually supplied. There is deliberately no
+    // client `metadata` merge -- see the note in create().
+    const metadata = row.metadata ? JSON.parse(row.metadata) : {};
     // merge type-specific fields
     const mergeFields = [
       'medicationId',

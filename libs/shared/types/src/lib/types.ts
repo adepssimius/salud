@@ -251,14 +251,16 @@ export interface CreateInterventionDto {
   bodyLocation?: string;
   side?: 'left' | 'right' | 'bilateral' | 'n/a';
   dressingType?: string;
-  metadata?: Record<string, any>;
+  // No `metadata` here, deliberately. The stored blob is composed server-side from these named
+  // fields plus what the dosing engine resolves; it is a closed set, not a client-extensible bag
+  // (data-model.md → Intervention metadata). It used to be merged last, which let a request
+  // overwrite `isAtypical` — the permanent trace that a dose didn't follow guidance.
 }
 
 export interface UpdateInterventionDto {
   episodeIds?: string[];
   resolvesEpisodeIds?: string[];
   notes?: string | null;
-  metadata?: Record<string, any>;
   // type-specific updates allowed; guidelines optional
   medicationId?: string;
   medicationEmbodimentId?: string;

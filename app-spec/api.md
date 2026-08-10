@@ -319,13 +319,24 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     - `medicationId`, `medicationEmbodimentId` and `guidelineId` must be v4 UUIDs.
     - `amountMg`, `amountMl`, `pillCount`, `weightKgUsed` and `ageMonthsUsed` are range-checked; a
       negative `amountMg` would otherwise count toward the daily total.
+  - **The stored `metadata` blob is composed server-side and is not accepted from the client.**
+    Every key it holds is either a first-class field of this body (`medicationId`, `amountMg`,
+    `bodyLocation`, …) or server-resolved (`guidelineId`, `weightKgUsed`, `ageMonthsUsed`,
+    `nextAllowedAt`, `isAtypical`, `atypicalReason`) — see data-model.md → "Intervention metadata",
+    which is a closed set. A `metadata` object in a request body is stripped like any other
+    unrecognized field, on create and on `PATCH` alike.
+    - Why this is a rule and not an implementation detail: the blob used to be merged **last**, so a
+      request could set `isAtypical: false` over the top of the engine's own verdict. The atypical
+      flag is the permanent trace that a dose didn't follow guidance (F-2.4), and a client that can
+      clear it can erase that trace with nothing in the record to show it happened.
   - Response: `InterventionDto` (201) with computed fields where applicable.
 - Episode linkage is stored via pivot rows (`episodes_events_pivot`) with flags for start/resolve per event.
 - `GET /api/patients/:patientId/interventions`
   - Filters: `type`, `medicationId`, `tag`, `episodeId`, `from`, `to`.
 - `GET /api/interventions/:interventionId`
 - `PATCH /api/interventions/:interventionId`
-  - Allow updates with re-validation of atypical logic.
+  - Allow updates with re-validation of atypical logic. Same rule as create: the type-specific
+    fields are named individually in the body, and `metadata` is not a writable field.
 
 ## Dosing engine
 

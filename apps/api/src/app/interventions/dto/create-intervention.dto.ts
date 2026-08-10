@@ -112,7 +112,4 @@ export class CreateInterventionDto {
   @IsOptional()
   @IsString()
   dressingType?: string;
-
-  @IsOptional()
-  metadata?: Record<string, any>;
 }
