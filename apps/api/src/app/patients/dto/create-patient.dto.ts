@@ -4,6 +4,7 @@ import {
   SexAtBirth,
   CareTeamRole,
 } from '@salud/shared/types';
+import { IsNotInFuture } from '../../common/validators';
 
 export class CreatePatientDto implements CreatePatientDtoShape {
   @IsString()
@@ -11,6 +12,7 @@ export class CreatePatientDto implements CreatePatientDtoShape {
   fullName!: string;
 
   @IsDateString()
+  @IsNotInFuture()
   dateOfBirth!: string;
 
   @IsIn(['female', 'male'])

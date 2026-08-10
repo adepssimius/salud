@@ -30,22 +30,30 @@ export function whatsNewSince(lastSeenAt: number | null, nowTs: number): number 
 }
 
 /**
- * Observations since the watermark, on **clinical** time (`observedAt`), inclusive.
+ * Observations since the watermark, on **log** time (`createdAt`), inclusive.
  *
- * Clinical rather than log time is what the list services already do, so the counts match the page.
- * It does mean a backdated entry can slip past a caregiver's watermark — tracked separately; do not
- * "fix" it here without changing the endpoint too, or the two will disagree.
+ * Log rather than clinical time because of what this feature is for: "what happened that I haven't
+ * seen". A 2 AM observation written up at 6 AM is unseen by the caregiver who last looked at 5 AM,
+ * whatever its `observedAt` says — and selecting on clinical time made exactly that entry
+ * invisible, in the handoff the feature exists to cover (ISSUES #16).
+ *
+ * **This must stay on the same column as `WhatsNewService`'s `getTimeline({ sinceCreatedAt })`.**
+ * These two feed the dashboard card's `eventCount` and the WYWA page's `events` respectively, and
+ * `dashboard.e2e-spec.ts` asserts the two agree. Move one, move the other.
+ *
+ * Selection and display are now different axes: entries still show and sort by clinical time, so a
+ * 6 AM briefing can legitimately contain an entry stamped 2 AM, in 2 AM's position.
  *
  * Inclusive `>=` here vs. strict `>` on advisories below is deliberate, not an oversight — it
  * matches observations.service / interventions.service, whose filters drop rows when `ts < from`.
  */
 export function observationsSince(patientId: string, since: number): SQL | undefined {
-  return and(eq(observations.patientId, patientId), gte(observations.observedAt, new Date(since * 1000)));
+  return and(eq(observations.patientId, patientId), gte(observations.createdAt, new Date(since * 1000)));
 }
 
-/** Interventions since the watermark, on clinical time (`performedAt`). See `observationsSince`. */
+/** Interventions since the watermark, on log time (`createdAt`). See `observationsSince`. */
 export function interventionsSince(patientId: string, since: number): SQL | undefined {
-  return and(eq(interventions.patientId, patientId), gte(interventions.performedAt, new Date(since * 1000)));
+  return and(eq(interventions.patientId, patientId), gte(interventions.createdAt, new Date(since * 1000)));
 }
 
 /**
@@ -53,8 +61,8 @@ export function interventionsSince(patientId: string, since: number): SQL | unde
  *
  * Two things differ from the event predicates above, both on purpose:
  *   - `createdAt` (when the row was written), not a clinical timestamp. An advisory has no clinical
- *     time of its own; it fires when it fires. So a dose backdated 25h still produces an advisory
- *     that counts as new.
+ *     time of its own; it fires when it fires. The event predicates above now key on `createdAt`
+ *     too, so all three finally agree on one clock.
  *   - strict `>` rather than `>=`.
  *
  * Counted separately from events rather than read off the timeline: `getTimeline` merges only

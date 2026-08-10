@@ -24,7 +24,9 @@ body:json {
   {
     "label": "500 mg tablet",
     "strengthMgPerUnit": 500,
-    "unitType": "tablet"
+    "unitType": "tablet",
+    "atHome": true,
+    "runningLow": false
   }
 }
 
@@ -34,6 +36,14 @@ script:post-response {
 
 assert {
   id: isNotEmpty
+  atHome: eq true
+}
+
+docs {
+  Create accepts the same cabinet fields PATCH does — `atHome`, `expiresAt`, `runningLow`. They
+  used to be update-only, so `whitelist: true` silently stripped them here and the caller got a 201
+  with both flags false. `runningLow: true` stamps the attribution from the requesting user, same
+  as PATCH.
 }
 
 settings {

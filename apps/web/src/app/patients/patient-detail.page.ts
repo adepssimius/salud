@@ -4,9 +4,11 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { FormsModule } from '@angular/forms';
 import {
+  AdverseReaction,
   CareTeamMember,
   CareTeamRole,
   Condition,
+  Medication,
   Patient,
   SexAtBirth,
   UpdateCodeStatusDto,
@@ -41,11 +43,19 @@ interface UserSearchResult {
             <button class="secondary" type="button" (click)="backToProfile()">Back</button>
             <button class="secondary" type="button" (click)="goToTimeline()">Timeline</button>
             <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
-            <button class="danger" type="button" (click)="deletePatient()" [disabled]="deleting()">
+            <button
+              *ngIf="isOwner()"
+              class="danger"
+              type="button"
+              (click)="deletePatient()"
+              [disabled]="deleting()"
+            >
               {{ deleting() ? 'Deleting…' : 'Delete' }}
             </button>
           </div>
         </div>
+
+        <div class="error" *ngIf="deleteError()">{{ deleteError() }}</div>
 
         <form [formGroup]="form" (ngSubmit)="savePatient()" novalidate>
           <div class="grid">
@@ -105,6 +115,39 @@ interface UserSearchResult {
           </button>
           <button class="secondary" type="button" (click)="editingCodeStatus.set(false)">Cancel</button>
         </div>
+      </div>
+
+      <!-- Above Conditions deliberately: reactions are header material on the ER Brief (F-7.3,
+           "allergies belong in the header"), and this page should mirror that priority. -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Reactions</h2>
+            <p class="muted">Allergies and adverse reactions. These warn you at dose entry.</p>
+          </div>
+          <button class="secondary" type="button" (click)="goToNewReaction()">Add reaction</button>
+        </div>
+        <div class="error" *ngIf="reactionsError()">{{ reactionsError() }}</div>
+        <ul class="row-list" *ngIf="reactions().length">
+          <li *ngFor="let r of reactions()">
+            <span>
+              <span class="pill" [class.pill-danger]="r.severity === 'danger'" [class.pill-neutral]="r.severity !== 'danger'">
+                {{ r.severity }}
+              </span>
+              {{ r.description }}
+              <span class="muted small"> — {{ describeReactionScope(r) }}</span>
+              <span class="muted small">
+                ·
+                <ng-container *ngIf="r.occurredAt; else noDate">{{
+                  r.occurredAt! * 1000 | date: 'mediumDate'
+                }}</ng-container>
+                <ng-template #noDate>Date unknown</ng-template>
+              </span>
+            </span>
+            <button type="button" class="tiny" (click)="deleteReaction(r)">Remove</button>
+          </li>
+        </ul>
+        <p class="muted" *ngIf="!reactions().length">No reactions recorded.</p>
       </div>
 
       <div class="card">
@@ -431,12 +474,17 @@ export class PatientDetailPage implements OnInit {
   savingPatient = signal(false);
   saveMessage = signal<string | null>(null);
   deleting = signal(false);
+  deleteError = signal<string | null>(null);
 
   careTeam = signal<CareTeamMember[]>([]);
   careTeamLoading = signal(false);
   careTeamError = signal<string | null>(null);
 
   conditions = signal<Condition[]>([]);
+  reactions = signal<AdverseReaction[]>([]);
+  reactionsError = signal<string | null>(null);
+  // One catalog fetch to turn scope ids into names, rather than N+1 per row.
+  private medicationNames = signal<Record<string, string>>({});
 
   editingCodeStatus = signal(false);
   codeStatusDraft = '';
@@ -458,6 +506,14 @@ export class PatientDetailPage implements OnInit {
   });
 
   currentUserId = computed(() => this.auth.user()?.id ?? null);
+
+  // Deleting a patient is owner-only (api.md → Patients). Hiding the button is the affordance;
+  // deletePatient() re-checks, because a hidden button is not a permission check.
+  isOwner = computed(() => {
+    const p = this.patient();
+    const me = this.currentUserId();
+    return !!p && !!me && p.ownedById === me;
+  });
 
   codeStatusSetByName = computed(() => {
     const setById = this.patient()?.codeStatusSetByUserId;
@@ -493,6 +549,52 @@ export class PatientDetailPage implements OnInit {
     this.loadPatient();
     this.loadCareTeam();
     this.loadConditions();
+    this.loadReactions();
+  }
+
+  private loadReactions() {
+    this.reactionsError.set(null);
+    this.api.get<AdverseReaction[]>(`/patients/${this.patientId}/reactions`).subscribe({
+      next: (res) => {
+        this.reactions.set(res);
+        if (res.length && !Object.keys(this.medicationNames()).length) {
+          this.api.get<Medication[]>('/medications').subscribe({
+            next: (meds) =>
+              this.medicationNames.set(Object.fromEntries(meds.map((m) => [m.id, m.name]))),
+            error: () => this.medicationNames.set({}),
+          });
+        }
+      },
+      error: (err) => {
+        this.reactions.set([]);
+        this.reactionsError.set(errorText(err, 'Could not load reactions.'));
+      },
+    });
+  }
+
+  describeReactionScope(r: AdverseReaction): string {
+    if (r.scopeType === 'tag') return `tag: ${r.tag}`;
+    if (r.scopeType === 'medication' && r.medicationId) {
+      return this.medicationNames()[r.medicationId] ?? 'a medication';
+    }
+    // Embodiment names would need a second lookup per row; the form it applies to is visible on
+    // the medication page, and the description is what a caregiver scans this list for.
+    return 'a specific form';
+  }
+
+  goToNewReaction() {
+    this.router.navigate(['/patients', this.patientId, 'reactions', 'new']);
+  }
+
+  deleteReaction(r: AdverseReaction) {
+    // A mis-scoped reaction fires a full-screen interstitial on every future dose, so removing one
+    // is a real action -- confirm, matching the care-team and patient delete convention.
+    if (!window.confirm(`Remove the reaction "${r.description}"?`)) return;
+    this.reactionsError.set(null);
+    this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}/reactions/${r.id}`).subscribe({
+      next: () => this.reactions.set(this.reactions().filter((x) => x.id !== r.id)),
+      error: (err) => this.reactionsError.set(errorText(err, 'Could not remove the reaction.')),
+    });
   }
 
   private loadConditions() {
@@ -716,9 +818,12 @@ export class PatientDetailPage implements OnInit {
   }
 
   deletePatient() {
-    if (!this.currentUserId() || this.deleting()) return;
-    const confirmed = window.confirm('Delete this patient? This cannot be undone.');
+    if (!this.isOwner() || this.deleting()) return;
+    const confirmed = window.confirm(
+      'Delete this patient? This removes every observation, dose, episode, condition, schedule, reaction and photo for them. This cannot be undone.',
+    );
     if (!confirmed) return;
+    this.deleteError.set(null);
     this.deleting.set(true);
     this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}`).subscribe({
       next: () => {
@@ -727,7 +832,9 @@ export class PatientDetailPage implements OnInit {
       },
       error: (err) => {
         this.deleting.set(false);
-        this.careTeamError.set(errorText(err, 'Could not delete patient.'));
+        // Its own signal, rendered next to the button. This used to write into careTeamError,
+        // which renders in the Caregivers card far below and is wiped by any loadCareTeam().
+        this.deleteError.set(errorText(err, 'Could not delete patient.'));
       },
     });
   }

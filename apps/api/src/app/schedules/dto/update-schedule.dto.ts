@@ -1,4 +1,4 @@
-import { ArrayNotEmpty, IsArray, IsDateString, IsEnum, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ScheduleStatus } from '@salud/shared/types';
 
 export class UpdateScheduleDto {
@@ -25,14 +25,20 @@ export class UpdateScheduleDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0.01)
+  @Max(100000)
   doseMg?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0.01)
+  @Max(1000)
   doseMl?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0.25)
+  @Max(100)
   pillCount?: number;
 
   @IsOptional()
@@ -49,6 +55,8 @@ export class UpdateScheduleDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0.25)
+  @Max(8760)
   frequencyHours?: number;
 
   @IsOptional()
@@ -58,7 +66,9 @@ export class UpdateScheduleDto {
   explicitTimes?: string[];
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Max(10000)
   endAfterOccurrences?: number;
 
   @IsOptional()
@@ -70,6 +80,6 @@ export class UpdateScheduleDto {
   notes?: string;
 
   @IsOptional()
-  @IsEnum(['active', 'paused', 'completed'] satisfies ScheduleStatus[])
+  @IsIn(['active', 'paused', 'completed'] satisfies ScheduleStatus[])
   status?: ScheduleStatus;
 }

@@ -314,4 +314,182 @@ describe('Medications (e2e)', () => {
       .expect(201);
     expect(guideline.body.medicationEmbodimentId).toBe(emb.body.id);
   });
+  it('rejects a duplicate medication name, case-insensitively', async () => {
+    const { token } = await registerAndLogin(app);
+    const name = `Ibuprofen ${Date.now()}`;
+    await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name })
+      .expect(201);
+
+    // Two identical entries are indistinguishable in the typeahead and can carry different
+    // guidelines -- a hazard at 3 AM.
+    const dup = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: name.toLowerCase() })
+      .expect(409);
+    expect(dup.body.message).toBe('MEDICATION_NAME_TAKEN');
+
+    const other = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: `Paracetamol ${Date.now()}` })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/medications/${other.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name })
+      .expect(409);
+
+    // Renaming to the name it already has is a no-op, not a conflict.
+    await request(app.getHttpServer())
+      .patch(`/api/medications/${other.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: other.body.name })
+      .expect(200);
+  });
+
+  it('rejects an inverted age band, on create and on a partial update', async () => {
+    const { token } = await registerAndLogin(app);
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: `Bandamol ${Date.now()}` })
+      .expect(201);
+
+    const inverted = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/guidelines`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        source: 'label',
+        type: 'age_band',
+        ageMinMonths: 72,
+        ageMaxMonths: 24,
+        doseMg: 160,
+        frequencyPerDay: 4,
+        maxMgPerDay: 800,
+      })
+      .expect(400);
+    expect(JSON.stringify(inverted.body.message)).toContain('GUIDELINE_AGE_RANGE_INVALID');
+
+    const valid = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/guidelines`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        source: 'label',
+        type: 'age_band',
+        ageMinMonths: 24,
+        ageMaxMonths: 72,
+        doseMg: 160,
+        frequencyPerDay: 4,
+        maxMgPerDay: 800,
+      })
+      .expect(201);
+
+    // The half a DTO constraint can't see: only one side supplied, checked against the merged row.
+    const partial = await request(app.getHttpServer())
+      .patch(`/api/guidelines/${valid.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ageMinMonths: 999 })
+      .expect(400);
+    expect(partial.body.message).toBe('GUIDELINE_AGE_RANGE_INVALID');
+
+    await request(app.getHttpServer())
+      .patch(`/api/guidelines/${valid.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ageMinMonths: 36 })
+      .expect(200);
+  });
+  it('refuses to delete a catalog row that something still points at, and says what', async () => {
+    const { token } = await registerAndLogin(app);
+
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: `Dependamol ${Date.now()}` })
+      .expect(201);
+
+    const emb = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'suspension', unitType: 'ml', concentrationMgPerMl: 32 })
+      .expect(201);
+
+    const guideline = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/guidelines`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        source: 'label',
+        type: 'weight_based',
+        medicationEmbodimentId: emb.body.id,
+        mgPerKg: 15,
+        maxMgPerDose: 1000,
+        minIntervalHours: 4,
+        maxMgPerDay: 4000,
+      })
+      .expect(201);
+
+    const blockedMed = await request(app.getHttpServer())
+      .delete(`/api/medications/${med.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(409);
+    expect(blockedMed.body.message).toBe('MEDICATION_IN_USE');
+    expect(blockedMed.body.dependents).toEqual({ embodiments: 1, guidelines: 1 });
+
+    const blockedEmb = await request(app.getHttpServer())
+      .delete(`/api/embodiments/${emb.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(409);
+    expect(blockedEmb.body.message).toBe('EMBODIMENT_IN_USE');
+    expect(blockedEmb.body.dependents).toEqual({ guidelines: 1 });
+
+    // Delete downward and each level frees the next -- which is the point of blocking rather than
+    // cascading: the caller walks the tree and sees what they're destroying.
+    await request(app.getHttpServer())
+      .delete(`/api/guidelines/${guideline.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/embodiments/${emb.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/medications/${med.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  });
+
+  it('honours atHome, runningLow and expiresAt on embodiment create, stamping the attribution', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: `Cabinetamol ${Date.now()}` })
+      .expect(201);
+
+    const expiresAt = new Date(Date.now() + 90 * 86_400_000).toISOString();
+    const created = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        label: 'suspension',
+        unitType: 'ml',
+        concentrationMgPerMl: 32,
+        atHome: true,
+        runningLow: true,
+        expiresAt,
+      })
+      .expect(201);
+
+    // These used to be silently stripped by whitelist:true, so the caller got a 201 with both
+    // flags false and no indication anything had been dropped.
+    expect(created.body.atHome).toBe(true);
+    expect(created.body.runningLow).toBe(true);
+    expect(created.body.runningLowFlaggedByUserId).toBe(userId);
+    expect(created.body.runningLowFlaggedAt).toEqual(expect.any(Number));
+    expect(created.body.expiresAt).toEqual(expect.any(Number));
+  });
 });

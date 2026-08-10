@@ -15,6 +15,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { ErBriefService } from './er-brief.service';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
+import { resolveRequestOrigin } from './request-origin';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -37,7 +38,7 @@ export class ErBriefController {
     @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
     @Body() dto: CreateSnapshotDto,
   ) {
-    const origin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const origin = resolveRequestOrigin(req);
     return await this.erBrief.createSnapshot(patientId, req.user.userId, dto, origin);
   }
 

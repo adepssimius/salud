@@ -23,7 +23,14 @@ export const ERROR_SENTENCES = {
   CONDITION_NOT_FOUND: 'That condition is no longer available. It may have been deleted.',
   EMAIL_TAKEN: 'An account with that email already exists. Try signing in instead.',
   EMBODIMENT_NOT_FOUND: 'That form of the medication is no longer available. Choose another one.',
+  DATE_IN_FUTURE: 'That date and time is in the future. Check it and try again.',
+  EMBODIMENT_IN_USE:
+    'This form is still used by a schedule, a dose already logged, or a reaction. Remove those first, or mark the medication inactive instead.',
+  EPISODE_ALREADY_RESOLVED: 'That episode has already been resolved. Refresh to see the current status.',
   EPISODE_NOT_FOUND: 'That episode is no longer available. Refresh the page and try again.',
+  GUIDELINE_AGE_RANGE_INVALID:
+    'The minimum age must be lower than the maximum age. Check both and try again.',
+  GUIDELINE_IN_USE: 'This guideline is attached to doses already logged. It cannot be deleted.',
   FILE_NOT_FOUND: 'That photo is no longer available.',
   FILE_REQUIRED: 'Choose a photo to upload.',
   FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED: 'Set how often this repeats, or list the specific times of day.',
@@ -31,12 +38,23 @@ export const ERROR_SENTENCES = {
   INTERVENTION_NOT_FOUND: 'That dose or treatment is no longer available. It may have been deleted.',
   INVALID_CREDENTIALS: 'That email and password do not match an account. Check both and try again.',
   INVALID_REACTION_SCOPE: 'Choose exactly one of medication, form, or tag for this reaction.',
-  MEDICATION_ID_REQUIRED: 'Choose a medication for this schedule.',
+  MEDICATION_ID_REQUIRED: 'Choose a medication for this dose.',
+  MEDICATION_IN_USE:
+    'This medication is still in use. Remove its forms, guidelines and schedules first, or mark it inactive instead.',
+  MEDICATION_NAME_TAKEN:
+    'A medication with that name is already in your list. Open that one instead, or choose a different name.',
   MEDICATION_NOT_FOUND: 'That medication is no longer available. Search for it again.',
   OBSERVATION_NOT_FOUND: 'That observation is no longer available. It may have been deleted.',
   OBSERVATION_SCHEMA_INVALID:
     'One of the entries is missing something or has a value out of range. Check each entry, then save again.',
+  // Unlike PATIENT_NOT_FOUND below, this one *may* name the permission: the API only answers 403
+  // to someone already known to be on the care team, so there is nothing left to hide.
+  NOT_PATIENT_OWNER:
+    "Only this patient's owner can delete them. Ask the owner, or have them transfer ownership to you first.",
   PATIENT_ID_REQUIRED: 'Choose a patient first.',
+  // Deliberately silent on which of "no such file" / "someone else's file" it was, for the same
+  // non-disclosure reason FILE_NOT_FOUND is.
+  PHOTO_FILE_NOT_FOUND: 'That photo could not be attached. Upload it again and retry.',
   // Deliberately silent on *why* — the API answers 404 rather than 403 specifically so this response
   // doesn't confirm the patient exists at all (app-spec/api.md → "Resource shape and access
   // control"). Do not mention permission, access, or the care team here: that would leak exactly

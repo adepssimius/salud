@@ -1,0 +1,58 @@
+meta {
+  name: Create Reaction (no date)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/reactions
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+}
+
+body:json {
+  {
+    "description": "reacted to this once, no idea when",
+    "severity": "danger",
+    "scopeType": "medication",
+    "medicationId": "{{medicationId}}"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.occurredAt: isNull
+}
+
+docs {
+  `occurredAt` is optional. A caregiver often knows *that* a child reacted without knowing *when*,
+  and a required date would put a guessed fact into a record the app keeps forever.
+
+  Null means "date not known", never "no reaction": reaction matching in the dosing engine never
+  consults the date, so this fires exactly as strongly as a dated one. The list endpoint orders by
+  `COALESCE(occurredAt, createdAt) DESC`, so an undated reaction sorts by when it was recorded
+  rather than sinking to the bottom.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

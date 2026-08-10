@@ -99,6 +99,120 @@ describe('Episodes (e2e)', () => {
     expect(getRes.body.endedAt).toBeNull();
   });
 
+  // One child's event filed into another child's episode renders in that child's episode view,
+  // timeline and ER Brief (data-model.md -> Data integrity rules). Both patients belong to the
+  // same caregiver here, so the failure is genuinely about patient scoping and not about access.
+  it('refuses to attach an event to another patient\'s episode', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientA = await createPatient(app, token);
+    const patientB = await createPatient(app, token);
+
+    const obsA = await request(app.getHttpServer())
+      .post(`/api/patients/${patientA}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        startEpisodeName: "A's fever",
+        entries: [{ type: 'temperature', metadata: { value: 38.5, unit: 'C', method: 'oral' } }],
+      })
+      .expect(201);
+    const episodeOfA = obsA.body.episodeIds[0];
+
+    const rejected = await request(app.getHttpServer())
+      .post(`/api/patients/${patientB}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        episodeIds: [episodeOfA],
+        entries: [{ type: 'heart_rate', metadata: { bpm: 110 } }],
+      })
+      .expect(404);
+    expect(rejected.body.message).toBe('EPISODE_NOT_FOUND');
+
+    // Same rule on interventions, and on the update path.
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientB}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        performedAt: new Date().toISOString(),
+        type: 'dressing_change',
+        bodyLocation: 'knee',
+        episodeIds: [episodeOfA],
+      })
+      .expect(404);
+
+    const obsB = await request(app.getHttpServer())
+      .post(`/api/patients/${patientB}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'heart_rate', metadata: { bpm: 100 } }],
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/observations/${obsB.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ episodeIds: [episodeOfA] })
+      .expect(404);
+
+    // And A's episode is untouched by all of that.
+    const episode = await request(app.getHttpServer())
+      .get(`/api/episodes/${episodeOfA}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(episode.body.observationIds).toEqual([obsA.body.id]);
+  });
+
+  it('rejects a second event resolving an already-resolved episode, but stays idempotent for the same event', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+
+    const first = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        startEpisodeName: 'Resolve once',
+        entries: [{ type: 'heart_rate', metadata: { bpm: 100 } }],
+      })
+      .expect(201);
+    const episodeId = first.body.episodeIds[0];
+
+    await request(app.getHttpServer())
+      .patch(`/api/observations/${first.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ episodeIds: [episodeId], resolvesEpisodeIds: [episodeId] })
+      .expect(200);
+
+    // A *different* event trying to close it would silently overwrite endedAt.
+    const second = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        episodeIds: [episodeId],
+        resolvesEpisodeIds: [episodeId],
+        entries: [{ type: 'heart_rate', metadata: { bpm: 90 } }],
+      })
+      .expect(400);
+    expect(second.body.message).toBe('EPISODE_ALREADY_RESOLVED');
+
+    // The regression guard for the identity-aware carve-out: an update that only touches
+    // episodeIds re-sends the event's own existing resolvesEpisodeIds, and must not start failing.
+    await request(app.getHttpServer())
+      .patch(`/api/observations/${first.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ episodeIds: [episodeId] })
+      .expect(200);
+
+    const episode = await request(app.getHttpServer())
+      .get(`/api/episodes/${episodeId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(episode.body.endedAtId).toBe(first.body.id);
+  });
+
   it('reflects resolution and includes the resolving intervention id', async () => {
     const { token } = await registerAndLogin(app);
     const patientId = await createPatient(app, token);

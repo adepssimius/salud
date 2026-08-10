@@ -14,6 +14,7 @@ import { UpdateObservationDto } from './dto/update-observation.dto';
 import { EpisodesService } from '../episodes/episodes.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
+import { FilesService } from '../files/files.service';
 import { normalizeTs } from '../persistence/time';
 
 @Injectable()
@@ -23,6 +24,7 @@ export class ObservationsService {
     private readonly episodesService: EpisodesService,
     private readonly advisoriesService: AdvisoriesService,
     private readonly revisionsService: RevisionsService,
+    private readonly filesService: FilesService,
   ) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
@@ -76,17 +78,19 @@ export class ObservationsService {
       .where(eq(patients.id, patientId));
   }
 
-  private ensureResolvesSubset(resolves: string[] | undefined, episodes: string[] | undefined) {
-    if (!resolves || !resolves.length) return;
-    const epList = episodes ?? [];
-    if (!epList.length) {
-      throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
-    }
-    const epSet = new Set(epList);
-    for (const res of resolves) {
-      if (!epSet.has(res)) {
-        throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
-      }
+  // Service-level, not a DTO constraint: EntryMetadataConstraint is synchronous and has no DI, so
+  // it can only check the UUID's shape. Must run before the observation row is inserted, or a
+  // rejected photo leaves an orphan observation behind.
+  private async assertPhotoFilesUsable(
+    entries: Array<{ type: string; metadata?: Record<string, any> }> | undefined,
+    patientId: string,
+    userId: string,
+  ) {
+    for (const entry of entries ?? []) {
+      if (entry.type !== 'photo') continue;
+      const fileId = entry.metadata?.fileId;
+      if (typeof fileId !== 'string') continue; // shape is the DTO's job
+      await this.filesService.assertUsableForPatient(fileId, patientId, userId);
     }
   }
 
@@ -95,6 +99,7 @@ export class ObservationsService {
     if (!dto.entries || !dto.entries.length) {
       throw new BadRequestException('AT_LEAST_ONE_ENTRY_REQUIRED');
     }
+    await this.assertPhotoFilesUsable(dto.entries, patientId, userId);
     const db = this.db.db as any;
     const id = randomUUID();
     const observedAtDate = new Date(dto.observedAt);
@@ -125,7 +130,10 @@ export class ObservationsService {
       episodeIds.add(startedEpisodeId);
     }
 
-    this.ensureResolvesSubset(dto.resolvesEpisodeIds, Array.from(episodeIds));
+    // The episode a startEpisodeName just created trivially belongs to this patient; the ids the
+    // client sent do not, until checked.
+    await this.episodesService.assertEpisodesBelongToPatient(patientId, userId, dto.episodeIds ?? []);
+    this.episodesService.assertResolvesSubset(dto.resolvesEpisodeIds, Array.from(episodeIds));
 
     for (const entry of dto.entries) {
       await db.insert(observationEntries).values({
@@ -175,7 +183,11 @@ export class ObservationsService {
     return firedAdvisories.length ? { ...observation, firedAdvisories } : observation;
   }
 
-  async list(patientId: string, userId: string, params: { type?: string; from?: number; to?: number; limit?: number; episodeId?: string }) {
+  async list(
+    patientId: string,
+    userId: string,
+    params: { type?: string; from?: number; to?: number; sinceCreatedAt?: number; limit?: number; episodeId?: string },
+  ) {
     await this.ensurePatientAccess(patientId, userId);
     const db = this.db.db as any;
     const rows = await db
@@ -188,6 +200,13 @@ export class ObservationsService {
       const ts = normalizeTs(row.observedAt);
       if (params.from && ts < params.from) return false;
       if (params.to && ts > params.to) return false;
+      // Opt-in, and a *different axis* from from/to: "what have I not seen" is a question about
+      // when the row was written, not about when it clinically happened. Only What's-New passes it
+      // (see whats-new-window.ts); every other caller keeps clinical-time from/to untouched.
+      if (params.sinceCreatedAt) {
+        const created = normalizeTs(row.createdAt);
+        if (created === null || created < params.sinceCreatedAt) return false;
+      }
       return true;
     });
 
@@ -275,7 +294,12 @@ export class ObservationsService {
 
     const episodeIds: string[] = dto.episodeIds ?? existingEpisodeIds;
     const resolvesEpisodeIds: string[] = dto.resolvesEpisodeIds ?? existingResolvesIds;
-    this.ensureResolvesSubset(resolvesEpisodeIds, episodeIds);
+    // Only what the client actually supplied. Re-validating carried-over ids would 404 on
+    // historical rows written before episodes were scoped to a patient.
+    if (dto.episodeIds) {
+      await this.episodesService.assertEpisodesBelongToPatient(row.patientId, userId, dto.episodeIds);
+    }
+    this.episodesService.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
 
     const updates: Record<string, any> = {};
     if (dto.text !== undefined) updates.text = dto.text;
@@ -284,6 +308,7 @@ export class ObservationsService {
     }
 
     if (dto.entries) {
+      await this.assertPhotoFilesUsable(dto.entries, row.patientId, userId);
       await db.delete(observationEntries).where(eq(observationEntries.observationId, id));
       const observedAtTs = normalizeTs(row.observedAt);
       for (const entry of dto.entries) {

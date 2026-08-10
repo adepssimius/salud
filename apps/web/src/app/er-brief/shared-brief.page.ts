@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { describeEvent } from '../core/event-display';
-import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
+import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
 
 // Public route — no authGuard (er-brief.md → "Frozen snapshot"). Renders exactly what the
 // caregiver saw at the moment the link was created; a 404 renders as one plain message, with no
@@ -63,6 +63,16 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
           <h2>Episode: {{ ep.name }}</h2>
         </section>
 
+        <!-- From the frozen values, not from the words "the last 72 hours". This document is read
+             days after it was taken; a relative claim would simply be false by then. -->
+        <section class="section" *ngIf="recentScope(s.payload) as scope">
+          <h2>No open episode</h2>
+          <p class="muted small">
+            Everything logged in the {{ scope.windowHours }} hours before this brief was frozen —
+            {{ scope.since * 1000 | date: 'medium' }} to {{ scope.generatedAt * 1000 | date: 'medium' }}.
+          </p>
+        </section>
+
         <section class="section">
           <h2>Events</h2>
           <ul class="events" *ngIf="s.payload.body.events.length">
@@ -72,10 +82,20 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
               <span>{{ describeEvent(e) }}</span>
             </li>
           </ul>
+          <p class="muted small" *ngIf="!s.payload.body.events.length">
+            {{
+              recentScope(s.payload)
+                ? 'Nothing logged in the ' + recentScope(s.payload)!.windowHours + ' hours before this brief was frozen.'
+                : 'No events recorded for this episode.'
+            }}
+          </p>
         </section>
 
         <section class="section" *ngIf="s.payload.body.activeSchedules.length">
           <h2>Current medication situation</h2>
+          <!-- Same treatment as the authed page, and it matters more here: this is the public link
+               a clinician actually opens, on a phone, at a triage desk. -->
+          <div class="table-scroll">
           <table>
             <thead>
               <tr><th>Schedule</th><th>Medication</th><th>Last dose</th><th>mg/kg</th><th>Next allowed</th></tr>
@@ -90,6 +110,7 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
               </tr>
             </tbody>
           </table>
+          </div>
         </section>
       </ng-container>
     </div>
@@ -183,10 +204,36 @@ import { SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
         padding: 0.4rem 0.5rem;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .table-scroll table {
+        min-width: 414px;
+      }
+      /* This page had no print styles at all. It needs them now that the table scrolls -- and it
+         is the copy most likely to be printed, being the one handed to a clinician. */
+      @media print {
+        .table-scroll {
+          overflow: visible;
+        }
+        .table-scroll table {
+          min-width: 0;
+        }
+        .section {
+          break-inside: avoid;
+        }
+      }
     `,
   ],
 })
 export class SharedBriefPage implements OnInit {
+  /** See the matching helper on ErBriefPage. */
+  recentScope(payload: { body: { eventScope?: ErBriefEventScope } }) {
+    const scope = payload.body.eventScope;
+    return scope && scope.type === 'recent' ? scope : null;
+  }
+
   private readonly api = inject(ApiClientService);
   private readonly route = inject(ActivatedRoute);
 

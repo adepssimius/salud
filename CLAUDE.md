@@ -28,6 +28,8 @@ yarn start:api && yarn start:web    # api on :3000, web on :4200 (proxies /api v
 - `yarn test:api` / `yarn test:web` — both green today.
 - `yarn lint:api` / `yarn lint:web`, `yarn build:api` / `yarn build:web`, `yarn e2e:api` / `yarn e2e:web`
 - `yarn seed:test-user` — creates `test@example.com` / password `test`
+- `yarn seed:catalog` — acetaminophen + ibuprofen with embodiments and both guideline types
+  (`tools/seed-catalog.ts`, idempotent by medication name). Dose guidance does nothing without it.
 - `yarn drizzle-kit generate --config=drizzle.config.ts` then `yarn drizzle-kit migrate --config=drizzle.config.ts`
 
 ## Layout
@@ -50,53 +52,28 @@ data/                # local SQLite + attachments (gitignored)
 
 ## Implementation status vs. spec
 
-The spec describes the whole Phase-1 product; roughly half is built. Current reality:
+The spec describes the whole Phase-1 product; most of it is now built. Current reality:
 
-**Built**
+**Built** — the API surface is broadly complete; ~15 feature modules under `apps/api/src/app/`.
 - Auth: `POST /api/auth/register|login`, `GET /api/auth/me`; `GET|PATCH /api/users/me`, `GET /api/users/search`
-- Patients + care team (`POST`, `GET`, `GET/:id`, `PATCH/:id`, `DELETE/:id`, `GET|POST /:id/care-team`,
-  `DELETE /:id/care-team/:caregiverId`) — **currently served under the legacy nested prefix
-  `/api/users/:userId/patients`; the spec has moved to flat `/api/patients`. See "Route migration" below.**
-- Observations: `POST|GET /api/patients/:patientId/observations`, `GET .../observations/:id`,
-  `GET|PATCH /api/observations/:id`. Multi-entry, weight entries denormalize onto `patients.latest_weight_kg`.
-- Interventions: same route shape as observations.
-- Episodes: `GET /api/patients/:patientId/episodes`, `GET /api/episodes/active`. Episodes are created
-  and resolved **only** as a side effect of an observation/intervention — there is no `POST /episodes`.
-- Web: sign in/up/out, profile (My Profile + Patients tabs), patient detail w/ care team management,
-  new-observation and new-intervention pages, placeholder dashboard.
+- Patients + care team, on the flat `/api/patients` prefix (the old nested `/api/users/:userId/patients`
+  migration is **done** — code, web, Bruno and e2e all moved). `/users/me` and `/users/search` stay,
+  being genuinely identity-scoped.
+- Observations (multi-entry, weight denormalizes onto `patients.latest_weight_kg`), interventions,
+  episodes, conditions + protocols, medications/embodiments/guidelines, intervention schedules
+  (incl. `POST /api/schedules/:id/log`), adverse reactions, advisories, revisions, files, dosing
+  engine (`POST .../dose-checks`), timeline + dashboard, What's-New, ER Brief + frozen snapshots.
+- `yarn seed:catalog` seeds a starter medication catalog; without it every dose-guidance feature is
+  inert, since the catalog starts empty.
+- Web: auth, profile, patient detail + care team, new-observation/intervention, dashboard, timeline,
+  episodes, conditions, schedules, medications, What's-New, ER Brief + the public `/brief/:token`.
 
-**Specced but not built** — this is where spec work most likely lands:
-- Medications, embodiments, guidelines (tables exist in `schema.ts`; no module, no controller, no seed data)
-- Intervention schedules (table exists; no module) and `POST /api/schedules/:id/log`
-- Files: `POST /api/files`. `StorageService` exists and is provided by `PersistenceModule`, but nothing calls it.
-- `GET /api/patients/:patientId/timeline` and `GET /api/dashboard`
-- Weight-based / age-band dose recommendation and real atypical-dose detection.
-  `interventions.service.ts:143` has a stub that flags atypical only when `doseSource === 'override'`;
-  `nextAllowedAt` is always null.
-- `GET /api/episodes/:episodeId` (spec'd, not routed)
-- `apps/api/src/app/api.spec.ts` is a 29-entry `test.todo` plan mirroring the spec — a good checklist
-  of what "done" means per area.
-
-## Route migration (decided, not yet applied)
-
-`api.md` used to document patient CRUD at both `/api/patients/...` and `/api/users/:userId/patients/...`.
-That contradiction is **resolved in favor of flat**: patients are top-level resources, one canonical URL
-per patient, acting user always from the JWT. The reasoning is written up in `api.md` under
-"Resource shape and access control" — access comes from the `care_team_memberships` many-to-many, so
-nesting implied a containment the data model doesn't have and gave each patient a different URL per
-caregiver. The nested `:userId` was pure redundancy: `assertUser` pinned it to the JWT subject, so it
-scoped nothing and added no protection against id probing (v4 UUIDs + the care-team check do that).
-
-The spec is updated; **the code is not migrated yet.** Still to do:
-
-- `patients.controller.ts` — `@Controller('users/:userId/patients')` → `@Controller('patients')`, drop the
-  `userId` param and `assertUser`/`USER_FORBIDDEN`, take the actor from `req.user.userId`.
-- Web: ~10 call sites in `patient-detail.page.ts`, `new-patient.page.ts`, `profile.page.ts`,
-  `new-observation.page.ts`, `new-intervention.page.ts` currently interpolate `currentUserId()`.
-- Bruno: 7 files under `bruno/patients/` still use `users/{{userId}}/patients`.
-- `patients.e2e-spec.ts` paths.
-
-Note `/users/me` and `/users/search` stay — those are genuinely identity-scoped.
+**Gaps worth knowing**
+- **Adverse reactions have no web UI** — `POST|GET /api/patients/:id/reactions` works and drives the
+  `reaction_warning`/`reaction_danger` advisories, but the only way to enter one today is curl.
+- `apps/api/src/app/api.spec.ts` is a 30-entry `test.todo` plan mirroring the spec — a useful
+  checklist of what "done" means per area, and still largely unconverted.
+- `medications.brandNames` exists in `schema.ts` and is searched by `GET /api/medications?q=`.
 
 ## Conventions to match
 
@@ -109,7 +86,10 @@ Note `/users/me` and `/users/search` stay — those are genuinely identity-scope
   A caller who is not on the care team gets 404, not 403 (intentional — don't leak existence).
 - **Errors are machine-readable codes as the message string**: `PATIENT_NOT_FOUND`,
   `OBSERVATION_NOT_FOUND`, `EPISODE_NOT_FOUND`, `AT_LEAST_ONE_ENTRY_REQUIRED`,
-  `RESOLVES_MUST_BE_SUBSET_OF_EPISODES`, `EMAIL_TAKEN`, `INVALID_CREDENTIALS`.
+  `RESOLVES_MUST_BE_SUBSET_OF_EPISODES`, `EMAIL_TAKEN`, `INVALID_CREDENTIALS`. A new code needs
+  three things in the same change: the throw, a row in `app-spec/api.md` → "Error codes", and a
+  sentence in `apps/web/src/app/core/error-display.ts`. Skip the third and the code silently
+  degrades to that call site's generic fallback instead of reaching the user.
 - **`this.db.db as any`** is the established (unlovely) escape hatch for the multi-dialect Drizzle union
   type. Follow it rather than inventing a new abstraction mid-feature.
 - **Timestamps**: stored as SQLite integer epoch **seconds**; Drizzle hands back `Date` for
@@ -179,20 +159,13 @@ replica with `strategy: Recreate`. Authelia forward-auth (`group:admins`) gates 
 of the app's own JWT login. In production the API fails fast on a missing/weak `JWT_SECRET` and
 on an unwritable `/data` rather than degrading silently. Full detail in `app-spec/deployment.md`.
 
-## Uncommitted work in progress (as of this writing)
+## Known issues backlog
 
-The tree has an in-flight refactor, already reflected in the spec files:
-
-1. Observations dropped the `symptomTags: string[]` column-style field; symptom/tag data now lives in
-   entries via new entry types `tag` and the reshaped `symptom`/`note` metadata.
-2. Temperature metadata went `{ valueC, inputUnit }` → `{ value, unit, method }`.
-3. Episode linkage moved from array fields to `episodes_events_pivot`.
-4. Migration renamed `0000_overconfident_swarm.sql` → `0000_clumsy_blur.sql` (untracked).
-5. `medications.brandNames` is specced in `data-model.md` / `api.md` but **not yet in `schema.ts`**.
-6. Both web entry pages carry `TODO` markers: their payloads still use the pre-refactor shape
-   (`symptomTags`, `interventionScheduleId`) and need adapting.
-7. `interventions.service.ts:155` has a stale `// TODO: write pivot rows` — the pivot writes are in
-   fact implemented directly above it.
+`ISSUES.md` at the repo root tracks known defects and cleanup work, numbered and grouped, with a
+status legend (🔴 open · 🟡 partially done · ✅ done) and a suggested working order. It is
+explicitly **not** a spec — where an item contradicts `app-spec/`, the spec wins and the item says
+so. Read it before starting anything that looks like a cleanup; several entries exist precisely to
+stop someone "fixing" a deliberate decision.
 
 ## Working here
 

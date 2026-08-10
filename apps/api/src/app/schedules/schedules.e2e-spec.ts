@@ -100,6 +100,41 @@ describe('Schedules (e2e)', () => {
       .expect(400);
   });
 
+  // The regression guard for the future-date rule: planning fields are deliberately exempt
+  // (api.md -> Conventions). A course that starts next week is the normal case, not an error, and
+  // this test exists so nobody later "completes" the @IsNotInFuture sweep by adding it here.
+  it('accepts a schedule whose startAt and endAt are in the future', async () => {
+    const startAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const endAt = new Date(Date.now() + 14 * 86_400_000).toISOString();
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'medication_dose', label: 'next week', medicationId, doseMg: 100, frequencyHours: 8, startAt, endAt })
+      .expect(201);
+  });
+
+  it('rejects logging a dose at a future performedAt', async () => {
+    const create = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'medication_dose',
+        label: 'future log',
+        medicationId,
+        doseMg: 100,
+        frequencyHours: 8,
+        startAt: new Date().toISOString(),
+      })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/schedules/${create.body.id}/log`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ performedAt: new Date(Date.now() + 86_400_000).toISOString() })
+      .expect(400);
+    expect(res.body.message).toContain('DATE_IN_FUTURE');
+  });
+
   it('creates a frequency-based schedule with nextDueAt = startAt, and logs doses through the shared dosing engine', async () => {
     const startAt = new Date();
     const create = await request(app.getHttpServer())
@@ -130,7 +165,11 @@ describe('Schedules (e2e)', () => {
     expect(log1.body.intervention.scheduleId).toBe(scheduleId);
     expect(log1.body.intervention.metadata.medicationId).toBe(medicationId);
     expect(log1.body.intervention.metadata.amountMg).toBe(400);
-    // Scheduled doses are exempt from the override-implies-atypical rule.
+    // A scheduled dose records how it was actually arrived at: from a plan, not from a caregiver
+    // typing their own number. 'override' would misread the most plan-conforming dose there is.
+    expect(log1.body.intervention.metadata.doseSource).toBe('schedule');
+    // Exempt from the override-implies-atypical rule. Note the exemption keys on the scheduleId,
+    // not on doseSource -- so this stays true for rows written before 'schedule' existed.
     expect(log1.body.intervention.metadata.isAtypical).toBe(false);
     expect(log1.body.intervention.metadata.atypicalReason).toBeNull();
 

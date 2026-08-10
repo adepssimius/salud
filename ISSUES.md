@@ -447,7 +447,17 @@ If it's still useful as a checklist, it belongs in `app-spec/`, not in the Jest 
 
 ---
 
-### 16. 🟡 A backdated entry can slip past a caregiver's WYWA watermark
+### 16. ✅ A backdated entry can slip past a caregiver's WYWA watermark
+
+**Fixed 2026-08-09.** Both halves had to move together, and the note below understated the scope:
+`whats-new.service.ts` reaches its events through `TimelineService.getTimeline({ from })`, which
+filters in the list services on clinical time — it never touched `observationsSince`/
+`interventionsSince` at all. Changing only those two predicates (this entry's stated fix) would have
+put the dashboard card on log time and the WYWA page on clinical time, the exact disagreement
+`whats-new-window.ts` exists to prevent. The fix adds an opt-in `sinceCreatedAt` to `getTimeline`,
+threaded into both list services, and moves the two predicates; `api.md` was updated first. Two
+`dashboard.e2e-spec.ts` assertions inverted, and one of their comments asserted the *opposite* of the
+new invariant, so it was rewritten rather than renumbered.
 
 **Found while working #10; deliberately not fixed there** — changing it would have altered what
 `GET /patients/:patientId/whats-new` returns, which is a behavior decision of its own rather than
@@ -490,7 +500,13 @@ use.
 
 ---
 
-### 18. 🟡 The ER Brief's medication table overflows on a phone
+### 18. ✅ The ER Brief's medication table overflows on a phone
+
+**Fixed 2026-08-09** with the `overflow-x: auto` wrapper option, on **both** brief pages — this entry
+only named the authed one, but `shared-brief.page.ts` is the public `/brief/:token` page, the copy a
+clinician actually opens at a triage desk, and it renders the same table. That page had no
+`@media print` block at all, so one was added; without it the new scroll container would have clipped
+the table on a printout.
 
 **Found while probing #11's box-model change; not caused by it** — the table measures the same 414px
 under either box model, because that is its intrinsic minimum content width for six columns.
@@ -507,7 +523,9 @@ table — a paramedic reads the printout in columns.
 
 ---
 
-### 19. 🟢 profile's mobile breakpoint is dead code
+### 19. ✅ profile's mobile breakpoint is dead code
+
+**Fixed 2026-08-09.** Moved the `@media` block after the `.tabs` rule. As predicted, one line.
 
 **Where:** `profile.page.ts` — `@media (max-width: 640px)` sets `.tabs { flex-direction: row }`, but
 a later `.tabs { flex-direction: column }` at the same specificity overrides it on source order. The
@@ -672,8 +690,15 @@ frequency math.
 
 ---
 
-### 24. 🟡 The `Episode` shared type is optional everywhere, and `GET /api/episodes/active` is
+### 24. ✅ The `Episode` shared type is optional everywhere, and `GET /api/episodes/active` is
 effectively untyped
+
+**Fixed 2026-08-09.** `createdAt`/`updatedAt` are non-optional now, and `ActiveEpisodeSummary
+extends Episode` names the `/active` shape. The part worth recording: making the *type* stricter was
+by itself cosmetic. No service annotated its return, so every mapper was returning an object literal
+out of an `any`-typed `.map()`, assignable to anything. The fix had to annotate all three methods
+**and** bind each literal to a typed local inside the map — that is what actually gets excess- and
+missing-property-checked, and what will catch the next regression of #20's shape.
 
 **Surfaced while closing #20.** `types.ts:203-211` declares `createdAt`, `updatedAt`, `startedAt`, and
 `endedAt` all optional on `Episode`, so a response missing any of them still compiles — the loophole
@@ -767,6 +792,51 @@ change, not a drive-by.
 
 ---
 
+### 28. 🔴 A client can overwrite server-resolved dose fields through `metadata` passthrough
+
+**Found during the 2026-08-09 QA-findings batch; deliberately left out of it** — it is a distinct
+defect from the required-field and bounds work that batch covered, and it deserves its own change.
+
+**Where:** `create-intervention.dto.ts` declares `metadata?: Record<string, any>` with no validation
+at all, and `interventions.service.ts` merges it **last** into the persisted blob
+(`...dto.metadata`). So a request can set `isAtypical: false`, `atypicalReason: null`,
+`guidelineId`, `nextAllowedAt` or `weightKgUsed` directly, overwriting the values the dosing engine
+just computed. `api.md` is explicit that those are server-resolved and never client-trusted; the
+merge order quietly says otherwise.
+
+**Why it matters:** the atypical flag is the permanent trace that a dose didn't follow guidance
+(F-2.4). A client that can clear it can erase that trace, and nothing in the record would show it.
+
+**Fix:** merge `dto.metadata` *first* and let the resolved fields win, or whitelist which keys a
+client may contribute. The second is better but needs a decision about what that list is.
+
+---
+
+### 29. 🟢 The medication typeahead now exists in three copies
+
+`new-intervention.page.ts`, `new-schedule.page.ts`, and (as of 2026-08-09) `new-reaction.page.ts`
+each carry their own copy of the search-over-`GET /api/medications?q=` input, its result list, and
+the `.med-results`/`.med-result`/`.chosen-med` styles. Two copies was tolerable; three is the point
+at which `core/medication-typeahead.component.ts` pays for itself.
+
+Deliberately not done while adding the third — extracting a shared component in the same change as
+a new page would have made both harder to review.
+
+---
+
+### 30. 🟢 Reactions can be deleted but not edited
+
+`DELETE /api/patients/:patientId/reactions/:reactionId` landed 2026-08-09; `PATCH` did not.
+
+An edit should capture a `Revision` (api.md → Corrections), which means adding `'reaction'` to
+`RevisionEntityType` in `types.ts` and to `revisions.entityType`'s enum in `schema.ts`. That needs
+**no migration** — the column is plain `text` with no CHECK constraint — but it is a spec
+conversation about which entities are correctable, not a drive-by.
+
+Delete plus re-create covers the case today, at the cost of the original's timestamp.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -784,11 +854,12 @@ so the list below is re-sequenced.
 | 7 | ~~**CSS + bundle**~~ ✅ | ~~11, 15a~~ | **Done 2026-08-07.** Lazy routes fixed the budget (572→303 kB), not the CSS; the CSS work is 41% fewer inline lines plus a token system — see #11. |
 | 8 | ~~**normalizeTs**~~ ✅ | ~~13~~ | **Done 2026-08-07.** 14 definitions + 8 inline copies into one module; response bodies verified byte-identical. Surfaced #20–#23. |
 | 9 | **Cleanup** | 15b, 23 | Mechanical, low-risk. |
-| 10 | **Follow-ups from #10** | 16, 17 | #16 is a correctness call needing a spec decision; #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
-| 11 | **Follow-ups from #11** | 18, 19 | Both surfaced while measuring; neither blocks anything. |
+| 10 | **Follow-ups from #10** | ~~16~~, 17 | **#16 done 2026-08-09** with the QA-findings batch. #17b is a ~5-line fix with an existing helper, #17a is a reshape. |
+| 11 | ~~**Follow-ups from #11**~~ ✅ | ~~18, 19~~ | **Done 2026-08-09.** #18 needed the fix on both brief pages, not just the authed one. |
 | 12 | ~~**Correctness + CI**~~ ✅ | ~~20, 21, 25~~ | **All done 2026-08-08.** 20 was live drift against the shared type on the two busiest entities; found a third site (`episodes.service.ts`) and filed the typing loophole as #24. 21 turned out to bundle two unrelated bugs, not one: a two-clock race in one dashboard assertion, and a separate supertest ephemeral-port-churn issue causing spurious wrong-status responses (~20% of full runs) — refiled and fixed as #25 once isolated. `yarn test:api` is now trustworthy: 0/60 reproductions across both mechanisms' post-fix verification runs. |
-| 13 | **Follow-up from #20** | 24 | `Episode`'s optional timestamps are what let #20's third site pass unnoticed; low urgency since #20 itself is fixed. |
+| 13 | ~~**Follow-up from #20**~~ ✅ | ~~24~~ | **Done 2026-08-09.** The type change alone was cosmetic — the return annotations were the actual fix. |
 | 14 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
+| 15 | **Follow-ups from the QA-findings batch** | 28, 29, 30 | #28 is the only 🔴 of the three and is a real integrity hole — a client can erase an atypical-dose flag. #29 and #30 are both "the third time is when you extract it" items. |
 
 ## Conventions for working these
 

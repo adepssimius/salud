@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -35,5 +36,14 @@ export class ReactionsController {
     @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
   ) {
     return await this.reactions.listForPatient(patientId, req.user.userId);
+  }
+
+  @Delete('patients/:patientId/reactions/:reactionId')
+  async remove(
+    @Request() req: any,
+    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+    @Param('reactionId', new ParseUUIDPipe({ version: '4' })) reactionId: string,
+  ) {
+    return await this.reactions.remove(patientId, reactionId, req.user.userId);
   }
 }

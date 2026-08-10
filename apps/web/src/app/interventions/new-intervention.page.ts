@@ -135,7 +135,9 @@ import {
               <div class="guidance-header">
                 <span class="pill">Weight-based</span>
               </div>
-              <div class="guidance-amount">{{ wb.computedMg | number: '1.0-1' }} mg</div>
+              <div class="guidance-amount">
+                {{ wb.computedMg | number: '1.0-1' }} mg<span *ngIf="wb.computedMl"> ({{ wb.computedMl }} mL)</span>
+              </div>
               <div class="muted small">
                 {{ wb.mgPerKg }} mg/kg × {{ wb.weightKgUsed }} kg
                 <span *ngIf="wb.maxMgPerDose"> · max {{ wb.maxMgPerDose }} mg/dose</span>
@@ -152,6 +154,10 @@ import {
               </div>
               <div class="muted small">{{ ab.frequencyPerDay }}x/day · max {{ ab.maxMgPerDay }} mg/day</div>
               <div class="muted small">Source: {{ ab.source }}</div>
+              <!-- A derived volume must never read as coming from the source line above it. -->
+              <div class="muted small" *ngIf="ab.doseMlSource === 'derived'">
+                mL from the selected bottle's concentration
+              </div>
               <button type="button" class="secondary small" (click)="useAgeBandAmount()">Use this</button>
             </div>
             <p
@@ -708,6 +714,9 @@ export class NewInterventionPage implements OnInit {
     if (!guidance) return;
     this.form.patchValue({
       amountMg: Math.round(guidance.computedMg * 100) / 100,
+      // The engine already rounded this to a drawable syringe volume; don't round it again here.
+      // No pillCount: a weight-based guideline has none to offer.
+      amountMl: guidance.computedMl,
       doseSource: 'weight_based',
     });
   }

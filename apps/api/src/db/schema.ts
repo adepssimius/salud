@@ -238,7 +238,8 @@ export const adverseReactions = sqliteTable('adverse_reactions', {
     .notNull()
     .references(() => patients.id),
   description: text('description').notNull(),
-  occurredAt: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+  // Nullable: null means "date not known" (data-model.md -> AdverseReaction).
+  occurredAt: integer('occurred_at', { mode: 'timestamp' }),
   recordedByUserId: text('recorded_by_user_id')
     .notNull()
     .references(() => users.id),

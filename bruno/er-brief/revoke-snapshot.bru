@@ -16,6 +16,9 @@ settings {
 }
 
 docs {
-  Run "List Snapshots" first to populate {{snapshotId}} — the create-snapshot response
-  intentionally returns only the token (the external capability), not the row's internal id.
+  {{snapshotId}} comes from either "Create Snapshot" (which now returns `id` alongside the token,
+  so a caller can revoke the link it just made) or "List Snapshots".
+
+  The token itself is still never re-surfaced after creation — the list exists to let a link be
+  found and killed, not copied again.
 }

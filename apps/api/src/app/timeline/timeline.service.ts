@@ -61,6 +61,15 @@ export class TimelineService {
     params: {
       from?: number;
       to?: number;
+      /**
+       * Select on log time (`createdAt`) instead of clinical time. Opt-in, and used only by
+       * What's-New, whose question is "what happened that I haven't seen" — a 2 AM entry written
+       * up at 6 AM is unseen no matter what its clinical timestamp says. Every other caller (the
+       * ER Brief, the timeline page, the episode view) keeps `from`/`to` semantics untouched.
+       *
+       * Entries are still ordered and displayed by clinical time; only the selection moves.
+       */
+      sinceCreatedAt?: number;
       episodeId?: string;
       includeObservations?: boolean;
       includeInterventions?: boolean;
@@ -77,6 +86,7 @@ export class TimelineService {
       const obs = await this.observationsService.list(patientId, userId, {
         from: params.from,
         to: params.to,
+        sinceCreatedAt: params.sinceCreatedAt,
         episodeId: params.episodeId,
       });
       for (const o of obs) {
@@ -101,6 +111,7 @@ export class TimelineService {
       const ints = await this.interventionsService.list(patientId, userId, {
         from: params.from,
         to: params.to,
+        sinceCreatedAt: params.sinceCreatedAt,
         episodeId: params.episodeId,
       });
       for (const i of ints) {
@@ -126,6 +137,8 @@ export class TimelineService {
       if (ts === null) continue;
       if (params.from && ts < params.from) continue;
       if (params.to && ts > params.to) continue;
+      // protocol_fired advisories already carry only a createdAt, so they're consistent for free.
+      if (params.sinceCreatedAt && ts < params.sinceCreatedAt) continue;
       entries.push({
         id: a.id,
         kind: 'advisory',

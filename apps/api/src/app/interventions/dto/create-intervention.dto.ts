@@ -1,11 +1,25 @@
-import { ArrayUnique, IsArray, IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  ArrayUnique,
+  IsArray,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 import { InterventionType } from '@salud/shared/types';
+import { IsNotInFuture } from '../../common/validators';
 
 export class CreateInterventionDto {
   @IsDateString()
+  @IsNotInFuture()
   performedAt!: string;
 
-  @IsEnum(['medication_dose', 'dressing_change'] satisfies InterventionType[])
+  @IsIn(['medication_dose', 'dressing_change'] satisfies InterventionType[])
   type!: InterventionType;
 
   @IsOptional()
@@ -32,40 +46,55 @@ export class CreateInterventionDto {
   @IsString()
   notes?: string;
 
+  // Required when type === 'medication_dose'; enforced in InterventionsService, which also checks
+  // it against the merged row on update. Without it the dosing engine's gate never fires and every
+  // advisory silently skips.
   @IsOptional()
-  @IsString()
+  @IsUUID('4')
   medicationId?: string;
 
   @IsOptional()
-  @IsString()
+  @IsUUID('4')
   medicationEmbodimentId?: string;
 
+  // 'schedule' is written by the schedule-log path, never sent by a client — see api.md.
   @IsOptional()
-  @IsEnum(['weight_based', 'age_based', 'override'])
-  doseSource?: 'weight_based' | 'age_based' | 'override';
+  @IsIn(['weight_based', 'age_based', 'override', 'schedule'])
+  doseSource?: 'weight_based' | 'age_based' | 'override' | 'schedule';
 
   @IsOptional()
   @IsNumber()
+  @Min(0.01)
+  @Max(100000)
   amountMg?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000)
   amountMl?: number | null;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   pillCount?: number | null;
 
+  // Same bounds as a weight observation entry — it feeds the same mg/kg math.
   @IsOptional()
   @IsNumber()
+  @Min(0.2)
+  @Max(500)
   weightKgUsed?: number | null;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(0)
+  @Max(1500)
   ageMonthsUsed?: number | null;
 
   @IsOptional()
-  @IsString()
+  @IsUUID('4')
   guidelineId?: string | null;
 
   @IsOptional()
@@ -77,7 +106,7 @@ export class CreateInterventionDto {
   bodyLocation?: string;
 
   @IsOptional()
-  @IsEnum(['left', 'right', 'bilateral', 'n/a'])
+  @IsIn(['left', 'right', 'bilateral', 'n/a'])
   side?: 'left' | 'right' | 'bilateral' | 'n/a';
 
   @IsOptional()

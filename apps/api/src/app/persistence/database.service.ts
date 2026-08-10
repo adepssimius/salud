@@ -37,6 +37,34 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // Run `fn` inside a transaction, whatever the dialect. Deliberately dialect-specific for the
+  // same reason `ping()` above is: drizzle's better-sqlite3 `transaction()` is *synchronous* and
+  // throws `TypeError: Transaction function cannot return a promise` on an async callback, while
+  // `NodePgDatabase.transaction` is async. No single callback shape satisfies both, so the
+  // `this.db.db as any` escape hatch used everywhere else cannot paper over the difference.
+  //
+  // CAUTION on sqlite: the transaction is per-*connection*, and there is exactly one connection
+  // for the whole process. If `fn` awaits anything slow, Node is free to run another request's
+  // queries on that same connection inside our BEGIN — and a rollback would take their writes
+  // with it. Callers must therefore keep the body to a straight run of statements with no reads
+  // and no I/O between BEGIN and COMMIT. Do any lookups before calling, and any filesystem work
+  // after returning.
+  async withTransaction<T>(fn: (db: any) => Promise<T>): Promise<T> {
+    if (this.connection.client === 'sqlite') {
+      const raw = this.connection.raw;
+      raw.exec('BEGIN IMMEDIATE');
+      try {
+        const result = await fn(this.connection.db as any);
+        raw.exec('COMMIT');
+        return result;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    return await (this.connection.db as any).transaction((tx: any) => fn(tx));
+  }
+
   // Nest calls this on app.close() unconditionally; main.ts additionally calls
   // enableShutdownHooks() so it also fires on SIGTERM/SIGINT. Without it the underlying driver
   // handle (better-sqlite3's fd, pg/mysql's socket) outlives the container — harmless on POSIX,

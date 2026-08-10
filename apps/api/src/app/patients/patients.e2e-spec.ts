@@ -7,6 +7,8 @@ import request from 'supertest';
 import { AppModule } from '../app.module';
 import { DatabaseService } from '../persistence/database.service';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { eq } from 'drizzle-orm';
+import * as schema from '../../db/schema';
 
 async function registerAndLogin(app: INestApplication) {
   const email = `pt-${Date.now()}@example.com`;
@@ -283,6 +285,254 @@ describe('Patients (e2e)', () => {
       .get(`/api/patients/${patientId}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
+  });
+
+  it('rejects a date of birth in the future, on create and on update', async () => {
+    const { token } = await registerAndLogin(app);
+    const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Future Baby', dateOfBirth: future, sexAtBirth: 'female' })
+      .expect(400);
+    expect(created.body.message).toContain('DATE_IN_FUTURE');
+
+    const ok = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Real Baby', dateOfBirth: '2020-01-01', sexAtBirth: 'female' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/patients/${ok.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ dateOfBirth: future })
+      .expect(400);
+  });
+
+  it('refuses to delete for a care team member who is not the owner', async () => {
+    const owner = await registerAndLogin(app);
+    const helper = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ fullName: 'Not Yours', dateOfBirth: '2018-01-01', sexAtBirth: 'female' })
+      .expect(201);
+    const patientId = createRes.body.id;
+
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ userId: helper.userId, role: 'babysitter' })
+      .expect(201);
+
+    const forbidden = await request(app.getHttpServer())
+      .delete(`/api/patients/${patientId}`)
+      .set('Authorization', `Bearer ${helper.token}`)
+      .expect(403);
+    expect(forbidden.body.message).toBe('NOT_PATIENT_OWNER');
+
+    // Still there, and the non-owner can still read it -- 403 is about this one action.
+    await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}`)
+      .set('Authorization', `Bearer ${helper.token}`)
+      .expect(200);
+  });
+
+  // The leak-regression guard for the check above: a stranger must not be able to tell 403 from
+  // 404 and thereby learn the id is real (api.md -> "Resource shape and access control").
+  it('still answers 404, not 403, when a non-member tries to delete', async () => {
+    const owner = await registerAndLogin(app);
+    const stranger = await registerAndLogin(app);
+
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ fullName: 'Private', dateOfBirth: '2019-02-02', sexAtBirth: 'male' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .delete(`/api/patients/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${stranger.token}`)
+      .expect(404);
+    expect(res.body.message).toBe('PATIENT_NOT_FOUND');
+  });
+
+  // Route-level 404s can't distinguish "cascaded" from "unreachable because the patient row is
+  // gone", so this asserts against the tables directly.
+  it('deletes every child row belonging to the patient', async () => {
+    const { token, userId } = await registerAndLogin(app);
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${token}`);
+
+    const patientId = (
+      await auth(
+        request(app.getHttpServer())
+          .post(`/api/patients`)
+          .send({ fullName: 'Cascade Me', dateOfBirth: '2015-06-06', sexAtBirth: 'female' }),
+      ).expect(201)
+    ).body.id;
+
+    // A revision on the patient itself.
+    await auth(
+      request(app.getHttpServer()).patch(`/api/patients/${patientId}`).send({ notes: 'edited' }),
+    ).expect(200);
+
+    // Observation with entries, starting an episode (-> episode + two pivot rows).
+    const obsId = (
+      await auth(
+        request(app.getHttpServer())
+          .post(`/api/patients/${patientId}/observations`)
+          .send({
+            observedAt: new Date().toISOString(),
+            startEpisodeName: 'Cascade fever',
+            entries: [
+              { type: 'temperature', metadata: { value: 38.5, unit: 'C', method: 'oral' } },
+              { type: 'weight', metadata: { kg: 18 } },
+            ],
+          }),
+      ).expect(201)
+    ).body.id;
+
+    // A revision on the observation.
+    await auth(
+      request(app.getHttpServer()).patch(`/api/observations/${obsId}`).send({ notes: 'corrected' }),
+    );
+
+    // Condition + protocol.
+    const conditionId = (
+      await auth(
+        request(app.getHttpServer())
+          .post(`/api/patients/${patientId}/conditions`)
+          .send({ name: 'Cascade condition' }),
+      ).expect(201)
+    ).body.id;
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/conditions/${conditionId}/protocols`)
+        .send({
+          name: 'Cascade protocol',
+          triggerMetric: 'temperature',
+          triggerOperator: 'gte',
+          triggerValue: 38,
+          instructionText: 'call',
+          sourceText: 'test',
+        }),
+    ).expect(201);
+
+    // Medication + embodiment so an intervention and a schedule have something to point at.
+    const medicationId = (
+      await auth(
+        request(app.getHttpServer())
+          .post(`/api/medications`)
+          .send({ name: `Cascadamol ${Date.now()}` }),
+      ).expect(201)
+    ).body.id;
+
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .send({
+          performedAt: new Date().toISOString(),
+          type: 'medication_dose',
+          medicationId,
+          doseSource: 'override',
+          amountMg: 100,
+        }),
+    ).expect(201);
+
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/schedules`)
+        .send({
+          type: 'medication_dose',
+          label: 'Cascade q8h',
+          medicationId,
+          doseMg: 100,
+          frequencyHours: 8,
+          startAt: new Date().toISOString(),
+        }),
+    ).expect(201);
+
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/reactions`)
+        .send({
+          description: 'rash',
+          occurredAt: new Date().toISOString(),
+          severity: 'warning',
+          scopeType: 'medication',
+          medicationId,
+        }),
+    ).expect(201);
+
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/er-brief/snapshots`)
+        .send({}),
+    ).expect(201);
+
+    const fileId = (
+      await auth(
+        request(app.getHttpServer())
+          .post(`/api/files`)
+          .field('patientId', patientId)
+          .attach('file', Buffer.from('not really a jpeg'), {
+            filename: 'cascade.jpg',
+            contentType: 'image/jpeg',
+          }),
+      ).expect(201)
+    ).body.fileId;
+    expect(fileId).toBeTruthy();
+
+    const db = (app.get(DatabaseService) as any).db;
+    const countsFor = async () => ({
+      observations: (await db.select().from(schema.observations).where(eq(schema.observations.patientId, patientId))).length,
+      observationEntries: (
+        await db.select().from(schema.observationEntries).where(eq(schema.observationEntries.observationId, obsId))
+      ).length,
+      interventions: (await db.select().from(schema.interventions).where(eq(schema.interventions.patientId, patientId))).length,
+      episodes: (await db.select().from(schema.episodes).where(eq(schema.episodes.patientId, patientId))).length,
+      pivot: (await db.select().from(schema.episodesEventsPivot).where(eq(schema.episodesEventsPivot.eventId, obsId))).length,
+      conditions: (await db.select().from(schema.conditions).where(eq(schema.conditions.patientId, patientId))).length,
+      protocols: (await db.select().from(schema.protocols).where(eq(schema.protocols.conditionId, conditionId))).length,
+      schedules: (
+        await db.select().from(schema.interventionSchedules).where(eq(schema.interventionSchedules.patientId, patientId))
+      ).length,
+      reactions: (await db.select().from(schema.adverseReactions).where(eq(schema.adverseReactions.patientId, patientId))).length,
+      advisories: (await db.select().from(schema.advisories).where(eq(schema.advisories.patientId, patientId))).length,
+      snapshots: (await db.select().from(schema.erBriefSnapshots).where(eq(schema.erBriefSnapshots.patientId, patientId))).length,
+      files: (await db.select().from(schema.fileAssets).where(eq(schema.fileAssets.patientId, patientId))).length,
+      memberships: (
+        await db.select().from(schema.careTeamMemberships).where(eq(schema.careTeamMemberships.patientId, patientId))
+      ).length,
+      patientRevisions: (
+        await db.select().from(schema.revisions).where(eq(schema.revisions.entityId, patientId))
+      ).length,
+      observationRevisions: (await db.select().from(schema.revisions).where(eq(schema.revisions.entityId, obsId))).length,
+      patients: (await db.select().from(schema.patients).where(eq(schema.patients.id, patientId))).length,
+    });
+
+    const before = await countsFor();
+    // Guard the guard: if the fixture stopped creating children this test would pass vacuously.
+    for (const [table, count] of Object.entries(before)) {
+      expect([table, count]).toEqual([table, expect.any(Number)]);
+      expect(count).toBeGreaterThan(0);
+    }
+
+    await auth(request(app.getHttpServer()).delete(`/api/patients/${patientId}`)).expect(200);
+
+    const after = await countsFor();
+    for (const [table, count] of Object.entries(after)) {
+      expect([table, count]).toEqual([table, 0]);
+    }
+
+    // The medication catalog is household-global and must survive the patient it was used for.
+    expect(
+      (await db.select().from(schema.medications).where(eq(schema.medications.id, medicationId))).length,
+    ).toBe(1);
+    expect(userId).toBeTruthy();
   });
 
   it('lists initial care team and allows adding another caregiver', async () => {

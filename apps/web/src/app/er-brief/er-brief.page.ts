@@ -10,6 +10,7 @@ import {
   CreateErBriefSnapshotDto,
   ErBrief,
   ErBriefSnapshotResponse,
+  ErBriefEventScope,
   ErBriefSnapshotSummary,
   TimelineEntry,
 } from '@salud/shared/types';
@@ -86,7 +87,11 @@ import {
             <span class="label">Danger reactions</span>
             <ul>
               <li *ngFor="let r of b.header.dangerReactions">
-                {{ r.description }} ({{ r.scopeType }}) — {{ r.occurredAt * 1000 | date: 'mediumDate' }}
+                {{ r.description }} ({{ r.scopeType }}) —
+                <ng-container *ngIf="r.occurredAt; else dateUnknown">{{
+                  r.occurredAt! * 1000 | date: 'mediumDate'
+                }}</ng-container>
+                <ng-template #dateUnknown><span class="muted">Date unknown</span></ng-template>
               </li>
             </ul>
           </div>
@@ -112,6 +117,16 @@ import {
             </p>
           </div>
 
+          <!-- Read from the response, never assumed. Absolute times deliberately: the ER Brief is
+               frontend.md's explicit exception to the relative-time rule used elsewhere. -->
+          <div class="section" *ngIf="recentScope(b) as scope">
+            <h2>No open episode</h2>
+            <p class="muted small">
+              Showing everything logged in the last {{ scope.windowHours }} hours — since
+              {{ scope.since * 1000 | date: 'medium' }}.
+            </p>
+          </div>
+
           <div class="section">
             <h2>Events</h2>
             <ul class="events" *ngIf="b.body.events.length">
@@ -122,11 +137,23 @@ import {
                 <app-photo-thumbnail *ngFor="let fid of photoFileIds(e)" [fileId]="fid"></app-photo-thumbnail>
               </li>
             </ul>
-            <p class="muted small" *ngIf="!b.body.events.length">No events recorded for this episode.</p>
+            <!-- A confident negative, not a blank section: blank is ambiguous between "nothing
+                 happened" and "the app doesn't know". -->
+            <p class="muted small" *ngIf="!b.body.events.length">
+              {{
+                recentScope(b)
+                  ? 'Nothing logged in the last ' + recentScope(b)!.windowHours + ' hours.'
+                  : 'No events recorded for this episode.'
+              }}
+            </p>
           </div>
 
           <div class="section" *ngIf="b.body.activeSchedules.length">
             <h2>Current medication situation</h2>
+            <!-- Six columns have a ~414px intrinsic minimum, so at 375px the page itself scrolled
+                 sideways and the "next allowed" column went off the edge -- on the screen most
+                 likely opened one-handed in a waiting room. Scroll the table, not the page. -->
+            <div class="table-scroll">
             <table>
               <thead>
                 <tr><th>Schedule</th><th>Medication</th><th>Last dose</th><th>mg/kg</th><th>When</th><th>Next allowed</th></tr>
@@ -142,10 +169,11 @@ import {
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
 
           <div class="section" *ngIf="b.body.priorEpisodes.length">
-            <h2>Prior episodes under this condition</h2>
+            <h2>{{ recentScope(b) ? 'Recent episodes' : 'Prior episodes under this condition' }}</h2>
             <ul>
               <li *ngFor="let pe of b.body.priorEpisodes">
                 <button type="button" class="link" (click)="goToEpisode(pe.id)">
@@ -157,7 +185,7 @@ import {
           </div>
 
           <div class="section" *ngIf="b.body.atypicalAdvisories.length">
-            <h2>Atypical doses this episode</h2>
+            <h2>{{ recentScope(b) ? 'Atypical doses in this window' : 'Atypical doses this episode' }}</h2>
             <ul>
               <li *ngFor="let a of b.body.atypicalAdvisories">
                 {{ a.payload?.['reasons']?.join(', ') || 'atypical' }} — amount
@@ -327,9 +355,23 @@ import {
       .page.flash .protocol-banner {
         font-size: 1.3rem;
       }
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .table-scroll table {
+        min-width: 414px;
+      }
       @media print {
         .no-print {
           display: none !important;
+        }
+        /* A paramedic reads the printout in columns -- the real table has to survive printing. */
+        .table-scroll {
+          overflow: visible;
+        }
+        .table-scroll table {
+          min-width: 0;
         }
         .page {
           max-width: none;
@@ -346,6 +388,16 @@ import {
   ],
 })
 export class ErBriefPage implements OnInit {
+  /**
+   * The recent-window scope, or null in episode mode. Reading it from the response rather than
+   * inferring from `body.episode` is what keeps a *frozen* snapshot honest: it carries the absolute
+   * window it was taken over, so a brief read three days later doesn't claim "the last 72 hours".
+   */
+  recentScope(b: { body: { eventScope?: ErBriefEventScope } }) {
+    const scope = b.body.eventScope;
+    return scope && scope.type === 'recent' ? scope : null;
+  }
+
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
   private readonly route = inject(ActivatedRoute);

@@ -21,6 +21,37 @@ route is under `/api` and everything else is the SPA.
 `apps/web/src/app/core/api.config.ts` hardcodes a relative `/api` base. Same origin is a
 requirement, not a convenience.
 
+### Trusted proxy
+
+There is **exactly one L7 hop** in front of the api pod: the nginx Ingress controller. The
+Kubernetes Service between them is L4 DNAT and adds no forwarding header. Express is therefore
+configured with `trust proxy = 1` — trust the immediate peer, and only it. `true` would trust an
+arbitrarily long forwarded chain, which lets a client prepend whatever it likes.
+
+This matters because **TLS terminates at the ingress**, so `req.protocol` at the pod is always
+`http`. `X-Forwarded-Proto` is the only source of truth for the scheme a user actually saw, and
+anything that builds an absolute URL — today, the ER Brief share link — must read it rather than the
+connection's own scheme. `X-Forwarded-Host` is deliberately *not* used: ingress-nginx does not set
+it, so honouring it would open an injection surface the `Host` header does not have (a request whose
+`Host` doesn't match the ingress rule never reaches the pod at all).
+
+### Security headers
+
+Ownership splits by layer, because only the layer that serves a document can author its policy:
+
+| Header | Owner |
+| --- | --- |
+| `X-Content-Type-Options` | both — the API for `/api/files/:id` downloads, the web for the bundle |
+| `Content-Security-Policy` | both, different policies — the API serves no HTML and gets `default-src 'none'`; the web gets the real app policy |
+| `X-Frame-Options` / `frame-ancestors` | both — clickjacking is a document concern, but a JSON API should refuse framing too |
+| `Referrer-Policy` | both |
+| `Strict-Transport-Security` | the ingress preferentially (it is the only layer that sees a plain-HTTP request); harmless from either app |
+| `Permissions-Policy` | web only — meaningful only for a document |
+
+The API's near-empty CSP is load-bearing for exactly one route: `GET /api/files/:id` streams
+user-uploaded bytes with their stored `contentType`. An uploaded SVG opened as a top-level document
+on this origin would otherwise be stored XSS.
+
 ## State
 
 SQLite on a 10Gi ReadWriteOnce Ceph volume mounted at `/data` — `/data/salud.db` plus
@@ -62,6 +93,18 @@ the 1Password Connect operator, everything else is a literal.
 In production the API refuses to start rather than degrade quietly: an unset, too-short, or
 well-known `JWT_SECRET` is fatal, and an unwritable `/data` is fatal instead of silently falling
 back to the pod's ephemeral filesystem.
+
+## First run
+
+A freshly provisioned instance starts with an **empty medication catalog**, and every dose-guidance
+feature is inert until it has one — no medications means no embodiments, no guidelines, no
+weight-based or age-band math, and no atypical-dose detection. Populate it with `yarn seed:catalog`
+run against the instance (development.md), or enter medications by hand.
+
+The API deliberately does **not** seed at boot. `main.ts` applies pending migrations before it
+listens, but it must never write rows: the catalog is the household's own data, and a pod restart
+silently inserting into it is exactly the surprise write the one-replica/`Recreate` posture exists to
+avoid.
 
 ## Health
 

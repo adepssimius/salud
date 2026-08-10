@@ -22,6 +22,14 @@
 - Seed a test user in development with: `yarn seed:test-user`
   - Creates `test@example.com` with password `test` and default unit prefs.
   - Honors DB env config (SQLite by default; `DB_CLIENT`/`DATABASE_URL` for Postgres/MySQL).
+- Seed a starter medication catalog with: `yarn seed:catalog` (`tools/seed-catalog.ts`)
+  - Acetaminophen and ibuprofen, two embodiments each, and both a weight-based and an age-band
+    guideline each — enough for dose guidance, atypical detection and schedules to be exercisable.
+    Without it every dose-guidance feature is inert, since the catalog starts empty.
+  - Idempotent: skips a medication whose `name` already exists. Honors the same DB env config.
+  - **This is a script, never a boot-time seed.** `main.ts` applies migrations at boot but must not
+    write rows — a deployed instance's catalog is the household's data, and inserting into it on
+    every pod restart is a surprise write nobody asked for.
 - API testing with Bruno:
   - Bruno request definitions live under `bruno/`.
 - Use the provided `auth` collection (`register`, `login`, `me`) against `http://localhost:3000/api` (adjust base URL in Bruno as needed).

@@ -33,7 +33,11 @@ export class WhatsNewService {
     // from reporting different numbers.
     const since = whatsNewSince(normalizeTs(membership.lastSeenAt), nowTs);
 
-    const timeline = await this.timelineService.getTimeline(patientId, userId, { from: since });
+    // sinceCreatedAt, not from: this endpoint answers "what happened that I haven't seen", and a
+    // 2 AM entry written up at 6 AM is unseen regardless of its clinical timestamp. Must stay on
+    // the same column as observationsSince/interventionsSince in whats-new-window.ts, which the
+    // dashboard's eventCount uses -- otherwise the card and this page disagree.
+    const timeline = await this.timelineService.getTimeline(patientId, userId, { sinceCreatedAt: since });
     // The timeline merge only carries protocol_fired advisories (it's built for the dose-marker/
     // episode view); whats-new wants every advisory type that's fired since the watermark.
     const events = (timeline.entries as TimelineEntry[]).filter((e) => e.kind !== 'advisory');

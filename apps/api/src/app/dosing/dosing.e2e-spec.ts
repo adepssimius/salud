@@ -200,8 +200,8 @@ describe('Dosing engine (e2e)', () => {
       doseSource: 'weight_based',
       amountMg: 180,
       // Client-sent guidelineId/weightKgUsed must be ignored/overridden by the server for weight_based.
-      guidelineId: 'not-a-real-guideline',
-      weightKgUsed: 999,
+      guidelineId: '11111111-1111-4111-8111-111111111111',
+      weightKgUsed: 99,
     });
     expect(dose.metadata.guidelineId).toBe(weightGuidelineId);
     expect(dose.metadata.weightKgUsed).toBe(12);
@@ -380,5 +380,36 @@ describe('Dosing engine (e2e)', () => {
       .get(`/api/patients/${patientId}/advisories`)
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
+  });
+  // The caregiver is holding a syringe, not a scale. The age-band card has always carried a
+  // volume; the weight-based one used to force the division on them.
+  it('derives a drawable mL volume on the weight-based path when an embodiment has a concentration', async () => {
+    const check = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/dose-checks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ medicationId, medicationEmbodimentId: embodimentId, amountMg: 180 })
+      .expect(201);
+
+    const wb = check.body.guidance.weightBased;
+    expect(wb.computedMl).toEqual(expect.any(Number));
+    expect(wb.concentrationMgPerMl).toBeGreaterThan(0);
+    // Rounded to a syringe graduation -- 0.1 mL at or above 1 mL, 0.05 below -- so computedMl
+    // times the concentration is deliberately NOT exactly computedMg.
+    const step = wb.computedMl >= 1 ? 0.1 : 0.05;
+    expect(Math.abs(wb.computedMl / step - Math.round(wb.computedMl / step))).toBeLessThan(1e-9);
+    expect(Math.abs(wb.computedMl * wb.concentrationMgPerMl - wb.computedMg)).toBeLessThanOrEqual(
+      (step * wb.concentrationMgPerMl) / 2 + 1e-6,
+    );
+  });
+
+  it('reports no mL when there is no embodiment to take a concentration from', async () => {
+    const check = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/dose-checks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ medicationId, amountMg: 180 })
+      .expect(201);
+
+    expect(check.body.guidance.weightBased.computedMl).toBeNull();
+    expect(check.body.guidance.weightBased.concentrationMgPerMl).toBeNull();
   });
 });

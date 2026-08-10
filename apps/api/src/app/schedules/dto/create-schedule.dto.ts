@@ -2,17 +2,19 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsDateString,
-  IsEnum,
   IsIn,
   IsNotEmpty,
+  IsInt,
   IsNumber,
+  Max,
+  Min,
   IsOptional,
   IsString,
 } from 'class-validator';
 import { InterventionType } from '@salud/shared/types';
 
 export class CreateScheduleDto {
-  @IsEnum(['medication_dose', 'dressing_change'] satisfies InterventionType[])
+  @IsIn(['medication_dose', 'dressing_change'] satisfies InterventionType[])
   type!: InterventionType;
 
   @IsString()
@@ -37,14 +39,20 @@ export class CreateScheduleDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0.01)
+  @Max(100000)
   doseMg?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0.01)
+  @Max(1000)
   doseMl?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0.25)
+  @Max(100)
   pillCount?: number;
 
   @IsOptional()
@@ -61,6 +69,8 @@ export class CreateScheduleDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0.25)
+  @Max(8760)
   frequencyHours?: number;
 
   @IsOptional()
@@ -69,11 +79,15 @@ export class CreateScheduleDto {
   @IsString({ each: true })
   explicitTimes?: string[];
 
+  // No @IsNotInFuture here, deliberately: a course starts and ends in the future by definition
+  // (api.md -> Conventions). Same for endAt below.
   @IsDateString()
   startAt!: string;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Max(10000)
   endAfterOccurrences?: number;
 
   @IsOptional()

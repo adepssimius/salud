@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { MedicationUnitType } from '@salud/shared/types';
 
 const UNIT_TYPES: MedicationUnitType[] = ['tablet', 'capsule', 'ml', 'drop', 'other'];
@@ -11,10 +11,14 @@ export class UpdateEmbodimentDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0.001)
+  @Max(10000)
   concentrationMgPerMl?: number | null;
 
   @IsOptional()
   @IsNumber()
+  @Min(0.001)
+  @Max(10000)
   strengthMgPerUnit?: number | null;
 
   @IsOptional()
@@ -30,6 +34,8 @@ export class UpdateEmbodimentDto {
   @IsBoolean()
   atHome?: boolean;
 
+  // Not future-bounded: an expiry in the past is the *warning* condition (the expired_embodiment
+  // advisory), and one in the future is the normal case.
   @IsOptional()
   @IsDateString()
   expiresAt?: string | null;

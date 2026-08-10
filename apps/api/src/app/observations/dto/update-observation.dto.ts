@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsOptional, IsString, ArrayUnique, ValidateNested, IsEnum, Validate } from 'class-validator';
+import { IsArray, IsOptional, IsString, ArrayUnique, ValidateNested, IsIn, Validate } from 'class-validator';
 import { ObservationType } from '@salud/shared/types';
 import { EntryMetadataConstraint } from './entry-metadata.dto';
 
@@ -8,7 +8,7 @@ class UpdateObservationEntryDto {
   @IsString()
   id?: string;
 
-  @IsEnum([
+  @IsIn([
     'temperature',
     'heart_rate',
     'respiratory_rate',

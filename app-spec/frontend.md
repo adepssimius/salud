@@ -78,6 +78,12 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   card shows its `source`. A guidance type that's `null` (no weight on file; patient aged out of
   every age-band guideline) simply doesn't render its card, rather than rendering an empty/error
   state.
+- **Both cards show mL when the engine supplies one**, and "Use this" fills the mL field as well as
+  the mg field. The asymmetry this removes was a real hazard: the age-band card offered a volume
+  while the weight-based card offered only milligrams, leaving a half-asleep caregiver holding a
+  syringe to divide by the concentration themselves. Where the engine reports the volume as derived
+  rather than as the guideline's own (`ageBand.doseMlSource === 'derived'`), say so in muted text, so
+  a derived number is never read as coming from the `source` line printed beneath it.
 - **Stale-weight prompt (F-3.2)**: when the `stale_weight` advisory candidate comes back from
   `dose-checks`, show an inline prompt offering to log a fresh weight before leaning on
   weight-based guidance, rather than silently trusting a >60-day-old number.
@@ -150,6 +156,46 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   `episodes_events_pivot`, only an indirect one through its nested Episodes/Schedules, so a
   Condition-frame overlay needs its own query shape rather than reusing the Episode-band code as-is.
 
+## Reactions
+
+Adverse reactions drive the `reaction_warning` inline banner and the `reaction_danger` full-screen
+interstitial at dose entry (see "Dose entry" above) — the single most safety-critical input in the
+app. They therefore need somewhere to be entered.
+
+- **Placement**: a read-only `Reactions` card on `patient-detail.page.ts`, directly under the code
+  status card and **above** Conditions. Reactions are header material on the ER Brief (F-7.3,
+  "allergies belong in the header"), and the patient page should mirror that priority. Same card +
+  dedicated-create-page shape Conditions already uses, so it introduces no new interaction
+  vocabulary.
+- **List row**: description, a severity `.pill` (`-danger` for `danger`, `-neutral` for `warning`),
+  the scope in plain language ("Amoxicillin", "Amoxicillin — 250 mg/5 mL suspension", "tag:
+  penicillin-class"), and the date or the literal **"Date unknown"**. Never render an epoch-zero
+  date on a clinical record. Newest first, per the API's `COALESCE(occurredAt, createdAt)` ordering.
+- **`new-reaction.page.ts`** at `patients/:id/reactions/new`: description (required), severity
+  (default `warning`), scope-type selector, scope target picker, and an optional date labelled
+  **"Date (optional — leave blank if you don't remember)"**. That label is the thing that makes the
+  optional-date rule reachable from the product rather than merely true in the API.
+- **Scope picker** — this is where the safety weight sits:
+  - `medication` → the same typeahead over `GET /api/medications?q=` used by the dose and schedule
+    forms.
+  - `embodiment` → that typeahead to choose the medication, then a select over its embodiments; the
+    payload carries `embodimentId` only.
+  - `tag` → free text with a datalist of tags harvested from the catalog.
+  - **When a typed tag matches no medication in the catalog, show an inline note.** A tag-scoped
+    reaction matches only against `Medication.tags`, so a typo produces a reaction that silently
+    never fires — the worst possible failure for this record. Saying so is honest; *blocking* the
+    save is not, since a caregiver may legitimately be recording a class before any drug in it has
+    been catalogued.
+  - Switching scope type clears the other two targets, so the API's `INVALID_REACTION_SCOPE` stays a
+    backstop rather than the primary UX.
+- **No cross-reactivity affordance** (P6): the form never suggests related medications, never expands
+  a selection to a class, and offers no "similar drugs" helper. Cross-reactivity is a clinical
+  judgment the caregiver makes explicitly — the scope selector *is* that judgment.
+- **Delete** per row, behind a confirm, matching the care-team and patient delete convention. A
+  mis-scoped reaction otherwise fires an interstitial on every future dose with no way to stop it.
+  Editing is deferred: an edit should capture a revision, and which entities are correctable is its
+  own decision.
+
 ## Timeline
 - Desktop-weighted (P7): a temperature curve (or other numeric-observation curve) rendered as a
   hand-drawn SVG — no charting library, consistent with the rest of the app's hand-rolled styling —
@@ -186,6 +232,11 @@ action surfaces the frozen-snapshot URL and its expiry. The public `/brief/:toke
 `authGuard` — the one other unauthenticated web route besides `/login`/`/register`) renders a
 fetched snapshot with a "frozen at / expires" banner, or a plain "link expired or doesn't exist"
 message on a 404 — no distinction between missing and expired, mirroring the API.
+
+Both pages label their scope from the response's own `body.eventScope`, never from an assumption
+that an episode exists — including the frozen `since`/`generatedAt` on a shared snapshot, which is
+what keeps a brief read three days later from claiming to show "the last 72 hours". See
+`er-brief.md` → Web for the headings, empty states, and the phone-width table rule.
 
 ## While You Were Asleep
 - `whats-new.page.ts` (per patient, entry point from the dashboard card): renders the diff — events

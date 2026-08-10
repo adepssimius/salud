@@ -68,10 +68,12 @@ export class MedicationsController {
 
   @Post('medications/:id/embodiments')
   async createEmbodiment(
+    @Request() req: any,
     @Param('id', new ParseUUIDPipe({ version: '4' })) medicationId: string,
     @Body() dto: CreateEmbodimentDto,
   ) {
-    return await this.embodiments.create(medicationId, dto);
+    // userId for the runningLow attribution stamp, matching updateEmbodiment below.
+    return await this.embodiments.create(medicationId, req.user.userId, dto);
   }
 
   @Get('medications/:id/embodiments')

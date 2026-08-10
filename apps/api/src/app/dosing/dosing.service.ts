@@ -47,6 +47,20 @@ export interface DoseEvaluation {
 
 const STALE_WEIGHT_DAYS = 60;
 
+/**
+ * Round a volume to something a caregiver can actually draw: the graduations printed on a
+ * paediatric oral syringe are 0.1 mL at and above 1 mL, and 0.05 mL below it. Reporting
+ * "5.4375 mL" names a volume nobody can measure, and rounding in the display layer would put the
+ * arithmetic back on the client — which api.md forbids for exactly the same reason it forbids the
+ * client computing mg.
+ *
+ * toFixed(2) before Number() so binary-float dust (0.30000000000000004) never reaches the wire.
+ */
+function toDrawableMl(ml: number): number {
+  const step = ml >= 1 ? 0.1 : 0.05;
+  return Number((Math.round(ml / step) * step).toFixed(2));
+}
+
 @Injectable()
 export class DosingService {
   constructor(private readonly db: DatabaseService) {}
@@ -114,6 +128,23 @@ export class DosingService {
     const weightKgUsed: number | null = patient.latestWeightKg ?? null;
     const weightRecordedAt = normalizeTs(patient.latestWeightRecordedAt);
 
+    // Hoisted above both guidance branches: it used to be fetched further down purely for the
+    // expiry advisory, but the mL derivation needs it before either branch runs.
+    let embodiment: any = null;
+    if (input.embodimentId) {
+      const embRows = await db
+        .select()
+        .from(medicationEmbodiments)
+        .where(eq(medicationEmbodiments.id, input.embodimentId))
+        .limit(1);
+      embodiment = embRows[0] ?? null;
+    }
+    // The `> 0` guard matters: a zero concentration would otherwise produce Infinity mL.
+    const concentrationMgPerMl: number | null =
+      embodiment?.concentrationMgPerMl != null && embodiment.concentrationMgPerMl > 0
+        ? embodiment.concentrationMgPerMl
+        : null;
+
     let weightBased: WeightBasedGuidance | null = null;
     if (weightBasedGuideline && weightKgUsed != null) {
       const computedMg = Math.min(
@@ -125,6 +156,10 @@ export class DosingService {
         source: weightBasedGuideline.source,
         mgPerKg: weightBasedGuideline.mgPerKg,
         computedMg,
+        // The caregiver is holding a syringe, not a scale. The age-band card has always offered a
+        // volume; leaving this one in milligrams made them do the division half-asleep.
+        computedMl: concentrationMgPerMl != null ? toDrawableMl(computedMg / concentrationMgPerMl) : null,
+        concentrationMgPerMl,
         maxMgPerDose: weightBasedGuideline.maxMgPerDose,
         maxMgPerDay: weightBasedGuideline.maxMgPerDay,
         minIntervalHours: weightBasedGuideline.minIntervalHours,
@@ -135,11 +170,22 @@ export class DosingService {
 
     let ageBand: AgeBandGuidance | null = null;
     if (ageBandGuideline) {
+      // A stored doseMl wins: it carries the guideline's own provenance (MedicationGuideline.source).
+      // Only derive when there isn't one. The engine deliberately does NOT adjudicate a
+      // disagreement between the two -- that would be the app arbitrating between a printed label
+      // and a physical bottle, which is the inference P6 forbids.
+      const storedMl = ageBandGuideline.doseMl;
+      const derivedMl =
+        storedMl == null && ageBandGuideline.doseMg != null && concentrationMgPerMl != null
+          ? toDrawableMl(ageBandGuideline.doseMg / concentrationMgPerMl)
+          : null;
       ageBand = {
         guidelineId: ageBandGuideline.id,
         source: ageBandGuideline.source,
         doseMg: ageBandGuideline.doseMg,
-        doseMl: ageBandGuideline.doseMl,
+        doseMl: storedMl ?? derivedMl,
+        doseMlSource: storedMl != null ? 'guideline' : derivedMl != null ? 'derived' : null,
+        concentrationMgPerMl,
         pillCount: ageBandGuideline.pillCount,
         frequencyPerDay: ageBandGuideline.frequencyPerDay,
         maxMgPerDay: ageBandGuideline.maxMgPerDay,
@@ -212,12 +258,7 @@ export class DosingService {
     }
 
     if (input.embodimentId) {
-      const embRows = await db
-        .select()
-        .from(medicationEmbodiments)
-        .where(eq(medicationEmbodiments.id, input.embodimentId))
-        .limit(1);
-      const expiresAt = normalizeTs(embRows[0]?.expiresAt);
+      const expiresAt = normalizeTs(embodiment?.expiresAt);
       if (expiresAt !== null && expiresAt < occurredAtTs) {
         advisories.push({
           type: 'expired_embodiment',

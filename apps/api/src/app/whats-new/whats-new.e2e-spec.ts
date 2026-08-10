@@ -168,4 +168,49 @@ describe('While You Were Asleep (e2e)', () => {
     expect(first.body.events.some((e: any) => e.id === obs.body.id)).toBe(true);
     expect(second.body.events.some((e: any) => e.id === obs.body.id)).toBe(true);
   });
+  // ISSUES #16: the 2 AM entry your partner writes up at 6 AM was invisible to you if you last
+  // looked at 5 AM -- precisely the handoff this endpoint exists to cover.
+  it('surfaces a backdated entry logged after the watermark, and agrees with the dashboard count', async () => {
+    // Its own patient and caregiver, so the suite-level watermark state isn't disturbed.
+    const solo = await registerAndLogin(app);
+    const created = await request(app.getHttpServer())
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${solo.token}`)
+      .send({ fullName: 'Backdated Kid', dateOfBirth: '2018-03-03', sexAtBirth: 'male', myRole: 'parent' })
+      .expect(201);
+    const patientId = created.body.id;
+    const token = solo.token;
+
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/whats-new/ack`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    // Clinically 25 hours ago, written right now.
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date(Date.now() - 25 * 3600_000).toISOString(),
+        entries: [{ type: 'temperature', metadata: { value: 38.4, unit: 'C', method: 'oral' } }],
+      })
+      .expect(201);
+
+    const wywa = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/whats-new`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(wywa.body.events.length).toBe(1);
+    // Displayed at its clinical time even though it was selected on log time -- both facts matter.
+    expect(wywa.body.events[0].timestamp).toBeLessThan(wywa.body.since);
+
+    // The cross-check that both halves of the fix moved together: the dashboard card's count and
+    // this page's list must not disagree.
+    const dashboard = await request(app.getHttpServer())
+      .get('/api/dashboard')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const row = dashboard.body.whatsNew.find((r: any) => r.patientId === patientId);
+    expect(row.eventCount).toBe(wywa.body.events.length);
+  });
 });

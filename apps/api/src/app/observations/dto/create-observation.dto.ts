@@ -1,7 +1,8 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, ArrayUnique, IsArray, IsDateString, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, Validate, ValidateNested } from 'class-validator';
+import { ArrayUnique, IsArray, IsDateString, IsIn, IsNotEmpty, IsOptional, IsString, Validate, ValidateNested } from 'class-validator';
 import { LengthUnit, ObservationType, TempUnit, WeightUnit } from '@salud/shared/types';
 import { EntryMetadataConstraint } from './entry-metadata.dto';
+import { IsNotInFuture } from '../../common/validators';
 
 // All three keys required when the object is present — a partial snapshot of "what was on screen"
 // is worse than none, since a reader can't tell which units were defaulted.
@@ -17,7 +18,7 @@ class UnitPreferenceDto {
 }
 
 class ObservationEntryDto {
-  @IsEnum([
+  @IsIn([
     'temperature',
     'heart_rate',
     'respiratory_rate',
@@ -38,6 +39,7 @@ class ObservationEntryDto {
 }
 export class CreateObservationDto {
   @IsDateString()
+  @IsNotInFuture()
   observedAt!: string;
 
   @IsOptional()
@@ -69,8 +71,11 @@ export class CreateObservationDto {
   @Type(() => UnitPreferenceDto)
   unitPreferenceAtEntry?: UnitPreferenceDto;
 
+  // No @ArrayMinSize(1): it fired first and produced class-validator prose
+  // ("entries must contain at least 1 elements"), which error-display.ts deliberately never shows
+  // -- so the caregiver got a generic fallback instead of the AT_LEAST_ONE_ENTRY_REQUIRED sentence
+  // already sitting in the catalog. ObservationsService throws that code instead.
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => ObservationEntryDto)
   entries!: ObservationEntryDto[];
