@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
@@ -11,6 +11,7 @@ import {
   patients,
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
+import { ActiveEpisodeSummary, Episode } from '@salud/shared/types';
 
 type EpisodeEndType = 'observation' | 'intervention';
 
@@ -55,17 +56,67 @@ export class EpisodesService {
     return id;
   }
 
-  async resolveEpisodes(patientId: string, userId: string, episodeIds: string[], endedAtType: EpisodeEndType, endedAtId: string) {
-    if (!episodeIds || !episodeIds.length) return;
+  /**
+   * Every id must name an episode of *this* patient. Without this an observation on one child can
+   * be filed into another child's episode, where it then renders in that child's episode view,
+   * timeline and ER Brief (data-model.md → Data integrity rules).
+   *
+   * Returns the rows, so callers that need them don't re-query.
+   */
+  async assertEpisodesBelongToPatient(
+    patientId: string,
+    userId: string,
+    episodeIds: string[],
+  ): Promise<any[]> {
+    if (!episodeIds || !episodeIds.length) return [];
     const db = this.db.db as any;
     await this.ensurePatientAccess(patientId, userId);
+    const unique = Array.from(new Set(episodeIds));
     const rows = await db
       .select()
       .from(episodes)
-      .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, episodeIds)));
-    if (!rows.length || rows.length !== episodeIds.length) {
+      .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, unique)));
+    if (rows.length !== unique.length) {
       throw new NotFoundException('EPISODE_NOT_FOUND');
     }
+    return rows;
+  }
+
+  /**
+   * The `resolvesEpisodeIds ⊆ episodeIds` invariant. Lived as a byte-identical private in both
+   * ObservationsService and InterventionsService; it belongs in one place, next to the resolve it
+   * guards.
+   */
+  assertResolvesSubset(resolvesEpisodeIds: string[] | undefined, episodeIds: string[] | undefined) {
+    if (!resolvesEpisodeIds || !resolvesEpisodeIds.length) return;
+    const linked = new Set(episodeIds ?? []);
+    for (const id of resolvesEpisodeIds) {
+      if (!linked.has(id)) {
+        throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
+      }
+    }
+  }
+
+  async resolveEpisodes(patientId: string, userId: string, episodeIds: string[], endedAtType: EpisodeEndType, endedAtId: string) {
+    if (!episodeIds || !episodeIds.length) return;
+    const db = this.db.db as any;
+    const rows = await this.assertEpisodesBelongToPatient(patientId, userId, episodeIds);
+
+    // Identity-aware, and that carve-out is load-bearing. An update path re-sends the event's
+    // existing resolvesEpisodeIds whenever *either* episode field is touched, so a plain
+    // "already resolved -> throw" would make `PATCH { episodeIds }` start failing on any event
+    // that had ever resolved something. The error is for a *different* event trying to close an
+    // episode someone else already closed, which would silently rewrite endedAt.
+    const conflicting = rows.filter((r: any) => r.status === 'resolved' && r.endedAtId !== endedAtId);
+    if (conflicting.length) {
+      throw new BadRequestException('EPISODE_ALREADY_RESOLVED');
+    }
+
+    const toResolve = rows
+      .filter((r: any) => r.status !== 'resolved' || r.endedAtId !== endedAtId)
+      .map((r: any) => r.id);
+    if (!toResolve.length) return;
+
     await db
       .update(episodes)
       .set({
@@ -73,7 +124,7 @@ export class EpisodesService {
         endedAtType,
         endedAtId,
       })
-      .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, episodeIds)));
+      .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, toResolve)));
   }
 
   // "Derived fields computed at query time: startedAt, resolvedAt from linked events" (data-model.md).
@@ -87,7 +138,7 @@ export class EpisodesService {
     return rows.length ? normalizeTs(rows[0].performedAt) : null;
   }
 
-  async getById(episodeId: string, userId: string) {
+  async getById(episodeId: string, userId: string): Promise<Episode> {
     const db = this.db.db as any;
     const rows = await db.select().from(episodes).where(eq(episodes.id, episodeId)).limit(1);
     if (!rows.length) throw new NotFoundException('EPISODE_NOT_FOUND');
@@ -105,7 +156,7 @@ export class EpisodesService {
       .filter((p: any) => p.eventType === 'intervention')
       .map((p: any) => p.eventId);
 
-    return {
+    const episode: Episode = {
       id: row.id,
       patientId: row.patientId,
       conditionId: row.conditionId ?? null,
@@ -122,12 +173,13 @@ export class EpisodesService {
       notes: row.notes ?? null,
       observationIds: Array.from(new Set<string>(observationIds)),
       interventionIds: Array.from(new Set<string>(interventionIds)),
-      createdAt: normalizeTs(row.createdAt),
-      updatedAt: normalizeTs(row.updatedAt),
+      createdAt: normalizeTs(row.createdAt)!,
+      updatedAt: normalizeTs(row.updatedAt)!,
     };
+    return episode;
   }
 
-  async listForPatient(patientId: string, userId: string, status?: 'active' | 'resolved') {
+  async listForPatient(patientId: string, userId: string, status?: 'active' | 'resolved'): Promise<Episode[]> {
     const db = this.db.db as any;
     await this.ensurePatientAccess(patientId, userId);
     let rows = await db.select().from(episodes).where(eq(episodes.patientId, patientId));
@@ -135,7 +187,7 @@ export class EpisodesService {
       rows = rows.filter((r: any) => r.status === status);
     }
     return Promise.all(
-      rows.map(async (r: any) => ({
+      rows.map(async (r: any): Promise<Episode> => ({
         id: r.id,
         patientId: r.patientId,
         conditionId: r.conditionId ?? null,
@@ -148,13 +200,13 @@ export class EpisodesService {
         startedAt: await this.resolveEventTimestamp(r.startedAtType, r.startedAtId),
         endedAt: r.endedAtId ? await this.resolveEventTimestamp(r.endedAtType, r.endedAtId) : null,
         notes: r.notes ?? null,
-        createdAt: normalizeTs(r.createdAt),
-        updatedAt: normalizeTs(r.updatedAt),
+        createdAt: normalizeTs(r.createdAt)!,
+        updatedAt: normalizeTs(r.updatedAt)!,
       })),
     );
   }
 
-  async listActiveForUser(userId: string) {
+  async listActiveForUser(userId: string): Promise<ActiveEpisodeSummary[]> {
     const db = this.db.db as any;
     const rows = await db
       .select({
@@ -176,19 +228,22 @@ export class EpisodesService {
 
     return rows
       .filter((r: any) => r.patient && allowed.has(r.patient.id))
-      .map((r: any) => ({
+      .map((r: any): ActiveEpisodeSummary => ({
         id: r.episode.id,
         patientId: r.patient.id,
         patientName: r.patient.fullName,
+        conditionId: r.episode.conditionId ?? null,
         name: r.episode.name,
         status: r.episode.status,
         startedAtType: r.episode.startedAtType,
         startedAtId: r.episode.startedAtId,
-        endedAtType: r.episode.endedAtType,
-        endedAtId: r.episode.endedAtId,
-        notes: r.episode.notes,
-        createdAt: normalizeTs(r.episode.createdAt),
-        updatedAt: normalizeTs(r.episode.updatedAt),
+        // ?? null for consistency with the two sibling mappers -- drizzle returns null either way,
+        // but a typed literal shouldn't disagree with its neighbours about the shape.
+        endedAtType: r.episode.endedAtType ?? null,
+        endedAtId: r.episode.endedAtId ?? null,
+        notes: r.episode.notes ?? null,
+        createdAt: normalizeTs(r.episode.createdAt)!,
+        updatedAt: normalizeTs(r.episode.updatedAt)!,
       }));
   }
 }

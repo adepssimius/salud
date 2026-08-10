@@ -15,6 +15,22 @@ Request bodies are the deliberate opposite: datetime inputs (`observedAt`, `perf
 `endAt`) are ISO 8601 datetime strings, validated by `class-validator`. A client composes a datetime
 from a picker on the way in, and renders from an integer on the way out without parsing.
 
+**A datetime that names something that already happened may not be in the future.** `dateOfBirth`,
+`observedAt`, `performedAt` and `occurredAt` are rejected with 400 `DATE_IN_FUTURE` when they are
+later than the server's clock. A single mistyped year is otherwise permanent and unfixable from the
+UI: a dose stamped 2030 pins the dashboard's "last dose" forever, which is the exact question
+("did I already give Tylenol?") the app exists to answer.
+
+Planning fields are the opposite and are deliberately **not** bounded: a schedule's `startAt`/`endAt`
+describe a course that has not happened yet, and an embodiment's `expiresAt` in the past is the
+*warning* condition, not an error. `POST /api/dose-checks` is also exempt — it persists nothing and
+exists to answer "what if I gave this at X".
+
+The comparison is strict against the server's clock with no tolerance. Latency works in the client's
+favour (a client-stamped time is always older by the time the server sees it), so the only realistic
+way to hit this is a client clock running fast — which is worth knowing when diagnosing a
+surprising 400.
+
 Storage is SQLite integer epoch seconds, and Drizzle maps `{ mode: 'timestamp' }` columns to `Date`
 on read, so the coercion at the persistence boundary is not optional.
 `apps/api/src/app/persistence/time.ts` (`normalizeTs`/`toDate`) is the single implementation. A mapper
@@ -50,6 +66,11 @@ patient that does not exist, so that ids cannot be probed. This is the RFC 9110 
 either found no representation *or is unwilling to disclose that one exists*. 403 is reserved for cases
 where the caller is a member but the specific action is forbidden.
 
+`DELETE /api/patients/:patientId` is the concrete instance of that 403: it is owner-only, so a
+caregiver who *is* on the care team but is not the owner gets 403 `NOT_PATIENT_OWNER`. The ordering
+is load-bearing — membership is checked first, so a non-member still gets 404 and never learns that
+403 was even a possible answer.
+
 ## Patients
 - `POST /api/patients`
   - Body: `{ fullName, dateOfBirth, sexAtBirth, notes?, myRole? }` where `sexAtBirth` ∈ `['female','male']`
@@ -73,7 +94,20 @@ where the caller is a member but the specific action is forbidden.
   - `ownedById` transfers ownership. The target must be an existing user (404 `USER_NOT_FOUND` otherwise)
     and is added to the care team with role `parent` if not already a member.
 - `DELETE /api/patients/:patientId`
-  - Deletes the patient and all of its care team memberships.
+  - **Owner-only.** Only `ownedById` may delete. A care team member who is not the owner gets 403
+    `NOT_PATIENT_OWNER`; a non-member still gets 404 `PATIENT_NOT_FOUND` (membership is checked
+    first). Transfer ownership via `PATCH /api/patients/:patientId` if someone else should be able to.
+    The asymmetry this closes: `DELETE .../care-team/:caregiverUserId` already refuses to remove the
+    owner, so removing one caregiver was protected while destroying the entire record was not.
+  - **Deletes everything belonging to the patient**, not just the care team memberships: conditions
+    and their protocols, episodes and their pivot rows, observations and their entries,
+    interventions, intervention schedules, adverse reactions, advisories, ER Brief snapshots,
+    revisions, and file assets — including the stored blobs on disk, since an orphaned clinical photo
+    of a child that nothing will ever garbage-collect is a privacy problem, not housekeeping.
+  - Two of those tables are polymorphic and carry no foreign key — `episodes_events_pivot.event_id`
+    and `revisions.entity_id` — so they are matched by id lookup rather than by cascade. Nothing
+    reaches them automatically; see data-model.md → Data integrity rules.
+  - Response: `{ deleted: true }`.
 
 ## Care team
 - `GET /api/patients/:patientId/care-team`
@@ -90,6 +124,14 @@ where the caller is a member but the specific action is forbidden.
 
 ## Episodes
 - Created/resolved only as a result of an observation or intervention (no direct POST).
+- Every id in an event's `episodeIds`/`resolvesEpisodeIds` must belong to the **same patient as the
+  event** — 404 `EPISODE_NOT_FOUND` otherwise. Without this an observation on one child can be
+  attached to another child's episode and will render inside that child's episode view, timeline and
+  ER Brief.
+- **An episode resolves once.** A second, different event attempting to resolve an already-resolved
+  episode returns 400 `EPISODE_ALREADY_RESOLVED` rather than silently overwriting `endedAt`. The
+  *same* event re-asserting its own resolution is a no-op returning 200 — a `PATCH` that only
+  changes `episodeIds` re-sends the event's existing `resolvesEpisodeIds`, and that must not fail.
 - `GET /api/patients/:patientId/episodes`
   - Supports filters `status=active|resolved`.
   - Each item includes derived `startedAt`/`endedAt` (epoch seconds, resolved from the linked
@@ -163,9 +205,20 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     }
     ```
   - Validation:
-    - At least one entry required; each entry `type` must match schema (data model).
-    - `resolvesEpisodeIds` must be subset of `episodeIds`.
-    - If any entry type = `photo`, `metadata.fileId` required.
+    - At least one entry required (400 `AT_LEAST_ONE_ENTRY_REQUIRED`); each entry `type` must match
+      schema (data model).
+    - `resolvesEpisodeIds` must be subset of `episodeIds`, and every id in either list must belong to
+      **this** patient (404 `EPISODE_NOT_FOUND`).
+    - If any entry type = `photo`, `metadata.fileId` is required, and the file must already exist and
+      be attached to this patient (or be a patientless upload by the acting user) — 400
+      `PHOTO_FILE_NOT_FOUND` otherwise. A shape-valid UUID that names nothing is a permanently broken
+      image in the timeline and the ER Brief, so it is caught at write time rather than at read time.
+      One code covers "no such file" and "someone else's file" alike, for the same
+      no-probing reason `GET /api/files/:fileId` returns 404 to a non-member.
+    - Numeric entry metadata is range-checked (data-model.md → "Observation entry structured
+      metadata"). This matters most for `weight`: the value denormalizes onto the patient and then
+      feeds mg/kg dose calculation, so a negative or absurd figure is a dosing-input corruption, not
+      a cosmetic one.
     - Weight entries update patient latest weight + timestamp.
     - `unitPreferenceAtEntry`, when present, must carry all three keys with valid values
       (`temp: 'C'|'F'`, `weight: 'kg'|'lb'|'st'`, `length: 'cm'|'in'`).
@@ -207,7 +260,7 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       "startEpisodeConditionId": "optional condition uuid to nest the new episode under",
       "medicationId": "uuid",
       "medicationEmbodimentId": "uuid",
-      "doseSource": "weight_based|age_based|override",
+      "doseSource": "weight_based|age_based|override|schedule",
       "amountMg": 250,
       "amountMl": 5,
       "pillCount": 2,
@@ -218,10 +271,15 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       "notes": ""
     }
     ```
+  - `doseSource` records **how the caregiver arrived at the amount**, not how good the amount is:
+    `weight_based` and `age_based` mean they took the engine's number, `override` means they typed
+    their own, and `schedule` means the dose came from `POST /api/schedules/:scheduleId/log` — a
+    plan already set up rather than a decision made in the moment. A client only ever sends the first
+    three; `schedule` is written by the schedule-log path itself.
   - The API runs the same dosing engine used by `POST .../dose-checks` (see "Dosing engine" below)
     and computes, **overriding whatever the client sent** for `weight_based`/`age_based` sources
     (client-sent `guidelineId`/`weightKgUsed`/`ageMonthsUsed` are honored only under
-    `doseSource: 'override'`, where there is no guideline to resolve):
+    `doseSource: 'override'`/`'schedule'`, where there is no guideline to resolve):
     - `guidelineId` — the guideline actually resolved for the chosen `doseSource`, or the
       client-provided value under `override`.
     - `weightKgUsed`, `ageMonthsUsed` — the patient's weight/age at `performedAt`.
@@ -248,9 +306,19 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     }
     ```
   - Validation:
-    - `resolvesEpisodeIds` must be subset of `episodeIds`.
+    - `resolvesEpisodeIds` must be subset of `episodeIds`, and every id in either list must belong to
+      **this** patient (404 `EPISODE_NOT_FOUND`).
+    - `medicationId` is **required** when `type = 'medication_dose'` (400 `MEDICATION_ID_REQUIRED`),
+      and `bodyLocation` when `type = 'dressing_change'` (400 `BODY_LOCATION_REQUIRED`) — the same
+      two rules schedule create has always enforced. A dose with no medication isn't merely an empty
+      record: it skips guideline resolution entirely, so the dosing engine and every advisory
+      silently do nothing. A `PATCH` is checked against the **merged** result, so clearing
+      `medicationId` on an existing dose is rejected too.
     - `interventionScheduleId` is stored only (no schedule state updates); also persisted as `scheduleId` column for querying.
     - `guidelineId` optional; omit if not provided.
+    - `medicationId`, `medicationEmbodimentId` and `guidelineId` must be v4 UUIDs.
+    - `amountMg`, `amountMl`, `pillCount`, `weightKgUsed` and `ageMonthsUsed` are range-checked; a
+      negative `amountMg` would otherwise count toward the daily total.
   - Response: `InterventionDto` (201) with computed fields where applicable.
 - Episode linkage is stored via pivot rows (`episodes_events_pivot`) with flags for start/resolve per event.
 - `GET /api/patients/:patientId/interventions`
@@ -276,11 +344,13 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
       "guidance": {
         "weightBased": {
           "guidelineId": "uuid", "source": "...", "mgPerKg": 15,
-          "computedMg": 217.5, "maxMgPerDose": 1000, "maxMgPerDay": 4000,
+          "computedMg": 217.5, "computedMl": 5.4, "concentrationMgPerMl": 40,
+          "maxMgPerDose": 1000, "maxMgPerDay": 4000,
           "minIntervalHours": 4, "weightKgUsed": 14.5, "weightRecordedAt": 1234567890
         },
         "ageBand": {
           "guidelineId": "uuid", "source": "...", "doseMg": 160, "doseMl": 5,
+          "doseMlSource": "guideline", "concentrationMgPerMl": 32,
           "pillCount": null, "frequencyPerDay": 4, "maxMgPerDay": 800,
           "ageMonthsUsed": 18, "applicable": true
         }
@@ -314,6 +384,29 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
   - **`nextAllowedAt`**: computed forward from `occurredAt` using the resolved guideline's
     `minIntervalHours` (weight-based) or `24 / frequencyPerDay` hours (age-band, when no
     weight-based interval is available). `null` when neither yields an interval.
+  - **mL derivation**: `weightBased.computedMl` is `computedMg ÷ concentrationMgPerMl` of the
+    **selected embodiment**, and `null` when no embodiment was supplied or it has no concentration
+    (tablets and capsules). The caregiver is holding a syringe, not a scale — and per the rule at the
+    top of this section, the client never does guideline arithmetic, including this division.
+    `concentrationMgPerMl` is echoed so the UI can show its working.
+    - **Rounding is syringe-realistic**: to the nearest 0.1 mL at or above 1 mL, and the nearest
+      0.05 mL below — the graduations actually printed on a paediatric oral syringe. Reporting
+      `5.4375 mL` names a volume nobody can draw. The consequence, stated plainly so nobody "fixes"
+      it: `computedMl × concentrationMgPerMl` will not always equal `computedMg` exactly.
+      `computedMg` is the computed target; `computedMl` is the deliverable volume; the gap is at most
+      half a graduation.
+    - **Age band**: a guideline's stored `doseMl` wins, because it carries that guideline's own
+      provenance (`MedicationGuideline.source`). Only when it is null and both `doseMg` and a
+      concentration exist is a value derived, with the same rounding. `doseMlSource` reports which
+      happened — `'guideline'`, `'derived'`, or `null` — so the UI never prints a derived volume
+      underneath a guideline's source line as though the guideline said it.
+    - The engine does **not** adjudicate a disagreement between a guideline's stored `doseMl` and
+      what the selected bottle's concentration implies: no advisory, no correction. That would be the
+      app arbitrating between a printed label and a physical bottle, which is exactly the inference
+      P6 forbids.
+    - On save, `amountMl` is **not** auto-filled server-side. Intervention metadata records what the
+      caregiver says they gave; guidance records what the engine suggested. The web fills the field
+      when the caregiver taps "Use this", so the value still arrives through the request body.
   - **Reaction matching**: every `AdverseReaction` on the patient is checked against the request's
     `medicationId`/`medicationEmbodimentId` (and the medication's own `tags`, for `tag`-scoped
     reactions) — exact match only, per the reaction's own `scopeType` (data-model.md → "Data
@@ -326,13 +419,26 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
 Patient-scoped (data-model.md → `AdverseReaction`).
 
 - `POST /api/patients/:patientId/reactions`
-  - Body: `{ description, occurredAt, severity, scopeType, medicationId?, embodimentId?, tag? }`
+  - Body: `{ description, occurredAt?, severity, scopeType, medicationId?, embodimentId?, tag? }`
     where `severity` ∈ `['warning','danger']` and `scopeType` ∈ `['embodiment','medication','tag']`.
     Exactly one of `medicationId`/`embodimentId`/`tag` must be present, matching `scopeType` — any
     other combination is 400 `INVALID_REACTION_SCOPE`.
+  - **`occurredAt` is optional** and stores `null` when omitted. A caregiver frequently knows *that*
+    a child reacted to amoxicillin without knowing *when*, and requiring a date would force a
+    fabricated one into a record the app keeps forever. `null` means "date not known" — never "no
+    reaction". Reaction matching in the dosing engine never consults the date, so an undated
+    reaction fires exactly as strongly as a dated one.
   - Response: `AdverseReaction` (201).
 - `GET /api/patients/:patientId/reactions`
-  - Lists a patient's reactions, newest first.
+  - Lists a patient's reactions, newest first, ordered by `COALESCE(occurredAt, createdAt) DESC` — an
+    undated reaction sorts by when it was recorded, rather than sinking to the bottom of the list
+    purely for lacking a date.
+- `DELETE /api/patients/:patientId/reactions/:reactionId`
+  - Removes a reaction. 404 `REACTION_NOT_FOUND` when it does not exist or belongs to another
+    patient. A reaction drives a full-screen danger interstitial on every future dose of that
+    medication, so a mis-scoped entry has to be correctable; "remembered forever" (data-model.md)
+    means the app never expires a reaction on its own, not that a caregiver cannot undo their own
+    typo. Response: `{ deleted: true }`.
 
 ## Advisories
 
@@ -405,9 +511,15 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
   - Advances `nextDueAt` forward from the logged dose's time using the schedule's interval.
     When `endAfterOccurrences` is reached, or the next `nextDueAt` would fall after `endAt`, the
     schedule's `status` becomes `completed` and `nextDueAt` becomes `null`.
-  - A dose logged from a schedule is **not** flagged atypical merely for having
-    `doseSource: 'override'` (data-model.md → "Data integrity rules") — it's executing a plan, not
-    an ad-hoc deviation. Magnitude/interval checks against any matching guideline still apply.
+  - The logged dose is recorded with **`doseSource: 'schedule'`**, and is **not** flagged atypical
+    for it (data-model.md → "Data integrity rules") — it's executing a plan, not an ad-hoc
+    deviation. Magnitude/interval checks against any matching guideline still apply.
+    `'override'` would be the wrong label: a dose given exactly as the schedule specifies is the most
+    plan-conforming dose there is, and calling it an override misreads it in the ER Brief and muddies
+    the atypical-dose signal. The exemption itself is keyed on the dose having a `scheduleId`, not on
+    its `doseSource`, so this is a provenance fix and changes no flagging behavior.
+  - Existing rows written before this change carry `doseSource: 'override'` and are not rewritten.
+    They remain correctly un-flagged, since the exemption never depended on the value.
 
 ## Timeline & dashboard
 - `GET /api/patients/:patientId/timeline`
@@ -462,10 +574,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
         *client render rule* applied over this array, not a filter the server performs; an
         always-emitted row keeps "diff computed, nothing new" distinguishable from "patient missing
         because something broke".
-      - `eventCount` counts observations + interventions since `since`, on **clinical time**
-        (`observedAt`/`performedAt`), matching what `GET .../whats-new` puts in `events`. Advisories
-        are deliberately *not* included — they have their own count, and the timeline merge would
-        otherwise double-count `protocol_fired`.
+      - `eventCount` counts observations + interventions since `since`, on **log time**
+        (`createdAt`), matching what `GET .../whats-new` puts in `events` — the two select on the
+        same column by construction, and that is the invariant to preserve when either changes.
+        Advisories are deliberately *not* included — they have their own count, and the timeline
+        merge would otherwise double-count `protocol_fired`.
       - `advisoryCount` counts **every advisory type** created since `since`, on `createdAt`, and
         **includes acknowledged ones**. It is therefore *not* the same number as
         `unacknowledgedAdvisories.length` on this same payload.
@@ -498,26 +611,48 @@ requires authentication (`JwtAuthGuard`); there is no `ensurePatientAccess` chec
 and cabinet are shared across the whole household rather than tied to one patient (P4). No admin role
 exists yet in phase 1, so any authenticated caregiver may manage the catalog.
 
+**That stays true deliberately, and this paragraph exists so it isn't re-litigated.** A creator-only
+mutation rule was considered and rejected: none of `Medication`/`MedicationEmbodiment`/
+`MedicationGuideline` carries a `createdByUserId` column, so it would need a schema change for a
+single-household app; P4 in product.md is "every caregiver sees and does everything"; and the actual
+hazard is not *who* edits the dosing reference but *what a delete orphans*. The three `DELETE`
+routes therefore refuse while anything still depends on the row (409, below), which closes the real
+gap completely, and `defaultActive: false` already covers "retire this, don't destroy it".
+
 - `GET /api/medications`
   - Query: `q?` (matches against `name`, `brandNames`, and `tags`, case-insensitive — this is how "the
     box says Tylenol, not acetaminophen" search works, F-1.2), `tag?`, `activeOnly?`.
   - Returns medications including `brandNames` and `tags`.
 - `POST /api/medications`
   - Body: `{ name, brandNames?, description?, tags?, defaultActive? }`.
+  - `name` must be unique across the household, **case-insensitively** — 409
+    `MEDICATION_NAME_TAKEN`. Two identical "Acetaminophen" entries are indistinguishable in the
+    typeahead and can carry different guidelines, which is a hazard at 3 AM. Uniqueness is checked
+    against `name` only; a name that collides with another medication's `brandNames` is allowed.
   - Response: `MedicationDto` (201).
 - `GET /api/medications/:medicationId`
 - `PATCH /api/medications/:medicationId`
-  - Body: any subset of the create fields.
+  - Body: any subset of the create fields. Renaming enforces the same 409; renaming a medication to
+    the name it already has is a no-op, not a conflict.
 - `DELETE /api/medications/:medicationId`
+  - 409 `MEDICATION_IN_USE` when anything still references it — its own embodiments or guidelines, an
+    adverse reaction, a schedule, or a dose already logged. The response body carries a `dependents`
+    object counting what is in the way, so the client can say which. Delete the dependents first, or
+    retire the medication with `defaultActive: false` — that is what retirement is for.
+  - Deleting downward rather than cascading is deliberate: it produces an accurate dependent list and
+    pushes the caller through each child, where the same check applies again.
 
 ### Embodiments
 - `POST /api/medications/:medicationId/embodiments`
-  - Body: `{ label, concentrationMgPerMl?, strengthMgPerUnit?, unitType, notes? }`.
+  - Body: `{ label, concentrationMgPerMl?, strengthMgPerUnit?, unitType, notes? }`, plus the same
+    **cabinet fields** `PATCH` accepts: `atHome?`, `expiresAt?`, `runningLow?`.
 - `GET /api/medications/:medicationId/embodiments`
 - `PATCH /api/embodiments/:embodimentId`
   - Body: any subset of the create fields, plus **cabinet fields** (§Cabinet awareness below):
     `atHome?`, `expiresAt?`, `runningLow?`.
 - `DELETE /api/embodiments/:embodimentId`
+  - 409 `EMBODIMENT_IN_USE` when a guideline, reaction, schedule or logged dose still points at it.
+    Same `dependents` body as above.
 
 ### Guidelines
 - `POST /api/medications/:medicationId/guidelines`
@@ -525,18 +660,28 @@ exists yet in phase 1, so any authenticated caregiver may manage the catalog.
     server-side per data-model.md's field list). `source` is **required** on every guideline — it is
     the provenance shown alongside the computed dose (N-4, P2); no guideline may be created without one.
     `medicationEmbodimentId` is optional (omit for a guideline that applies across embodiments).
+  - Numeric fields are range-checked; a negative `mgPerKg` would feed a negative recommended dose.
+  - On an `age_band` guideline, `ageMinMonths` must be ≤ `ageMaxMonths` — 400
+    `GUIDELINE_AGE_RANGE_INVALID`. An inverted band can never match any patient, and it fails
+    *silently*: guidance simply never appears, with nothing on screen to say why.
 - `GET /api/medications/:medicationId/guidelines`
 - `GET /api/guidelines/:guidelineId`
 - `PATCH /api/guidelines/:guidelineId`
+  - The age-range rule is enforced against the **merged** row, not just the submitted fields —
+    `PATCH { ageMinMonths: 200 }` against a guideline whose max is 60 is rejected.
 - `DELETE /api/guidelines/:guidelineId`
+  - 409 `GUIDELINE_IN_USE` when a logged dose or an advisory still references it. Same `dependents`
+    body as the other two.
 
 ### Cabinet awareness (F-9.1–F-9.4)
 Cabinet state lives directly on `MedicationEmbodiment` — see data-model.md. There is deliberately no
 inventory-count endpoint (F-9.4): only presence (`atHome`), `expiresAt`, and a one-tap `runningLow`
 flag.
-- Setting `runningLow: true` via `PATCH /api/embodiments/:embodimentId` stamps
+- Setting `runningLow: true` on **create or** `PATCH /api/embodiments/:embodimentId` stamps
   `runningLowFlaggedByUserId`/`runningLowFlaggedAt` server-side from the requesting user; setting it
-  `false` (e.g. "restocked") clears both.
+  `false` (e.g. "restocked") clears both. Create and update accept the same three cabinet fields for
+  the same reason: a caregiver adding the bottle they are physically holding should be able to record
+  everything printed on it in one request.
 - Expired-embodiment and running-low surfacing on the dashboard/dose-entry screens is an Advisory
   concern, specced in a later milestone alongside the rest of the Advisory model (§4.11 of the
   requirements doc) — this section only covers the CRUD shape of the flags themselves.
@@ -549,9 +694,15 @@ security model — also in `security.md`). API surface:
 - `GET /api/patients/:patientId/er-brief` — query `episodeId?` (defaults to the most recently
   started active episode). Aggregates patient/code-status/reactions/conditions/protocol-fired
   header with a chronological episode-event/schedule/prior-episode/atypical-dose body.
+  - When no `episodeId` is supplied **and** the patient has no active episode, the body falls back to
+    a trailing **72-hour window** rather than coming back empty. `body.eventScope` is the
+    discriminator saying which happened. See er-brief.md → "Scope" for the full rule and the
+    reasoning.
 - `POST /api/patients/:patientId/er-brief/snapshots` — body `{ episodeId?, expiresInHours? }`
   (default 72, capped 168 — a request above the cap is rejected 400, not silently clamped).
-  Freezes the brief and returns `{ token, url, expiresAt }`.
+  Freezes the brief and returns `{ id, token, url, expiresAt }`. `id` is returned so the client can
+  revoke the link it just created without re-listing; it is the same `id` the snapshots list returns.
+  `url` is derived server-side — see er-brief.md → "Frozen snapshot" and security.md.
 - `GET /api/patients/:patientId/er-brief/snapshots` — lists this patient's live snapshots
   (`{ id, episodeId, createdByUserId, createdAt, expiresAt }[]`, newest first) so a caregiver can
   find one to revoke. **Never includes the token** — a snapshot's link is handed out once, at
@@ -579,6 +730,15 @@ The 6 AM shift-change briefing (§5.6, F-6.1): what changed since this caregiver
     `events` and `advisoriesFired` are since `since`; `nowDue` is a present-tense fact (what's due
     *right now*, regardless of the watermark) — a schedule due at 5:58 AM shouldn't disappear from
     the briefing just because the watermark happens to land at 6:00.
+  - **`events` is selected on log time (`createdAt`), not on clinical time.** The question this
+    endpoint answers is "what happened that I haven't seen", and a 2 AM event written up at 6 AM is
+    unseen no matter what its clinical timestamp says. Selecting on `observedAt`/`performedAt` made
+    exactly that entry invisible to the caregiver who last looked at 5 AM — the handoff the feature
+    exists to cover. `advisoriesFired` has always keyed on `createdAt`; this makes all of them agree.
+  - **Selection and display are now different axes, and both matter.** Each entry still *shows* its
+    clinical time, and the list is still *ordered* by clinical time — so a 6 AM briefing can
+    legitimately contain an entry stamped 2 AM, sitting in 2 AM's position. That is the correct
+    reading: it tells the caregiver both that it is new to them and when it actually happened.
   - Reading this endpoint **never** advances the watermark — see `POST .../whats-new/ack` below.
 - `POST /api/patients/:patientId/whats-new/ack`
   - No body. Sets `lastSeenAt` to now for the requester's membership. Response: `{ ackedAt }`.
@@ -620,6 +780,11 @@ changes (tooling.md → "File storage").
     the file's `patientId` when set; for the (currently theoretical) patientless case, only the
     uploader may read it.
   - Accepted for photo observations only (`metadata.fileId` on a `photo` entry).
+- **Write side**: a `photo` entry's `metadata.fileId` is checked at observation create/update time —
+  the file must exist and its `patientId` must match the observation's patient (or, for a patientless
+  upload, the acting user must be the uploader). 400 `PHOTO_FILE_NOT_FOUND` otherwise. Read-side
+  access control is unchanged; this stops a broken reference from being *stored* rather than
+  discovering it when the ER Brief tries to render the image.
 
 ## Validation & errors
 - Error codes are returned as the message string so clients can branch on them.
@@ -655,9 +820,21 @@ Adding a filter later is a breaking change for clients parsing these shapes.
     expected)", "error": "Bad Request", "statusCode": 400 }`.
   - Multer's upload size limit (413): `{ "message": "File too large", "error": "Payload Too Large",
     "statusCode": 413 }`.
+- **An explicit throw may carry extra keys alongside the string `message`.** Nest spreads an object
+  argument into the response body, so a code can ship structured detail without changing how
+  `message` is read. The three catalog `IN_USE` conflicts use this to say what is in the way:
+  ```json
+  {
+    "message": "MEDICATION_IN_USE",
+    "dependents": { "embodiments": 2, "guidelines": 2, "interventions": 14 },
+    "error": "Conflict",
+    "statusCode": 409
+  }
+  ```
+  Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-27 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
+36 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
 sentence silently falls back to that call site's generic message rather than reaching the user.
@@ -682,23 +859,39 @@ sentence silently falls back to that call site's generic message rather than rea
 | `INVALID_CREDENTIALS` | 401 | login with a wrong email/password pair |
 | `SELF_RELATIONSHIP_ALREADY_EXISTS` | 400 | care team: adding a second "self" relationship |
 | `CANNOT_REMOVE_OWNER` | 400 | care team: removing the patient's owner |
-| `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation/intervention create with an empty `entries` array |
+| `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation create with an empty `entries` array (interventions have no `entries` field) |
 | `RESOLVES_MUST_BE_SUBSET_OF_EPISODES` | 400 | `resolvesEpisodeIds` not a subset of `episodeIds` |
 | `OBSERVATION_SCHEMA_INVALID` | 400 (array form) | an observation entry's `metadata` fails its type-specific schema — see "Error response shapes" above for how this arrives |
 | `INVALID_REACTION_SCOPE` | 400 | an `AdverseReaction` create whose scope target doesn't match exactly one of `medicationId`/`embodimentId`/`tag` per its `scopeType` |
 | `SCHEDULE_EPISODE_CONDITION_CONFLICT` | 400 | an `InterventionSchedule` create/update with both `episodeId` and `conditionId` set |
-| `MEDICATION_ID_REQUIRED` | 400 | schedule create missing `medicationId` |
-| `BODY_LOCATION_REQUIRED` | 400 | dressing-change schedule create missing `bodyLocation` |
+| `MEDICATION_ID_REQUIRED` | 400 | intervention or schedule create/update of type `medication_dose` missing `medicationId` |
+| `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |
 | `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED` | 400 | schedule create with neither a frequency nor explicit times |
 | `FILE_REQUIRED` | 400 | `POST /api/files` with no file part |
 | `PATIENT_ID_REQUIRED` | 400 | `POST /api/files` with no `patientId` field |
+| `NOT_PATIENT_OWNER` | 403 | `DELETE /api/patients/:patientId` by a care team member who is not `ownedById` |
+| `DATE_IN_FUTURE` | 400 (array form) | a past-event datetime (`dateOfBirth`, `observedAt`, `performedAt`, `occurredAt`) later than the server's clock |
+| `PHOTO_FILE_NOT_FOUND` | 400 (array form) | a `photo` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
+| `EPISODE_ALREADY_RESOLVED` | 400 | a second, different event attempting to resolve an already-resolved episode |
+| `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |
+| `MEDICATION_NAME_TAKEN` | 409 | medication create/rename colliding case-insensitively with an existing `name` |
+| `MEDICATION_IN_USE` | 409 | `DELETE /api/medications/:id` with dependent rows; body carries `dependents` |
+| `EMBODIMENT_IN_USE` | 409 | `DELETE /api/embodiments/:id` with dependent rows; body carries `dependents` |
+| `GUIDELINE_IN_USE` | 409 | `DELETE /api/guidelines/:id` with dependent rows; body carries `dependents` |
+| `REACTION_NOT_FOUND` | 404 | reaction delete — unknown id, or one belonging to another patient |
 
 ### Dosing warnings are not error codes
 `atypical_dose` is an advisory `type`, not an error — see "Dosing engine" above. A dose that exceeds
 guidance is still saved (`isAtypical=true`); the advisory's `payload.reasons` is an array of zero or
-more of `'exceeds_max_per_dose' | 'exceeds_max_per_day' | 'interval_too_short'` (plural, since more
-than one can apply at once), alongside `amountMg` and `dailyTotalMg`. Front-end is expected to
-surface these as warnings before the caregiver finalizes the save; the API never blocks on them.
+more of `'override' | 'exceeds_max_per_dose' | 'exceeds_max_per_day' | 'interval_too_short'` (plural,
+since more than one can apply at once), alongside `amountMg` and `dailyTotalMg`. Front-end is
+expected to surface these as warnings before the caregiver finalizes the save; the API never blocks
+on them.
+
+`'override'` is the one that isn't a magnitude problem: it records that the caregiver's amount
+followed neither computed guideline (data-model.md → "Data integrity rules"), which is a legitimate
+decision worth a permanent trace, not a mistake. It is suppressed when the dose carries a
+`scheduleId` — a scheduled dose is executing a plan.
 
 ## Real-time considerations
 - No WebSocket in MVP. Front-end polls `/timeline` or `/dashboard`.

@@ -20,12 +20,23 @@ import {
   ErBrief,
   ErBriefActiveSchedule,
   ErBriefEpisodeSummary,
+  ErBriefEventScope,
   ErBriefSnapshotResponse,
   ErBriefSnapshotSummary,
   SharedErBriefResponse,
   TimelineEntry,
 } from '@salud/shared/types';
 import { normalizeTs } from '../persistence/time';
+
+/**
+ * How far back the body reaches when no episode is open.
+ *
+ * 72, not 24: 24 duplicates what the dashboard already answers and loses the "third day of fever"
+ * arc triage always asks about. A week floods the one-page print. Episodes are a manual frame
+ * someone has to remember to start, and an ER visit at 3 AM is precisely the moment nobody did —
+ * which is why the body falls back rather than coming back empty (er-brief.md → Scope).
+ */
+const RECENT_WINDOW_HOURS = 72;
 
 const DEFAULT_SNAPSHOT_HOURS = 72;
 const MAX_SNAPSHOT_HOURS = 168;
@@ -114,9 +125,19 @@ export class ErBriefService {
         }
       : null;
 
-    const timeline = episode
-      ? await this.timelineService.getTimeline(patientId, userId, { episodeId: episode.id })
-      : { entries: [] as any[] };
+    // One clock read for the whole build, matching getDashboard's convention -- two Date.now()
+    // calls could put generatedAt before since + windowHours.
+    const nowTs = Math.floor(Date.now() / 1000);
+    let eventScope: ErBriefEventScope;
+    let timeline: { entries: any[] };
+    if (episode) {
+      eventScope = { type: 'episode', episodeId: episode.id };
+      timeline = await this.timelineService.getTimeline(patientId, userId, { episodeId: episode.id });
+    } else {
+      const since = nowTs - RECENT_WINDOW_HOURS * 3600;
+      eventScope = { type: 'recent', windowHours: RECENT_WINDOW_HOURS, since, generatedAt: nowTs };
+      timeline = await this.timelineService.getTimeline(patientId, userId, { from: since });
+    }
     const events = timeline.entries as TimelineEntry[];
 
     // Most recent protocol_fired advisory among this episode's events populates the header
@@ -137,12 +158,30 @@ export class ErBriefService {
         }
       : null;
 
-    const priorEpisodes: ErBriefEpisodeSummary[] = episode?.conditionId
-      ? allEpisodes
-          .filter((e: any) => e.conditionId === episode!.conditionId && e.id !== episode!.id)
-          .sort((a: any, b: any) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
-          .map((e: any) => ({ id: e.id, name: e.name, status: e.status, startedAt: e.startedAt, endedAt: e.endedAt }))
-      : [];
+    const toEpisodeSummary = (e: any): ErBriefEpisodeSummary => ({
+      id: e.id,
+      name: e.name,
+      status: e.status,
+      startedAt: e.startedAt,
+      endedAt: e.endedAt,
+    });
+    const byNewest = (a: any, b: any) => (b.startedAt ?? 0) - (a.startedAt ?? 0);
+
+    let priorEpisodes: ErBriefEpisodeSummary[];
+    if (episode?.conditionId) {
+      priorEpisodes = allEpisodes
+        .filter((e: any) => e.conditionId === episode!.conditionId && e.id !== episode!.id)
+        .sort(byNewest)
+        .map(toEpisodeSummary);
+    } else if (!episode) {
+      // No episode means no conditionId to filter on, but triage's actual question -- "has this
+      // happened before?" -- is still worth answering, and a count of prior episodes is a stored
+      // fact rather than an inference. Capped at five, stated in the response contract so it's a
+      // documented rule and not silent truncation (er-brief.md).
+      priorEpisodes = allEpisodes.slice().sort(byNewest).slice(0, 5).map(toEpisodeSummary);
+    } else {
+      priorEpisodes = [];
+    }
 
     const activeSchedules = await this.buildActiveSchedules(patientId, userId);
 
@@ -190,6 +229,7 @@ export class ErBriefService {
         protocolFiredReason,
       },
       body: {
+        eventScope,
         episode: episodeSummary,
         events,
         activeSchedules,
@@ -271,6 +311,8 @@ export class ErBriefService {
     });
 
     return {
+      // `id` so the caller can revoke the link it just created without re-listing.
+      id,
       token,
       url: `${origin}/brief/${token}`,
       expiresAt: Math.floor(expiresAt.getTime() / 1000),
@@ -306,11 +348,32 @@ export class ErBriefService {
     const expiresAt = normalizeTs(row.expiresAt)!;
     const nowTs = Math.floor(Date.now() / 1000);
     if (expiresAt < nowTs) throw new NotFoundException('SNAPSHOT_NOT_FOUND');
+    const frozenAt = normalizeTs(row.createdAt)!;
     return {
-      payload: JSON.parse(row.payload),
-      frozenAt: normalizeTs(row.createdAt)!,
+      payload: this.backfillEventScope(JSON.parse(row.payload), frozenAt),
+      frozenAt,
       expiresAt,
     };
+  }
+
+  /**
+   * Live snapshots frozen before `eventScope` existed don't carry it, and they stay readable for up
+   * to their full 168-hour lifetime. Synthesizing it here — at the single boundary where a stored
+   * payload re-enters the app — lets the field stay required in the type and keeps the public page
+   * free of defensive branches.
+   */
+  private backfillEventScope(payload: any, frozenAt: number): any {
+    if (!payload?.body || payload.body.eventScope) return payload;
+    const episodeId = payload.body.episode?.id;
+    payload.body.eventScope = episodeId
+      ? { type: 'episode', episodeId }
+      : {
+          type: 'recent',
+          windowHours: RECENT_WINDOW_HOURS,
+          since: frozenAt - RECENT_WINDOW_HOURS * 3600,
+          generatedAt: frozenAt,
+        };
+    return payload;
   }
 
   async revokeSnapshot(id: string, userId: string): Promise<{ deleted: boolean }> {

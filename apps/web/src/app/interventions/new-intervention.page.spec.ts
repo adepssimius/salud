@@ -217,7 +217,7 @@ describe('NewInterventionPage', () => {
     expect(component.doseCheckResult()).toBeNull();
   }));
 
-  it('useWeightBasedAmount fills amountMg and sets doseSource', () => {
+  it('useWeightBasedAmount fills amountMg and amountMl and sets doseSource', () => {
     apiMock.get.mockReturnValue(of([]));
     const fixture = TestBed.createComponent(NewInterventionPage);
     fixture.detectChanges();
@@ -227,6 +227,7 @@ describe('NewInterventionPage', () => {
       guidance: {
         weightBased: {
           guidelineId: 'g1', source: 'AAP', mgPerKg: 15, computedMg: 217.456,
+          computedMl: 5.4, concentrationMgPerMl: 40,
           maxMgPerDose: 1000, maxMgPerDay: 4000, minIntervalHours: 4,
           weightKgUsed: 14.5, weightRecordedAt: null,
         },
@@ -239,6 +240,9 @@ describe('NewInterventionPage', () => {
 
     component.useWeightBasedAmount();
     expect(component.form.getRawValue().amountMg).toBe(217.46);
+    // The mL the engine derived, so the caregiver holding a syringe doesn't divide by the
+    // concentration themselves. This path used to fill only the mg field.
+    expect(component.form.getRawValue().amountMl).toBe(5.4);
     expect(component.form.getRawValue().doseSource).toBe('weight_based');
   });
 
@@ -253,6 +257,7 @@ describe('NewInterventionPage', () => {
         weightBased: null,
         ageBand: {
           guidelineId: 'g2', source: 'Label', doseMg: 160, doseMl: 5,
+          doseMlSource: 'guideline', concentrationMgPerMl: 32,
           pillCount: null, frequencyPerDay: 4, maxMgPerDay: 800,
           ageMonthsUsed: 18, applicable: true,
         },

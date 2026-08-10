@@ -7,6 +7,14 @@ import request from 'supertest';
 import { AppModule } from '../app.module';
 import { DatabaseService } from '../persistence/database.service';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { randomUUID } from 'crypto';
+
+// Stand-in medication ids. They need to be v4 UUIDs (CreateInterventionDto validates the shape),
+// but not rows in the catalog: these suites exercise intervention persistence and filtering, not
+// dose resolution. dosing.e2e-spec.ts covers the path where the medication actually exists.
+const MED_1 = randomUUID();
+const MED_A = randomUUID();
+const MED_B = randomUUID();
 
 async function registerAndLogin(app: INestApplication) {
   const email = `int-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
@@ -79,7 +87,7 @@ describe('Interventions (e2e)', () => {
       .send({
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
-        medicationId: 'med-1',
+        medicationId: MED_1,
         doseSource: 'override',
         amountMg: 200,
         notes: 'Dose given',
@@ -90,7 +98,7 @@ describe('Interventions (e2e)', () => {
     expect(createRes.body.patientId).toBe(patientId);
     expect(createRes.body.type).toBe('medication_dose');
     expect(Array.isArray(createRes.body.resolvesEpisodeIds)).toBe(true);
-    expect(createRes.body.metadata.medicationId).toBe('med-1');
+    expect(createRes.body.metadata.medicationId).toBe(MED_1);
     // Regression marker for ISSUES #20: createdAt/updatedAt leaked as ISO strings here. The full
     // wire-contract sweep lives in persistence/timestamps.e2e-spec.ts; this just names the file.
     expect(Number.isInteger(createRes.body.createdAt)).toBe(true);
@@ -101,7 +109,86 @@ describe('Interventions (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(getRes.body.id).toBe(createRes.body.id);
-    expect(getRes.body.metadata.medicationId).toBe('med-1');
+    expect(getRes.body.metadata.medicationId).toBe(MED_1);
+  });
+
+  // A single mistyped year would otherwise pin the dashboard's "last dose" to the future forever,
+  // with no way to correct it from the UI -- and "did I already give Tylenol?" is the founding
+  // question the app exists to answer.
+  it('rejects a performedAt in the future', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        performedAt: '2030-01-01T00:00:00Z',
+        type: 'medication_dose',
+        medicationId: MED_1,
+        doseSource: 'override',
+        amountMg: 100,
+      })
+      .expect(400);
+    expect(res.body.message).toContain('DATE_IN_FUTURE');
+  });
+
+  // These two codes existed but were wired only into schedule create. A dose with no medicationId
+  // doesn't just record nothing -- it skips guideline resolution entirely, so the dosing engine
+  // and every advisory silently do nothing.
+  it('requires medicationId on a dose and bodyLocation on a dressing change, including on update', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+
+    const noMed = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ performedAt: new Date().toISOString(), type: 'medication_dose', amountMg: 100 })
+      .expect(400);
+    expect(noMed.body.message).toBe('MEDICATION_ID_REQUIRED');
+
+    const noLocation = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ performedAt: new Date().toISOString(), type: 'dressing_change', side: 'left' })
+      .expect(400);
+    expect(noLocation.body.message).toBe('BODY_LOCATION_REQUIRED');
+
+    const dressing = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        performedAt: new Date().toISOString(),
+        type: 'dressing_change',
+        bodyLocation: 'Left knee',
+        side: 'left',
+      })
+      .expect(201);
+
+    // Checked against the merged row, so clearing it on an existing event is caught too.
+    const cleared = await request(app.getHttpServer())
+      .patch(`/api/interventions/${dressing.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ bodyLocation: '' })
+      .expect(400);
+    expect(cleared.body.message).toBe('BODY_LOCATION_REQUIRED');
+  });
+
+  it('rejects a negative amountMg rather than counting it toward the daily total', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        performedAt: new Date().toISOString(),
+        type: 'medication_dose',
+        medicationId: MED_1,
+        doseSource: 'override',
+        amountMg: -100,
+      })
+      .expect(400);
   });
 
   it('rejects resolvesEpisodeIds that are not a subset of episodeIds', async () => {
@@ -115,7 +202,7 @@ describe('Interventions (e2e)', () => {
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
         resolvesEpisodeIds: ['ep-1'],
-        medicationId: 'med-1',
+        medicationId: MED_1,
       })
       .expect(400);
   });
@@ -164,7 +251,7 @@ describe('Interventions (e2e)', () => {
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
         episodeIds: [],
-        medicationId: 'med-a',
+        medicationId: MED_A,
         doseSource: 'override',
         amountMg: 100,
       })
@@ -177,7 +264,7 @@ describe('Interventions (e2e)', () => {
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
         episodeIds: [],
-        medicationId: 'med-b',
+        medicationId: MED_B,
         doseSource: 'override',
         amountMg: 50,
       })
@@ -185,12 +272,12 @@ describe('Interventions (e2e)', () => {
 
     const listMedA = await request(app.getHttpServer())
       .get(`/api/patients/${patientId}/interventions`)
-      .query({ medicationId: 'med-a' })
+      .query({ medicationId: MED_A })
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
     expect(listMedA.body.length).toBe(1);
-    expect(listMedA.body[0].metadata.medicationId).toBe('med-a');
+    expect(listMedA.body[0].metadata.medicationId).toBe(MED_A);
   });
 
   it('validates resolves subset on update while allowing updates without resending episodeIds', async () => {
@@ -204,7 +291,7 @@ describe('Interventions (e2e)', () => {
         performedAt: new Date().toISOString(),
         type: 'medication_dose',
         startEpisodeName: 'Ear infection',
-        medicationId: 'med-1',
+        medicationId: MED_1,
         doseSource: 'override',
         amountMg: 50,
       })

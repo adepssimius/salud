@@ -5,9 +5,10 @@ import { PersistenceModule } from '../persistence/persistence.module';
 import { EpisodesModule } from '../episodes/episodes.module';
 import { AdvisoriesModule } from '../advisories/advisories.module';
 import { RevisionsModule } from '../revisions/revisions.module';
+import { FilesModule } from '../files/files.module';
 
 @Module({
-  imports: [PersistenceModule, EpisodesModule, AdvisoriesModule, RevisionsModule],
+  imports: [PersistenceModule, EpisodesModule, AdvisoriesModule, RevisionsModule, FilesModule],
   providers: [ObservationsService],
   controllers: [ObservationsController],
   exports: [ObservationsService],

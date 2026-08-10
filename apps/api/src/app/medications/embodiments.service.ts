@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
@@ -6,6 +6,7 @@ import { medicationEmbodiments, medications } from '../../db/schema';
 import { CreateEmbodimentDto } from './dto/create-embodiment.dto';
 import { UpdateEmbodimentDto } from './dto/update-embodiment.dto';
 import { normalizeTs } from '../persistence/time';
+import { embodimentDependencies } from './catalog-dependencies';
 
 @Injectable()
 export class EmbodimentsService {
@@ -34,7 +35,18 @@ export class EmbodimentsService {
     if (!rows.length) throw new NotFoundException('MEDICATION_NOT_FOUND');
   }
 
-  async create(medicationId: string, dto: CreateEmbodimentDto) {
+  // "The flag carries who set it" (data-model.md). Shared by create and update so the two can't
+  // drift -- an attribution that only one path stamps is worse than none.
+  private runningLowStamp(runningLow: boolean | undefined, userId: string) {
+    if (runningLow === undefined) return {};
+    return {
+      runningLow,
+      runningLowFlaggedByUserId: runningLow ? userId : null,
+      runningLowFlaggedAt: runningLow ? new Date() : null,
+    };
+  }
+
+  async create(medicationId: string, userId: string, dto: CreateEmbodimentDto) {
     await this.ensureMedicationExists(medicationId);
     const db = this.db.db as any;
     const id = randomUUID();
@@ -46,6 +58,9 @@ export class EmbodimentsService {
       strengthMgPerUnit: dto.strengthMgPerUnit ?? null,
       unitType: dto.unitType,
       notes: dto.notes ?? null,
+      atHome: dto.atHome ?? false,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      ...this.runningLowStamp(dto.runningLow, userId),
     });
     return this.get(id);
   }
@@ -80,11 +95,7 @@ export class EmbodimentsService {
     if (dto.expiresAt !== undefined) {
       updates.expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
     }
-    if (dto.runningLow !== undefined) {
-      updates.runningLow = dto.runningLow;
-      updates.runningLowFlaggedByUserId = dto.runningLow ? userId : null;
-      updates.runningLowFlaggedAt = dto.runningLow ? new Date() : null;
-    }
+    Object.assign(updates, this.runningLowStamp(dto.runningLow, userId));
     if (Object.keys(updates).length) {
       await db.update(medicationEmbodiments).set(updates).where(eq(medicationEmbodiments.id, id));
     }
@@ -94,6 +105,13 @@ export class EmbodimentsService {
   async remove(id: string) {
     await this.get(id);
     const db = this.db.db as any;
+    // Refuse rather than orphan. Deleting dosing reference data out from under a logged dose is
+    // silent data loss; the response says what's in the way so the caller can act on it
+    // (api.md -> Medications). Retirement is `defaultActive: false`, not deletion.
+    const dependents = await embodimentDependencies(db, id);
+    if (Object.keys(dependents).length) {
+      throw new ConflictException({ message: 'EMBODIMENT_IN_USE', dependents });
+    }
     await db.delete(medicationEmbodiments).where(eq(medicationEmbodiments.id, id));
     return { deleted: true };
   }

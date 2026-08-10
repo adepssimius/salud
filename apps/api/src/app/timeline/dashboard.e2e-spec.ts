@@ -358,13 +358,16 @@ describe('Dashboard (e2e)', () => {
       expect(row.advisoryCount).toBeGreaterThan(0);
     });
 
-    it('applies the 24h fallback window on clinical time when never acked', async () => {
+    // The direct expression of ISSUES #16, and its inversion is the proof the fix landed. Both
+    // rows were *written* seconds ago; only their clinical timestamps are 25h and 23h back. A
+    // caregiver who has never looked has not seen either, so both are new to them.
+    it('applies the 24h fallback window on log time when never acked', async () => {
       const pid = await newPatient();
       await logObservation(pid, 25);
       await logObservation(pid, 23);
 
       const row = await whatsNewRow(pid);
-      expect(row.eventCount).toBe(1);
+      expect(row.eventCount).toBe(2);
     });
 
     it('still returns a row with zero counts for a patient with nothing new', async () => {
@@ -467,15 +470,18 @@ describe('Dashboard (e2e)', () => {
       expect((await whatsNewRow(pid, other.token)).eventCount).toBe(1);
     });
 
-    // Events key on clinical time, advisories on when the row was written — so a backdated dose is
-    // already outside the window while the advisory it fired is brand new. Asserted so nobody
-    // "corrects" the two onto the same clock.
-    it('counts an advisory fired by a backdated dose even though the dose itself is out of window', async () => {
+    // Events and advisories now key on the same clock (whats-new-window.ts). A dose backdated 25h
+    // but logged just now counts as an event *and* fires an advisory — which is the point: the
+    // 2 AM dose someone writes up at 6 AM is exactly what a handoff briefing must not drop.
+    //
+    // This assertion used to say the opposite, with a comment warning against "correcting" the two
+    // onto one clock. That was the bug, not the invariant.
+    it('counts both the backdated dose and the advisory it fired', async () => {
       const pid = await newPatient();
       await logDose(pid, 25);
 
       const row = await whatsNewRow(pid);
-      expect(row.eventCount).toBe(0);
+      expect(row.eventCount).toBe(1);
       expect(row.advisoryCount).toBeGreaterThan(0);
     });
   });

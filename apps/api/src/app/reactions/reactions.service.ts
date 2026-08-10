@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { adverseReactions, careTeamMemberships } from '../../db/schema';
 import { CreateReactionDto } from './dto/create-reaction.dto';
@@ -62,7 +62,7 @@ export class ReactionsService {
       id,
       patientId,
       description: dto.description,
-      occurredAt: new Date(dto.occurredAt),
+      occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : null,
       recordedByUserId: userId,
       severity: dto.severity,
       scopeType: dto.scopeType,
@@ -81,7 +81,27 @@ export class ReactionsService {
       .select()
       .from(adverseReactions)
       .where(eq(adverseReactions.patientId, patientId))
-      .orderBy(desc(adverseReactions.occurredAt));
+      // COALESCE, not a plain DESC on occurredAt: SQL sorts NULLs last, which would silently
+      // demote undated reactions to the bottom of a list whose whole point is that they're
+      // remembered. An undated one sorts by when it was recorded instead (api.md).
+      .orderBy(desc(sql`coalesce(${adverseReactions.occurredAt}, ${adverseReactions.createdAt})`));
     return rows.map((r: any) => this.pickReaction(r));
+  }
+  /**
+   * A reaction drives a full-screen danger interstitial on *every* future dose of that medication,
+   * so a mis-scoped entry with no way to remove it is worse than the absence of a UI. "Remembered
+   * forever" (§4.9) means the app never expires a reaction on its own — not that a caregiver can't
+   * undo their own typo.
+   */
+  async remove(patientId: string, id: string, userId: string) {
+    await this.ensurePatientAccess(patientId, userId);
+    const db = this.db.db as any;
+    const rows = await db.select().from(adverseReactions).where(eq(adverseReactions.id, id)).limit(1);
+    // Belonging to a different patient is the same answer as not existing — no probing.
+    if (!rows.length || rows[0].patientId !== patientId) {
+      throw new NotFoundException('REACTION_NOT_FOUND');
+    }
+    await db.delete(adverseReactions).where(eq(adverseReactions.id, id));
+    return { deleted: true };
   }
 }

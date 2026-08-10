@@ -28,12 +28,22 @@ body:json {
 
 script:post-response {
   bru.setVar('token', res.body.token);
+  bru.setVar('snapshotId', res.body.id);
 }
 
 assert {
+  id: isNotEmpty
   token: isNotEmpty
   url: isNotEmpty
   expiresAt: isNotEmpty
+}
+
+docs {
+  `url` is derived server-side: host from the request's own Host header, scheme from
+  X-Forwarded-Proto behind the trusted proxy and forced to https in production. A client-supplied
+  Origin header is ignored — this is a bearer capability to a complete medical brief.
+
+  `id` is returned so the link can be revoked without re-listing; revoke-snapshot picks it up.
 }
 
 settings {

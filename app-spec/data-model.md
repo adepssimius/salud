@@ -55,6 +55,9 @@ seconds — see `api.md` → Conventions.
   - Every patient must have at least one membership where `userId` equals a user flagged as the patient (self-care).
   - Only one `self` role is allowed per patient; attempts to add a second `self` membership should be rejected.
   - Care team owner (`ownedByUserId`) membership cannot be deleted; owner changes must be explicit via patient update.
+  - Only `ownedByUserId` may delete the patient itself. Membership grants full read/write on the
+    patient's data (P4) but not the power to destroy the record — otherwise the owner's membership is
+    protected while everything it is attached to is not.
 
 ### Condition
 A **standing frame** for chronic illness (§4.4 of the requirements doc). Where an Episode is
@@ -90,7 +93,10 @@ so the app never infers it (P6).
 - `id: uuid`
 - `patientId: uuid`
 - `description: text` — free text, as the caregiver experienced it.
-- `occurredAt: datetime`
+- `occurredAt: datetime | null` — **optional**. A caregiver often knows *that* a child reacted to
+  amoxicillin without knowing *when*, and requiring a date would put a guessed fact into a record
+  §4.9 keeps forever. `null` means "date not known"; it never means "no reaction", and it never
+  weakens the reaction — see "Data integrity rules".
 - `recordedByUserId: uuid`
 - `severity: enum('warning','danger')` — the caregiver describes severity, not diagnosis.
   `warning` ("throat got tingly after this one") renders as an inline note at medication selection;
@@ -175,20 +181,27 @@ Caregiver-entered standing instructions from the care team, attached to a Condit
 #### Observation entry structured metadata
 All numeric values stored in canonical units.
 
-| Type | Metadata fields |
-| --- | --- |
-| temperature | `value: decimal`, `unit: enum('C','F')`, `method: enum('oral','tympanic','axillary','rectal','temporal','unknown')`, `note?: string` |
-| heart_rate | `bpm: integer`, `note?: string` |
-| respiratory_rate | `breathsPerMin: integer`, `note?: string` |
-| oxygen_saturation | `percent: integer`, `note?: string` |
-| pain_score | `score: integer (0-10)`, `note?: string` |
-| weight | `kg: decimal(4,2)`, `note?: string` |
-| height | `cm: decimal(5,2)`, `note?: string` |
-| lesion_size | `lengthCm: decimal`, `widthCm: decimal | null`, `depthCm: decimal | null`, `bodyLocation: string`, `side: enum('left','right','bilateral','n/a')`, `note?: string` |
-| symptom | `tag: string (from fixed list)`, `severity: enum('mild','moderate','severe') | null`, `note?: string` |
-| tag | `tag: string` (free-form or fixed tags), `note?: string` |
-| photo | `fileId: uuid`, `bodyLocation: string`, `side: enum(...)`, `sizeCm: decimal | null`, `note?: string` |
-| note | `text: string`, `symptom?: string` (optional symptom label) |
+| Type | Metadata fields | Accepted range |
+| --- | --- | --- |
+| temperature | `value: decimal`, `unit: enum('C','F')`, `method: enum('oral','tympanic','axillary','rectal','temporal','unknown')`, `note?: string` | `value` 25–45 when `unit = 'C'`, 77–113 when `'F'` |
+| heart_rate | `bpm: integer`, `note?: string` | 1–400 |
+| respiratory_rate | `breathsPerMin: integer`, `note?: string` | 1–120 |
+| oxygen_saturation | `percent: integer`, `note?: string` | 0–100 (0 is meaningful: a probe reading nothing) |
+| pain_score | `score: integer (0-10)`, `note?: string` | 0–10 |
+| weight | `kg: decimal(4,2)`, `note?: string` | 0.2–500 |
+| height | `cm: decimal(5,2)`, `note?: string` | 10–280 |
+| lesion_size | `lengthCm: decimal`, `widthCm: decimal | null`, `depthCm: decimal | null`, `bodyLocation: string`, `side: enum('left','right','bilateral','n/a')`, `note?: string` | each dimension 0–200 |
+| symptom | `tag: string (from fixed list)`, `severity: enum('mild','moderate','severe') | null`, `note?: string` | `tag` ≤ 120 chars |
+| tag | `tag: string` (free-form or fixed tags), `note?: string` | `tag` ≤ 120 chars |
+| photo | `fileId: uuid`, `bodyLocation: string`, `side: enum(...)`, `sizeCm: decimal | null`, `note?: string` | `sizeCm` 0–200; `fileId` must exist and belong to this patient |
+| note | `text: string`, `symptom?: string` (optional symptom label) | `text` ≤ 4000 chars |
+
+Any `note` is capped at 2000 characters. The ranges are absurdity walls, not clinical judgment — they
+exist to keep a typo out of the record, not to tell a caregiver what is normal (P6). The one that
+carries real weight is `weight`: it denormalizes onto `Patient.latestWeightKg` and from there into
+mg/kg dose calculation, so a negative or absurd value is a dosing-input corruption. Temperature is
+range-checked in its *entered* unit because that is how it is stored; the conversion happens at
+comparison time, not at write time.
 
 ### Intervention (base)
 - `id: uuid`
@@ -208,7 +221,11 @@ All numeric values stored in canonical units.
   - `amountMg: decimal`
   - `amountMl: decimal | null`
   - `pillCount: decimal | null`
-  - `doseSource: enum('weight_based','age_based','override')`
+  - `doseSource: enum('weight_based','age_based','override','schedule')` — how the caregiver arrived
+    at the amount, not a judgment about it. `weight_based`/`age_based`: they took the engine's
+    number. `override`: they typed their own, following neither guideline. `schedule`: the dose came
+    from `POST /api/schedules/:scheduleId/log`, i.e. a plan set up earlier rather than a decision
+    made in the moment — a client never sends this value.
   - `weightKgUsed: decimal | null`
   - `ageMonthsUsed: integer`
   - `guidelineId: uuid | null`
@@ -406,7 +423,10 @@ the snapshot's contents do.
 - Medication dose `weightKgUsed` required when `doseSource = 'weight_based'`.
 - `isAtypical` set true when any of the following hold (all evaluated independently; every one that
   triggers contributes its reason to the comma-joined `atypicalReason`):
-  - `doseSource = 'override'` **and no `scheduleId`** — reason `override`. A caregiver-chosen
+  - `doseSource = 'override'` **and no `scheduleId`** — reason `override`. Note the exemption keys on
+    `scheduleId`, not on `doseSource`: a scheduled dose is written with `doseSource = 'schedule'` and
+    so never reaches this branch anyway, and rows written before that value existed carry
+    `'override'` with a `scheduleId` and are still correctly exempt. A caregiver-chosen
     amount that doesn't follow either computed guideline is inherently the "legitimate off-guideline
     decision" the app preserves as a first-class annotated event (F-2.4) — not itself a magnitude
     problem, but worth a permanent trace that no guideline was followed. This is exempted when the
@@ -421,9 +441,26 @@ the snapshot's contents do.
     — reason `interval_too_short`.
   - None of these ever blocks the save (N-3, P1) — see `advisories.md` → "No hard stops".
 - `resolvesEpisodeIds` on observations/interventions must be a subset of episodes they are linked to via pivot.
+- Every episode id an observation or intervention references — in `episodeIds` or
+  `resolvesEpisodeIds` — must belong to the **same patient as the event**. Without this an event on
+  one child can be filed into another child's episode, where it then renders in that child's episode
+  view, timeline and ER Brief.
+- An episode is resolved **once**. A second, different event attempting to resolve an already-resolved
+  episode is rejected (400 `EPISODE_ALREADY_RESOLVED`) rather than silently overwriting
+  `endedAtType`/`endedAtId` and moving the derived `endedAt`. The same event re-asserting its own
+  resolution is a no-op, which is what makes a `PATCH` that only edits `episodeIds` safe.
 - `episodeId` on `InterventionSchedule` optional; when provided, schedule should tag interventions to same episode.
 - Enforce canonical units at persistence boundary; convert in API/UI.
 - `MedicationGuideline.source` is required — never persist a guideline without provenance (N-4).
+- On an `age_band` `MedicationGuideline`, `ageMinMonths <= ageMaxMonths` — checked against the merged
+  row after any partial update, not just against the fields submitted. An inverted band matches no
+  patient and fails silently: guidance simply never appears.
+- `Medication.name` is unique across the household, compared case-insensitively. Two identical
+  "Acetaminophen" rows are indistinguishable in the typeahead and can carry different guidelines,
+  which is a hazard at 3 AM. `brandNames` are deliberately not part of the uniqueness check.
+- Catalog rows (`Medication`, `MedicationEmbodiment`, `MedicationGuideline`) are never hard-deleted
+  while something still references them — the API answers 409 listing the dependents. Retirement is
+  `defaultActive: false`, not deletion.
 - No inventory counts are ever stored for `MedicationEmbodiment` (F-9.4) — only `atHome`, `expiresAt`,
   and the `runningLow` flag. Manual quantity tracking is a chore that dies of non-compliance; the
   running-low flag plus computed course remainders (from `InterventionSchedule.endAfterOccurrences`,
@@ -437,6 +474,16 @@ the snapshot's contents do.
   scoped reaction matches only on `medicationId` equality, an `embodiment`-scoped reaction only on
   `embodimentId` equality, and a `tag`-scoped reaction only when the tag is present in the selected
   medication's own `tags` — no fuzzy or class-based inference beyond that literal intersection (P6).
+  Matching never consults `occurredAt`: an undated reaction matches exactly as strongly as a dated
+  one. Nothing may ever filter reactions to "recent" ones — §4.9 is "remembered forever".
+- **Deleting a patient deletes everything that belongs to them**, in one operation: conditions and
+  their protocols, episodes and their pivot rows, observations and their entries, interventions,
+  intervention schedules, adverse reactions, advisories, ER Brief snapshots, revisions, care team
+  memberships, and file assets — including the stored blobs, since a clinical photo of a child that
+  nothing will ever garbage-collect is a privacy problem. Two of those are polymorphic and carry no
+  foreign key — `EpisodeEventPivot.eventId` and `Revision.entityId` — so no database cascade can
+  reach them; they are matched by id lookup instead. The pivot sweep also matches on `eventId`, not
+  only `episodeId`, so rows written before the same-patient rule above are still cleaned up.
 - Protocol evaluation (`AdvisoriesService.evaluateProtocols()`, run on every observation create):
   for each active Protocol attached to one of the patient's active Conditions, if the observation
   has an entry of the protocol's `triggerMetric` type, and that entry's value (converted to the

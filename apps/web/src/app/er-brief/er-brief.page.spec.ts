@@ -14,6 +14,7 @@ const baseBrief = {
     protocolFiredReason: null,
   },
   body: {
+    eventScope: { type: 'episode', episodeId: 'ep1' },
     episode: { id: 'ep1', name: 'Fever', status: 'active', startedAt: 1700000000, endedAt: null },
     events: [],
     activeSchedules: [],
@@ -113,5 +114,31 @@ describe('ErBriefPage', () => {
     fixture.detectChanges();
     fixture.componentInstance.goToEpisode('ep-prior');
     expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep-prior']);
+  });
+  it('names the window and swaps the headings when no episode is open', () => {
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/snapshots')) return of([]);
+      return of({
+        ...baseBrief,
+        body: {
+          ...baseBrief.body,
+          eventScope: { type: 'recent', windowHours: 72, since: 1700000000, generatedAt: 1700259200 },
+          episode: null,
+          priorEpisodes: [{ id: 'ep0', name: 'Old fever', status: 'resolved', startedAt: 1600000000, endedAt: 1600100000 }],
+        },
+      });
+    });
+
+    const fixture = TestBed.createComponent(ErBriefPage);
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent;
+
+    // A confident negative naming the actual window, rather than a blank section.
+    expect(text).toContain('No open episode');
+    expect(text).toContain('last 72 hours');
+    expect(text).toContain('Nothing logged in the last 72 hours.');
+    // Headings follow the scope: there is no condition to say "under this condition" about.
+    expect(text).toContain('Recent episodes');
+    expect(text).not.toContain('Prior episodes under this condition');
   });
 });

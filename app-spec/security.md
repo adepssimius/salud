@@ -47,6 +47,13 @@ See `er-brief.md` for the full feature. The one deliberately unauthenticated rou
   control").
 - Revocation is deletion (`DELETE /api/er-brief/snapshots/:id`, authenticated + patient-scoped) —
   there is no separate "revoked" state to track; a deleted row 404s identically to an expired one.
+- **The link's scheme and host are derived server-side and never from a client-supplied `Origin`
+  header.** Host comes from the request's own `Host`, scheme from `X-Forwarded-Proto` behind the
+  trusted proxy and forced to `https` in production (deployment.md → Trusted proxy). Two things
+  follow. The link is never emitted as plaintext `http://` — it carries name, date of birth, weight,
+  code status, conditions, medications and allergies, and it is copied, pasted and texted, so HSTS
+  protecting a browser that has been here before is not enough. And because `Origin` is a header the
+  requester chooses, honouring it would let a request decide where the capability link points.
 - Because the token route bypasses `JwtAuthGuard` entirely, it must never be added to a controller
   that also serves authenticated routes without an explicit, reviewed exception — keep it in its
   own controller (`ErBriefPublicController`), the same isolation pattern already used for

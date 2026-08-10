@@ -145,6 +145,62 @@ describe('Adverse reactions (e2e)', () => {
     expect(list.body[1].description).toBe('first reaction');
   });
 
+  // A caregiver often knows *that* a child reacted without knowing *when*; requiring a date would
+  // put a guessed fact into a record the app keeps forever (data-model.md -> AdverseReaction).
+  it('accepts a reaction with no date, and still sorts it by when it was recorded', async () => {
+    const undatedPatient = await createPatient();
+
+    const old = await request(app.getHttpServer())
+      .post(`/api/patients/${undatedPatient}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'dated, long ago',
+        occurredAt: '2020-01-01T00:00:00Z',
+        severity: 'warning',
+        scopeType: 'medication',
+        medicationId,
+      })
+      .expect(201);
+    expect(old.body.occurredAt).toBeGreaterThan(0);
+
+    const undated = await request(app.getHttpServer())
+      .post(`/api/patients/${undatedPatient}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'no idea when',
+        severity: 'danger',
+        scopeType: 'medication',
+        medicationId,
+      })
+      .expect(201);
+    expect(undated.body.occurredAt).toBeNull();
+
+    // A plain DESC on occurredAt would sort NULLs last and bury the undated one. COALESCE onto
+    // createdAt puts it first, since it was recorded most recently.
+    const list = await request(app.getHttpServer())
+      .get(`/api/patients/${undatedPatient}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(list.body[0].description).toBe('no idea when');
+    expect(list.body[1].description).toBe('dated, long ago');
+  });
+
+  it('rejects a reaction dated in the future', async () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'not yet',
+        occurredAt: future,
+        severity: 'warning',
+        scopeType: 'medication',
+        medicationId,
+      })
+      .expect(400);
+    expect(res.body.message).toContain('DATE_IN_FUTURE');
+  });
+
   it('enforces patient access control on reactions (404, not 403)', async () => {
     const other = await registerAndLogin(app);
     await request(app.getHttpServer())
@@ -294,5 +350,46 @@ describe('Adverse reactions (e2e)', () => {
       expect(reactionAdvisory.contextId).toBe(dose.body.id);
       expect(reactionAdvisory.acknowledgedByUserId).toBeTruthy();
     });
+  });
+  // A mis-scoped reaction fires a full-screen danger interstitial on every future dose of that
+  // medication, so it has to be correctable.
+  it('deletes a reaction, and refuses for another patient or a non-member', async () => {
+    const created = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'typo, meant something else',
+        severity: 'danger',
+        scopeType: 'medication',
+        medicationId,
+      })
+      .expect(201);
+
+    const otherPatient = await createPatient();
+    // Belonging to a different patient answers the same as not existing -- no probing.
+    const wrongPatient = await request(app.getHttpServer())
+      .delete(`/api/patients/${otherPatient}/reactions/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+    expect(wrongPatient.body.message).toBe('REACTION_NOT_FOUND');
+
+    // A non-member gets PATIENT_NOT_FOUND, not REACTION_NOT_FOUND -- membership is checked first.
+    const stranger = await registerAndLogin(app);
+    const outsider = await request(app.getHttpServer())
+      .delete(`/api/patients/${patientId}/reactions/${created.body.id}`)
+      .set('Authorization', `Bearer ${stranger.token}`)
+      .expect(404);
+    expect(outsider.body.message).toBe('PATIENT_NOT_FOUND');
+
+    await request(app.getHttpServer())
+      .delete(`/api/patients/${patientId}/reactions/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/reactions`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(list.body.some((r: any) => r.id === created.body.id)).toBe(false);
   });
 });

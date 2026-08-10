@@ -1,13 +1,16 @@
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app/app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DatabaseService } from './app/persistence/database.service';
+import { applyAppSecurity } from './app/app.security';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+  applyAppSecurity(app);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

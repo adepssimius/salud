@@ -37,20 +37,6 @@ export class InterventionsService {
     }
   }
 
-  private ensureResolvesSubset(resolves: string[] | undefined, episodes: string[] | undefined) {
-    if (!resolves || !resolves.length) return;
-    const epList = episodes ?? [];
-    if (!epList.length) {
-      throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
-    }
-    const epSet = new Set(epList);
-    for (const res of resolves) {
-      if (!epSet.has(res)) {
-        throw new BadRequestException('RESOLVES_MUST_BE_SUBSET_OF_EPISODES');
-      }
-    }
-  }
-
   private mapIntervention(row: any, episodeIds: string[] = [], resolvesEpisodeIds: string[] = []) {
     const performedAt = normalizeTs(row.performedAt);
     const metadata = row.metadata ? JSON.parse(row.metadata) : {};
@@ -106,8 +92,24 @@ export class InterventionsService {
     }
   }
 
+  // Same two rules SchedulesService.create has always enforced, on the events themselves. A dose
+  // with no medication isn't merely an empty record: it skips the gate below, so guideline
+  // resolution, the dosing engine and every advisory silently do nothing (api.md -> Interventions).
+  private assertRequiredForType(
+    type: string | undefined,
+    fields: { medicationId?: string | null; bodyLocation?: string | null },
+  ) {
+    if (type === 'medication_dose' && !fields.medicationId) {
+      throw new BadRequestException('MEDICATION_ID_REQUIRED');
+    }
+    if (type === 'dressing_change' && !fields.bodyLocation) {
+      throw new BadRequestException('BODY_LOCATION_REQUIRED');
+    }
+  }
+
   async create(patientId: string, userId: string, dto: CreateInterventionDto) {
     await this.ensurePatientAccess(patientId, userId);
+    this.assertRequiredForType(dto.type, dto);
     const db = this.db.db as any;
     const id = randomUUID();
     const performedAtDate = new Date(dto.performedAt);
@@ -139,10 +141,13 @@ export class InterventionsService {
         resolvedGuidelineId = doseEvaluation.guidance.ageBand?.guidelineId ?? null;
         resolvedWeightKgUsed = doseEvaluation.weightKgUsed ?? null;
       } else {
-        // override: no guideline to resolve — honor whatever the client sent (data-model.md).
+        // override / schedule: no guideline to resolve — honor whatever the client sent
+        // (data-model.md).
         resolvedWeightKgUsed = dto.weightKgUsed ?? doseEvaluation.weightKgUsed ?? null;
-        // A dose logged from a standing schedule is executing a plan, not an ad-hoc override —
-        // only flag it when there's no schedule backing this dose (data-model.md).
+        // A dose logged from a standing schedule is executing a plan, not an ad-hoc deviation.
+        // The exemption keys on the scheduleId rather than on doseSource, deliberately: rows
+        // written before doseSource: 'schedule' existed carry 'override' with a scheduleId set,
+        // and must stay exempt (data-model.md -> Data integrity rules).
         if (!dto.interventionScheduleId) reasons.push('override');
       }
       if (doseEvaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
@@ -195,7 +200,10 @@ export class InterventionsService {
       episodeIds.add(startedEpisodeId);
     }
 
-    this.ensureResolvesSubset(dto.resolvesEpisodeIds, Array.from(episodeIds));
+    // The episode a startEpisodeName just created trivially belongs to this patient; the ids the
+    // client sent do not, until checked.
+    await this.episodesService.assertEpisodesBelongToPatient(patientId, userId, dto.episodeIds ?? []);
+    this.episodesService.assertResolvesSubset(dto.resolvesEpisodeIds, Array.from(episodeIds));
 
     for (const ep of episodeIds) {
       await db.insert(episodesEventsPivot).values({
@@ -240,7 +248,7 @@ export class InterventionsService {
   async list(
     patientId: string,
     userId: string,
-    params: { type?: string; episodeId?: string; from?: number; to?: number; medicationId?: string },
+    params: { type?: string; episodeId?: string; from?: number; to?: number; sinceCreatedAt?: number; medicationId?: string },
   ) {
     await this.ensurePatientAccess(patientId, userId);
     const db = this.db.db as any;
@@ -254,6 +262,11 @@ export class InterventionsService {
       const ts = normalizeTs(row.performedAt);
       if (params.from && ts < params.from) return false;
       if (params.to && ts > params.to) return false;
+      // See the matching note in ObservationsService.list -- log time, opt-in, What's-New only.
+      if (params.sinceCreatedAt) {
+        const created = normalizeTs(row.createdAt);
+        if (created === null || created < params.sinceCreatedAt) return false;
+      }
       const metadata = row.metadata ? JSON.parse(row.metadata) : {};
       if (params.medicationId && metadata.medicationId !== params.medicationId) return false;
       if (params.type && row.type !== params.type) return false;
@@ -325,7 +338,11 @@ export class InterventionsService {
 
     const episodeIds: string[] = dto.episodeIds ?? existingEpisodeIds;
     const resolvesEpisodeIds: string[] = dto.resolvesEpisodeIds ?? existingResolveIds;
-    this.ensureResolvesSubset(resolvesEpisodeIds, episodeIds);
+    // Only what the client actually supplied -- see the matching note in ObservationsService.
+    if (dto.episodeIds) {
+      await this.episodesService.assertEpisodesBelongToPatient(row.patientId, userId, dto.episodeIds);
+    }
+    this.episodesService.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
 
     const updates: Record<string, any> = {};
     if (dto.notes !== undefined) updates.notes = dto.notes;
@@ -358,6 +375,10 @@ export class InterventionsService {
         }
       }
     }
+
+    // Against the merged values, not the DTO: a PATCH clearing medicationId on an existing dose
+    // is only visible once the merge has happened.
+    this.assertRequiredForType(row.type, metadata);
 
     // Re-validate atypical logic on every medication_dose update (api.md), not just when
     // dose-affecting fields changed — the underlying guideline/weight/embodiment state may

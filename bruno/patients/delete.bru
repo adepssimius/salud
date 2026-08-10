@@ -28,6 +28,20 @@ script:pre-request {
   
 }
 
+assert {
+  res.status: eq 200
+  res.body.deleted: eq true
+}
+
+docs {
+  Owner-only, and it cascades: every observation, dose, episode, condition, schedule, reaction,
+  advisory, snapshot, revision and file for the patient goes with it, blobs included.
+
+  A care team member who is not `ownedById` gets 403 `NOT_PATIENT_OWNER`; a non-member still gets
+  404 `PATIENT_NOT_FOUND`. Neither is exercised here — Bruno has no second-identity story in this
+  collection, so both are covered by `patients.e2e-spec.ts` instead.
+}
+
 settings {
   encodeUrl: true
   timeout: 0

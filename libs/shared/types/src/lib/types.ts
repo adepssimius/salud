@@ -174,6 +174,14 @@ export interface UpdateObservationDto {
 // Interventions
 export type InterventionType = 'medication_dose' | 'dressing_change';
 
+/**
+ * How the caregiver arrived at the amount — not a judgment about it (data-model.md).
+ * `weight_based`/`age_based`: they took the engine's number. `override`: they typed their own,
+ * following neither guideline. `schedule`: the dose came from POST /api/schedules/:id/log, a plan
+ * set up earlier rather than a decision made in the moment; a client never sends this value.
+ */
+export type DoseSource = 'weight_based' | 'age_based' | 'override' | 'schedule';
+
 export interface Intervention {
   id: string;
   patientId: string;
@@ -207,8 +215,19 @@ export interface Episode {
   // hydrated events, call GET /api/patients/:patientId/timeline?episodeId=...
   observationIds?: string[];
   interventionIds?: string[];
-  createdAt?: number;
-  updatedAt?: number;
+  // NOT NULL columns, and every mapper has always produced them — optionality here was the
+  // loophole that let ISSUES #20's ISO-string leak through unnoticed.
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * `GET /api/episodes/active`. Adds the denormalized patient name the dashboard needs, and
+ * deliberately does *not* resolve `startedAt`/`endedAt` — that route leaves them to the caller
+ * (api.md → Episodes). Naming the shape is what stops it being three subtly different payloads.
+ */
+export interface ActiveEpisodeSummary extends Episode {
+  patientName: string;
 }
 
 export interface CreateInterventionDto {
@@ -221,7 +240,7 @@ export interface CreateInterventionDto {
   notes?: string;
   medicationId?: string;
   medicationEmbodimentId?: string;
-  doseSource?: 'weight_based' | 'age_based' | 'override';
+  doseSource?: DoseSource;
   amountMg?: number;
   amountMl?: number | null;
   pillCount?: number | null;
@@ -243,7 +262,7 @@ export interface UpdateInterventionDto {
   // type-specific updates allowed; guidelines optional
   medicationId?: string;
   medicationEmbodimentId?: string;
-  doseSource?: 'weight_based' | 'age_based' | 'override';
+  doseSource?: DoseSource;
   amountMg?: number;
   amountMl?: number | null;
   pillCount?: number | null;
@@ -309,6 +328,11 @@ export interface CreateEmbodimentDto {
   strengthMgPerUnit?: number | null;
   unitType: MedicationUnitType;
   notes?: string;
+  // Cabinet fields, same as UpdateEmbodimentDto — a caregiver adding the bottle in their hand
+  // records everything printed on it in one request (api.md → Cabinet awareness).
+  atHome?: boolean;
+  expiresAt?: string | null;
+  runningLow?: boolean;
 }
 
 export interface UpdateEmbodimentDto {
@@ -426,6 +450,18 @@ export interface WeightBasedGuidance {
   source: string;
   mgPerKg: number;
   computedMg: number;
+  /**
+   * computedMg ÷ the selected embodiment's concentration, rounded to a volume that can actually be
+   * drawn on a paediatric oral syringe. null when no embodiment was selected or it has no
+   * concentration (tablets, capsules).
+   *
+   * Because of that rounding, `computedMl × concentrationMgPerMl` will not always equal
+   * `computedMg` exactly — computedMg is the computed target, computedMl the deliverable volume,
+   * and the gap is at most half a graduation (api.md → Dosing engine).
+   */
+  computedMl: number | null;
+  /** The concentration the mL figure came from — null when none applied. */
+  concentrationMgPerMl: number | null;
   maxMgPerDose: number | null;
   maxMgPerDay: number | null;
   minIntervalHours: number | null;
@@ -433,11 +469,21 @@ export interface WeightBasedGuidance {
   weightRecordedAt: number | null; // epoch seconds
 }
 
+/**
+ * Where an age-band guidance's `doseMl` came from. A stored value carries the guideline's own
+ * provenance (`MedicationGuideline.source`); a derived one does not, and the UI must not print it
+ * under that source line as though the guideline said it.
+ */
+export type DoseMlSource = 'guideline' | 'derived';
+
 export interface AgeBandGuidance {
   guidelineId: string;
   source: string;
   doseMg: number | null;
+  /** The guideline's stored value when it has one, else derived from the selected embodiment. */
   doseMl: number | null;
+  doseMlSource: DoseMlSource | null;
+  concentrationMgPerMl: number | null;
   pillCount: number | null;
   frequencyPerDay: number | null;
   maxMgPerDay: number | null;
@@ -638,7 +684,9 @@ export interface AdverseReaction {
   id: string;
   patientId: string;
   description: string;
-  occurredAt: number; // epoch seconds
+  /** Epoch seconds, or null when the caregiver doesn't know the date. Never means "no
+   *  reaction" — reaction matching ignores it entirely (data-model.md). */
+  occurredAt: number | null;
   recordedByUserId: string;
   severity: ReactionSeverity;
   scopeType: ReactionScopeType;
@@ -651,7 +699,8 @@ export interface AdverseReaction {
 
 export interface CreateReactionDto {
   description: string;
-  occurredAt: string; // ISO datetime
+  /** ISO datetime. Optional — omit when the date isn't known; stores null. */
+  occurredAt?: string;
   severity: ReactionSeverity;
   scopeType: ReactionScopeType;
   medicationId?: string;
@@ -836,7 +885,23 @@ export interface ErBriefActiveSchedule {
   nextAllowedAt: number | null;
 }
 
+/**
+ * Which window `ErBriefBody.events` was drawn from.
+ *
+ * A statement about the *query*, not about the patient — "everything logged in the last 72 hours"
+ * says nothing about how sick anyone is, which is what keeps a discriminator field P6-safe
+ * (er-brief.md → P6).
+ *
+ * `since` + `generatedAt` rather than a from/to pair: the query applies only a lower bound, so a
+ * future-stamped event still appears. The brief must never hide a logged event, and a `to` would
+ * claim a bound that isn't enforced.
+ */
+export type ErBriefEventScope =
+  | { type: 'episode'; episodeId: string }
+  | { type: 'recent'; windowHours: number; since: number; generatedAt: number };
+
 export interface ErBriefBody {
+  eventScope: ErBriefEventScope;
   episode: ErBriefEpisodeSummary | null;
   events: TimelineEntry[];
   activeSchedules: ErBriefActiveSchedule[];
@@ -855,6 +920,8 @@ export interface CreateErBriefSnapshotDto {
 }
 
 export interface ErBriefSnapshotResponse {
+  /** Same id GET .../snapshots returns — so a client can revoke the link it just created. */
+  id: string;
   token: string;
   url: string;
   expiresAt: number; // epoch seconds

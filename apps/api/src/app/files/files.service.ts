@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { and, eq } from 'drizzle-orm';
@@ -48,6 +48,30 @@ export class FilesService {
       createdByUserId: userId,
     });
     return { fileId: id, url: `/api/files/${id}` };
+  }
+
+  /**
+   * Write-side check for a photo observation entry's `metadata.fileId`.
+   *
+   * Same access shape as getForStream above, but it throws PHOTO_FILE_NOT_FOUND (400) rather than
+   * FILE_NOT_FOUND (404): this is a bad request body, not a missing resource. One code covers all
+   * four failure modes — no such file, another patient's file, someone else's unattached upload —
+   * for exactly the reason getForStream doesn't distinguish them either.
+   *
+   * Catching this at write time rather than at read time is the point: a shape-valid UUID naming
+   * nothing is a permanently broken image in the timeline and the ER Brief.
+   */
+  async assertUsableForPatient(fileId: string, patientId: string, userId: string): Promise<void> {
+    const db = this.db.db as any;
+    const rows = await db.select().from(fileAssets).where(eq(fileAssets.id, fileId)).limit(1);
+    if (!rows.length) throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+    const row = rows[0];
+    if (row.patientId) {
+      if (row.patientId !== patientId) throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+      await this.ensurePatientAccess(row.patientId, userId);
+    } else if (row.createdByUserId !== userId) {
+      throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+    }
   }
 
   async getForStream(id: string, userId: string) {

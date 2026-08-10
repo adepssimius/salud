@@ -208,6 +208,79 @@ describe('Observations (e2e)', () => {
     expect(tempRes.body.length).toBe(0);
   });
 
+  // The weight bound is the one that matters: the value denormalizes onto the patient and feeds
+  // mg/kg dose calculation, so a negative kg is a dosing-input corruption, not a cosmetic one.
+  it('rejects out-of-range entry metadata, including a negative weight', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Bounds', dateOfBirth: '2016-04-04', sexAtBirth: 'male' })
+      .expect(201);
+    const patientId = patientRes.body.id;
+
+    const post = (entry: any) =>
+      request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ observedAt: new Date().toISOString(), entries: [entry] });
+
+    await post({ type: 'weight', metadata: { kg: -5 } }).expect(400);
+    await post({ type: 'weight', metadata: { kg: 900 } }).expect(400);
+    await post({ type: 'heart_rate', metadata: { bpm: 100000 } }).expect(400);
+    await post({ type: 'respiratory_rate', metadata: { breathsPerMin: 0 } }).expect(400);
+    // Temperature is range-checked in the unit it was entered in: 39 is a fever in C and
+    // hypothermic-to-nonsense in F, so the same number is valid under one unit and not the other.
+    await post({ type: 'temperature', metadata: { value: 500, unit: 'C', method: 'oral' } }).expect(400);
+    await post({ type: 'temperature', metadata: { value: 39, unit: 'F', method: 'oral' } }).expect(400);
+    await post({ type: 'temperature', metadata: { value: 39, unit: 'C', method: 'oral' } }).expect(201);
+
+    // And the patient's denormalized weight is untouched by the rejected entries.
+    const patient = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(patient.body.latestWeightKg).toBeNull();
+  });
+
+  it('rejects an observedAt in the future', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Future Obs', dateOfBirth: '2016-04-04', sexAtBirth: 'female' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientRes.body.id}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date(Date.now() + 86_400_000).toISOString(),
+        entries: [{ type: 'heart_rate', metadata: { bpm: 100 } }],
+      })
+      .expect(400);
+    expect(res.body.message).toContain('DATE_IN_FUTURE');
+  });
+
+  // @ArrayMinSize(1) used to fire first and produce prose the web deliberately never displays, so
+  // the documented code was unreachable and the caregiver got a generic fallback instead.
+  it('reports AT_LEAST_ONE_ENTRY_REQUIRED for an empty entries array', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Empty Entries', dateOfBirth: '2016-04-04', sexAtBirth: 'male' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientRes.body.id}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ observedAt: new Date().toISOString(), entries: [] })
+      .expect(400);
+    // String form, not the class-validator array -- it's an explicit service throw now.
+    expect(res.body.message).toBe('AT_LEAST_ONE_ENTRY_REQUIRED');
+  });
+
   it('rejects entries with a missing required metadata field', async () => {
     const { token } = await registerAndLogin(app);
     const patientRes = await request(app.getHttpServer())
@@ -236,6 +309,37 @@ describe('Observations (e2e)', () => {
         expect(res.body.message.some((m: string) => m.endsWith('.OBSERVATION_SCHEMA_INVALID'))).toBe(true);
         expect(res.body.message.join(' ')).toContain('OBSERVATION_SCHEMA_INVALID');
       });
+  });
+
+  // @IsEnum with an array literal renders "must be one of the following values: " with nothing
+  // after it -- class-validator's message helper filters numeric keys, and an array's keys are all
+  // numeric. @IsIn interpolates the same array correctly. The second half of this test guards the
+  // companion fix: an unknown type used to *also* report OBSERVATION_SCHEMA_INVALID, giving two
+  // messages for one mistake, with the misleading one attached to `metadata`.
+  it('names the valid entry types on a bad type, and reports it only once', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Enum Message', dateOfBirth: '2016-04-04', sexAtBirth: 'female' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientRes.body.id}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'bogus', metadata: {} }],
+      })
+      .expect(400);
+
+    const messages: string[] = res.body.message;
+    expect(Array.isArray(messages)).toBe(true);
+    const typeMessage = messages.find((m) => m.includes('must be one of the following values'));
+    expect(typeMessage).toBeDefined();
+    expect(typeMessage).toContain('temperature');
+    expect(typeMessage).toContain('photo');
+    expect(messages.some((m) => m.includes('OBSERVATION_SCHEMA_INVALID'))).toBe(false);
   });
 
   it('rejects entries with unrecognized metadata fields', async () => {
@@ -275,17 +379,74 @@ describe('Observations (e2e)', () => {
       })
       .expect(400);
 
-    const validFileId = '00000000-0000-4000-8000-000000000000';
+    // A shape-valid UUID naming nothing used to be accepted, and became a permanently broken image
+    // in the timeline and the ER Brief. It's caught at write time now.
+    const phantom = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          {
+            type: 'photo',
+            metadata: {
+              fileId: '11111111-1111-4111-8111-111111111111',
+              bodyLocation: 'Left arm',
+              side: 'left',
+            },
+          },
+        ],
+      })
+      .expect(400);
+    expect(JSON.stringify(phantom.body.message)).toContain('PHOTO_FILE_NOT_FOUND');
+
+    // A real upload for this patient works.
+    const upload = await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', Buffer.from('fake-photo-bytes'), {
+        filename: 'rash.png',
+        contentType: 'image/png',
+      })
+      .expect(201);
+
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/observations`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         observedAt: new Date().toISOString(),
         entries: [
-          { type: 'photo', metadata: { fileId: validFileId, bodyLocation: 'Left arm', side: 'left' } },
+          {
+            type: 'photo',
+            metadata: { fileId: upload.body.fileId, bodyLocation: 'Left arm', side: 'left' },
+          },
         ],
       })
       .expect(201);
+
+    // ...but not for a different patient, even one the same caregiver owns. Same code as the
+    // phantom case, deliberately: distinguishing them would leak that the file exists.
+    const otherPatient = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Other Photo Patient', dateOfBirth: '2019-01-01', sexAtBirth: 'female' })
+      .expect(201);
+
+    const crossed = await request(app.getHttpServer())
+      .post(`/api/patients/${otherPatient.body.id}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          {
+            type: 'photo',
+            metadata: { fileId: upload.body.fileId, bodyLocation: 'Left arm', side: 'left' },
+          },
+        ],
+      })
+      .expect(400);
+    expect(JSON.stringify(crossed.body.message)).toContain('PHOTO_FILE_NOT_FOUND');
   });
 
   it('accepts a valid entry for every observation type', async () => {
@@ -296,6 +457,16 @@ describe('Observations (e2e)', () => {
       .send({ fullName: 'Every Type Patient', dateOfBirth: '2020-01-01', sexAtBirth: 'female' })
       .expect(201);
     const patientId = patientRes.body.id;
+
+    const upload = await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', Buffer.from('fake-photo-bytes'), {
+        filename: 'chest.png',
+        contentType: 'image/png',
+      })
+      .expect(201);
 
     const entries = [
       { type: 'temperature', metadata: { value: 38.0, unit: 'C', method: 'oral' } },
@@ -314,7 +485,7 @@ describe('Observations (e2e)', () => {
       { type: 'tag', metadata: { tag: 'daycare-exposure' } },
       {
         type: 'photo',
-        metadata: { fileId: '00000000-0000-4000-8000-000000000001', bodyLocation: 'Chest', side: 'n/a' },
+        metadata: { fileId: upload.body.fileId, bodyLocation: 'Chest', side: 'n/a' },
       },
     ];
 

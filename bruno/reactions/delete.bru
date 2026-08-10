@@ -1,0 +1,41 @@
+meta {
+  name: Delete Reaction
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/reactions/{{reactionId}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let rid = bru.getVar('reactionId');
+  if (!rid) {
+    const listReq = await bru.runRequest('reactions/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) rid = list[0].id;
+  }
+  bru.setVar('reactionId', rid);
+}
+
+assert {
+  res.status: eq 200
+  res.body.deleted: eq true
+}
+
+docs {
+  A reaction drives a full-screen danger interstitial on every future dose of that medication, so a
+  mis-scoped entry has to be removable. "Remembered forever" means the app never expires a reaction
+  on its own — not that a caregiver can't undo their own typo.
+
+  A reaction belonging to a different patient answers 404 REACTION_NOT_FOUND, identical to one that
+  doesn't exist. A non-member gets 404 PATIENT_NOT_FOUND instead, because membership is checked
+  first — neither response confirms the id is real.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

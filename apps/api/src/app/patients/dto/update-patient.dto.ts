@@ -4,6 +4,7 @@ import {
   SexAtBirth,
   CareTeamRole,
 } from '@salud/shared/types';
+import { IsNotInFuture } from '../../common/validators';
 
 export class UpdatePatientDto implements UpdatePatientDtoShape {
   @IsOptional()
@@ -13,6 +14,7 @@ export class UpdatePatientDto implements UpdatePatientDtoShape {
 
   @IsOptional()
   @IsDateString()
+  @IsNotInFuture()
   dateOfBirth?: string;
 
   @IsOptional()

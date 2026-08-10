@@ -1,0 +1,71 @@
+meta {
+  name: Dose Check (with embodiment, shows mL)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/dose-checks
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+
+  // A liquid embodiment, so there is a concentration to derive mL from.
+  const embReq = await bru.runRequest('medications/embodiments/list');
+  const embodiments = embReq.data;
+  const liquid = Array.isArray(embodiments)
+    ? embodiments.find((e) => e.concentrationMgPerMl) || embodiments[0]
+    : null;
+  if (liquid) bru.setVar('embodimentId', liquid.id);
+}
+
+body:json {
+  {
+    "medicationId": "{{medicationId}}",
+    "medicationEmbodimentId": "{{embodimentId}}",
+    "amountMg": 150
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  With an embodiment that carries a concentration, `guidance.weightBased` gains `computedMl`
+  alongside `computedMg`, plus the `concentrationMgPerMl` it was derived from. The caregiver is
+  holding a syringe, not a scale, and the client never re-implements guideline math.
+
+  The volume is rounded to a graduation that can actually be drawn — 0.1 mL at or above 1 mL,
+  0.05 mL below — so `computedMl * concentrationMgPerMl` will NOT exactly equal `computedMg`.
+  That difference is at most half a graduation and is deliberate.
+
+  `guidance.ageBand.doseMlSource` says whether its `doseMl` came from the guideline row
+  ('guideline') or was derived here ('derived'); a stored value always wins, because it carries the
+  guideline's own provenance.
+
+  Requires `yarn seed:catalog` and a patient with a recorded weight — without a weight there is no
+  weight-based guidance to attach a volume to.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

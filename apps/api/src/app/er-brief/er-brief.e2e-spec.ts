@@ -9,6 +9,7 @@ import { AppModule } from '../app.module';
 import { DatabaseService } from '../persistence/database.service';
 import { erBriefSnapshots } from '../../db/schema';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { applyAppSecurity } from '../app.security';
 
 async function registerAndLogin(app: INestApplication) {
   const email = `brief-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
@@ -42,6 +43,7 @@ describe('ER Brief (e2e)', () => {
     await migrate((dbService as any).db, {
       migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
     });
+    applyAppSecurity(app as any);
     await app.init();
     // Explicit bind (ISSUES #25): without this, supertest rebinds/closes an ephemeral port on
     // every single request instead of once per suite -- the leading suspect for the flake where
@@ -321,6 +323,41 @@ describe('ER Brief (e2e)', () => {
       expect(expired.body.message).toBe('SNAPSHOT_NOT_FOUND');
     });
 
+    // The share URL is a bearer capability to a whole medical brief -- name, DOB, weight, code
+    // status, conditions, medications, allergies -- that gets copied, pasted and texted. It must
+    // never go out as plaintext http://, and its host must not be something the requester chose.
+    it('builds the share url from X-Forwarded-Proto and ignores a client Origin header', async () => {
+      const create = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/er-brief/snapshots`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Forwarded-Proto', 'https')
+        .set('Origin', 'https://evil.example')
+        .send({})
+        .expect(201);
+
+      expect(create.body.url.startsWith('https://')).toBe(true);
+      expect(create.body.url).not.toContain('evil.example');
+      expect(create.body.url).toContain(create.body.token);
+    });
+
+    it('returns the snapshot id, so the link can be revoked without re-listing', async () => {
+      const create = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/er-brief/snapshots`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+      expect(create.body.id).toEqual(expect.any(String));
+
+      await request(app.getHttpServer())
+        .delete(`/api/er-brief/snapshots/${create.body.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${create.body.token}`)
+        .expect(404);
+    });
+
     it('lists snapshots without the token, newest first, and drops revoked ones', async () => {
       const first = await request(app.getHttpServer())
         .post(`/api/patients/${patientId}/er-brief/snapshots`)
@@ -384,5 +421,81 @@ describe('ER Brief (e2e)', () => {
         .get(`/api/er-brief/shared/${create.body.token}`)
         .expect(404);
     });
+  });
+  // The founding use case: an ER visit at 3 AM is precisely the moment nobody paused to open an
+  // episode. Scoping the whole body to one meant the brief produced a header and an empty page.
+  describe('with no episode ever opened', () => {
+    let soloPatientId: string;
+
+    beforeAll(async () => {
+      const patient = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: 'No Episode Kid', dateOfBirth: '2019-05-05', sexAtBirth: 'male', myRole: 'parent' })
+        .expect(201);
+      soloPatientId = patient.body.id;
+
+      // Inside the window, and one deliberately outside it.
+      await request(app.getHttpServer())
+        .post(`/api/patients/${soloPatientId}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
+          entries: [{ type: 'temperature', metadata: { value: 38.6, unit: 'C', method: 'oral' } }],
+        })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/patients/${soloPatientId}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date(Date.now() - 100 * 3600_000).toISOString(),
+          entries: [{ type: 'heart_rate', metadata: { bpm: 95 } }],
+        })
+        .expect(201);
+    });
+
+    it('falls back to a 72-hour window and says so via eventScope', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/patients/${soloPatientId}/er-brief`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(res.body.body.episode).toBeNull();
+      expect(res.body.body.eventScope.type).toBe('recent');
+      expect(res.body.body.eventScope.windowHours).toBe(72);
+
+      const { since, generatedAt } = res.body.body.eventScope;
+      expect(generatedAt - since).toBe(72 * 3600);
+
+      // Populated, not empty -- and the 100-hour-old event is outside the window.
+      expect(res.body.body.events.length).toBe(1);
+      expect(res.body.body.events.every((e: any) => e.timestamp >= since)).toBe(true);
+    });
+
+    it('freezes the absolute window into a snapshot, so a link read later still tells the truth', async () => {
+      const create = await request(app.getHttpServer())
+        .post(`/api/patients/${soloPatientId}/er-brief/snapshots`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+
+      const shared = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${create.body.token}`)
+        .expect(200);
+
+      const scope = shared.body.payload.body.eventScope;
+      expect(scope.type).toBe('recent');
+      expect(scope.since).toEqual(expect.any(Number));
+      expect(scope.generatedAt).toEqual(expect.any(Number));
+    });
+  });
+
+  it('reports eventScope as episode-shaped when an episode is open', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/er-brief`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.body.eventScope.type).toBe('episode');
+    expect(res.body.body.eventScope.episodeId).toBe(res.body.body.episode.id);
   });
 });

@@ -112,6 +112,14 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
         gap: 1.25rem;
         align-items: start;
       }
+      .tabs {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      /* After the .tabs rule, not before it. Equal specificity, so source order decides -- with the
+         media query first, the unconditional flex-direction: column won and the tab strip never
+         went horizontal on a phone (ISSUES #19). Reordering is the honest fix; !important isn't. */
       @media (max-width: 640px) {
         .layout {
           grid-template-columns: 1fr;
@@ -120,11 +128,6 @@ import { TempUnit, LengthUnit, WeightUnit, Patient } from '@salud/shared/types';
           flex-direction: row;
           gap: 0.5rem;
         }
-      }
-      .tabs {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
       }
       .tab {
         border: none;

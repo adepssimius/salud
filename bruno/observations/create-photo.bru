@@ -1,0 +1,63 @@
+meta {
+  name: Create Photo Observation
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/observations
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+  bru.setVar('observedAt', new Date().toISOString());
+
+  // A real upload, for THIS patient. A fabricated UUID is rejected now — see docs below.
+  const upload = await bru.runRequest('files/upload');
+  bru.setVar('fileId', upload.data.fileId);
+}
+
+body:json {
+  {
+    "observedAt": "{{observedAt}}",
+    "entries": [
+      {
+        "type": "photo",
+        "metadata": {
+          "fileId": "{{fileId}}",
+          "bodyLocation": "Left forearm",
+          "side": "left",
+          "sizeCm": 3
+        }
+      }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  `metadata.fileId` must name a file that exists and belongs to this patient. A shape-valid UUID
+  that names nothing used to be accepted and became a permanently broken image in the timeline and
+  the ER Brief; it is 400 PHOTO_FILE_NOT_FOUND now.
+
+  The same code covers "no such file" and "another patient's file" — distinguishing them would leak
+  exactly what GET /api/files/:id's 404 is hiding.
+
+  files/upload must target the same patient this observation is for, or this request will 400.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

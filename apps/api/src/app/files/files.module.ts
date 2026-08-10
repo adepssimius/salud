@@ -7,5 +7,6 @@ import { PersistenceModule } from '../persistence/persistence.module';
   imports: [PersistenceModule],
   providers: [FilesService],
   controllers: [FilesController],
+  exports: [FilesService],
 })
 export class FilesModule {}
