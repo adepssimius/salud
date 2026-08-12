@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { Analyte, AnalyteHistory, AnalyteReferenceRange, Patient } from '@salud/shared/types';
+import { Analyte, AnalyteHistory, AnalyteRange, Patient } from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 
@@ -14,12 +14,25 @@ interface PlottedPoint {
   observedAt: number;
 }
 
+/** One effective-dated row drawn as a band: horizontal extent is its era, vertical is its bounds. */
 interface RangeBand {
   x: number;
   width: number;
   y: number;
   height: number;
   label: string;
+  reference: boolean;
+  labelX: number;
+  labelY: number;
+}
+
+/** A named band's history — successive versions of one standard, newest first. */
+interface Lineage {
+  key: string;
+  label: string;
+  kind: AnalyteRange['kind'];
+  rows: AnalyteRange[];
+  currentId: string | null;
 }
 
 const CHART_WIDTH = 640;
@@ -63,60 +76,10 @@ const PAD = 8;
       <div class="error" *ngIf="headerError()">{{ headerError() }}</div>
 
       <section>
-        <h2>Reference ranges</h2>
+        <h2>Ranges and history</h2>
         <p class="muted small">
-          The standard a result is read against, dated: each range applies from its start until the
-          next one begins, so an old result keeps being read against the standard of its day.
+          Ranges belong to a patient: what a value should be depends on who was measured.
         </p>
-        <div class="error" *ngIf="rangesError()">{{ rangesError() }}</div>
-        <ul class="row-list" *ngIf="ranges().length; else noRanges">
-          <li *ngFor="let r of ranges()">
-            <div>
-              <strong>{{ describeRange(r) }}</strong>
-              <span class="pill pill-success" *ngIf="r.id === currentRangeId()">current</span>
-              <div class="muted small">
-                from {{ r.effectiveFrom * 1000 | date: 'mediumDate' }}<span *ngIf="r.source"> · {{ r.source }}</span>
-              </div>
-            </div>
-            <button type="button" class="secondary" (click)="deleteRange(r.id)">Remove</button>
-          </li>
-        </ul>
-        <ng-template #noRanges><p class="muted">No reference range recorded yet.</p></ng-template>
-
-        <button type="button" class="secondary" (click)="toggleRangeForm()">
-          {{ showRangeForm() ? 'Cancel' : '+ Add reference range' }}
-        </button>
-        <form *ngIf="showRangeForm()" [formGroup]="rangeForm" (ngSubmit)="addRange()" class="stacked">
-          <div class="row">
-            <label class="field grow">
-              <span>Low</span>
-              <input type="number" step="any" formControlName="refLow" />
-            </label>
-            <label class="field grow">
-              <span>High</span>
-              <input type="number" step="any" formControlName="refHigh" />
-            </label>
-          </div>
-          <label class="field">
-            <span>Range text (when it isn't a simple low–high)</span>
-            <input type="text" formControlName="refText" placeholder="&lt;90" />
-          </label>
-          <label class="field">
-            <span>In effect from</span>
-            <input type="date" formControlName="effectiveFrom" />
-          </label>
-          <label class="field">
-            <span>Source</span>
-            <input type="text" formControlName="source" placeholder="Quest report, lab handout, …" />
-          </label>
-          <button type="submit" class="primary" [disabled]="rangeForm.invalid || savingRange()">
-            {{ savingRange() ? 'Saving…' : 'Add range' }}
-          </button>
-        </form>
-      </section>
-
-      <section>
-        <h2>Per-patient goal and history</h2>
         <label class="field">
           <span>Patient</span>
           <select [ngModel]="patientId()" (ngModelChange)="selectPatient($event)" [ngModelOptions]="{ standalone: true }">
@@ -127,32 +90,71 @@ const PAD = 8;
         <div class="error" *ngIf="patientsError()">{{ patientsError() }}</div>
 
         <ng-container *ngIf="patientId()">
-          <form [formGroup]="goalForm" (ngSubmit)="saveGoal()" class="stacked">
-            <div class="row">
-              <label class="field grow">
-                <span>Goal at or above</span>
-                <input type="number" step="any" formControlName="goalLow" />
-              </label>
-              <label class="field grow">
-                <span>Goal at or below</span>
-                <input type="number" step="any" formControlName="goalHigh" />
-              </label>
-            </div>
+          <div class="error" *ngIf="rangesError()">{{ rangesError() }}</div>
+
+          <div class="lineage" *ngFor="let lin of lineages()">
+            <h3>
+              {{ lin.label }}
+              <span class="pill pill-neutral" *ngIf="lin.kind === 'reference'">from the lab</span>
+            </h3>
+            <ul class="row-list">
+              <li *ngFor="let r of lin.rows">
+                <div>
+                  <strong>{{ describeRange(r) }}</strong>
+                  <span class="pill pill-success" *ngIf="r.id === lin.currentId">current</span>
+                  <div class="muted small">
+                    from {{ r.effectiveFrom * 1000 | date: 'mediumDate' }}<span *ngIf="r.source"> · {{ r.source }}</span>
+                  </div>
+                </div>
+                <button type="button" class="secondary" (click)="deleteRange(r.id)">Remove</button>
+              </li>
+            </ul>
+          </div>
+          <p class="muted" *ngIf="!lineages().length">No ranges recorded for this patient yet.</p>
+
+          <button type="button" class="secondary" (click)="toggleRangeForm()">
+            {{ showRangeForm() ? 'Cancel' : '+ Add range' }}
+          </button>
+          <form *ngIf="showRangeForm()" [formGroup]="rangeForm" (ngSubmit)="addRange()" class="stacked">
             <label class="field">
-              <span>Why</span>
-              <input type="text" formControlName="note" placeholder="athletic target" />
+              <span>Name</span>
+              <input type="text" formControlName="label" placeholder="Reference, Optimal, Athletic goal, …" />
             </label>
             <div class="row">
-              <button type="submit" class="primary" [disabled]="savingGoal()">
-                {{ savingGoal() ? 'Saving…' : 'Save goal' }}
-              </button>
-              <button type="button" class="secondary" *ngIf="hasGoal()" (click)="clearGoal()">Clear goal</button>
+              <label class="field grow">
+                <span>Low</span>
+                <input type="number" step="any" formControlName="low" />
+              </label>
+              <label class="field grow">
+                <span>High</span>
+                <input type="number" step="any" formControlName="high" />
+              </label>
             </div>
+            <p class="muted small">One bound is enough — leave the other blank for "at or above 120".</p>
+            <label class="field">
+              <span>Range text (when it isn't a simple low–high)</span>
+              <input type="text" formControlName="refText" placeholder="&lt;90" />
+            </label>
+            <label class="field">
+              <span>In effect from</span>
+              <input type="date" formControlName="effectiveFrom" />
+            </label>
+            <label class="field">
+              <span>Source</span>
+              <input type="text" formControlName="source" placeholder="Quest report, lab handout, …" />
+            </label>
+            <label class="inline-check">
+              <input type="checkbox" formControlName="isReference" />
+              <span>This is the lab's own reference range — compare imported reports against it</span>
+            </label>
+            <button type="submit" class="primary" [disabled]="rangeForm.invalid || savingRange()">
+              {{ savingRange() ? 'Saving…' : 'Add range' }}
+            </button>
           </form>
           <p class="muted small">
-            A goal is yours, not the lab's: it is shown alongside results and never recorded onto one.
+            Interpretation bands like "Deficiency below 20" are entered here by hand — the app never
+            reads them out of a report's advice text.
           </p>
-          <div class="error" *ngIf="goalError()">{{ goalError() }}</div>
 
           <div class="error" *ngIf="historyError()">{{ historyError() }}</div>
           <p class="muted small" *ngIf="mixedUnits()">
@@ -164,26 +166,19 @@ const PAD = 8;
             [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight"
             class="chart"
           >
-            <rect
-              *ngFor="let band of rangeBands()"
-              [attr.x]="band.x"
-              [attr.y]="band.y"
-              [attr.width]="band.width"
-              [attr.height]="band.height"
-              class="range-band"
-            >
-              <title>{{ band.label }}</title>
-            </rect>
-            <line
-              *ngFor="let g of goalLines()"
-              [attr.x1]="0"
-              [attr.y1]="g.y"
-              [attr.x2]="chartWidth"
-              [attr.y2]="g.y"
-              class="goal-line"
-            >
-              <title>{{ g.label }}</title>
-            </line>
+            <g *ngFor="let band of rangeBands()">
+              <rect
+                [attr.x]="band.x"
+                [attr.y]="band.y"
+                [attr.width]="band.width"
+                [attr.height]="band.height"
+                [class.range-band]="band.reference"
+                [class.custom-band]="!band.reference"
+              >
+                <title>{{ band.label }}</title>
+              </rect>
+              <text [attr.x]="band.labelX" [attr.y]="band.labelY" class="band-label">{{ band.label }}</text>
+            </g>
             <polyline [attr.points]="polylinePoints()" class="value-line" />
             <g *ngFor="let p of plotted()">
               <circle [attr.cx]="p.x" [attr.cy]="p.y" r="3.5" class="value-point">
@@ -241,6 +236,10 @@ const PAD = 8;
       h2 {
         margin: 0 0 0.25rem;
       }
+      h3 {
+        margin: 0.6rem 0 0.2rem;
+        font-size: 1rem;
+      }
       .header-form,
       .stacked {
         display: flex;
@@ -265,13 +264,16 @@ const PAD = 8;
         background: rgba(255, 255, 255, 0.02);
         border-radius: 8px;
       }
+      /* The lab's own range reads as the ground the others sit on. */
       .range-band {
         fill: rgba(125, 211, 252, 0.12);
       }
-      .goal-line {
-        stroke: #4ade80;
-        stroke-width: 1.5;
-        stroke-dasharray: 6 4;
+      .custom-band {
+        fill: rgba(74, 222, 128, 0.1);
+      }
+      .band-label {
+        fill: var(--text-muted);
+        font-size: 9px;
       }
       .value-line {
         fill: none;
@@ -295,7 +297,7 @@ export class AnalyteDetailPage implements OnInit {
 
   analyteId = '';
   analyte = signal<Analyte | null>(null);
-  ranges = signal<AnalyteReferenceRange[]>([]);
+  ranges = signal<AnalyteRange[]>([]);
   patients = signal<Patient[]>([]);
   patientId = signal<string | null>(null);
   history = signal<AnalyteHistory | null>(null);
@@ -304,40 +306,45 @@ export class AnalyteDetailPage implements OnInit {
   headerError = signal<string | null>(null);
   rangesError = signal<string | null>(null);
   patientsError = signal<string | null>(null);
-  goalError = signal<string | null>(null);
   historyError = signal<string | null>(null);
   deleteError = signal<string | null>(null);
 
   savingHeader = signal(false);
   savingRange = signal(false);
-  savingGoal = signal(false);
   deleting = signal(false);
   showRangeForm = signal(false);
-  hasGoal = signal(false);
 
   headerForm = this.fb.group({ displayName: ['', Validators.required], unit: [''], panel: [''] });
   rangeForm = this.fb.group({
-    refLow: [null as number | null],
-    refHigh: [null as number | null],
+    label: ['', Validators.required],
+    low: [null as number | null],
+    high: [null as number | null],
     refText: [''],
     effectiveFrom: ['', Validators.required],
     source: [''],
-  });
-  goalForm = this.fb.group({
-    goalLow: [null as number | null],
-    goalHigh: [null as number | null],
-    note: [''],
+    isReference: [false],
   });
 
-  /** The range in effect now — the same "greatest effectiveFrom at or before" rule the API uses. */
-  currentRangeId = computed<string | null>(() => {
+  /**
+   * Ranges grouped into lineages — successive versions of one named standard. Mirrors the API's
+   * lineage key (kind + case-insensitive label) so "current" here means what it means server-side.
+   */
+  lineages = computed<Lineage[]>(() => {
     const nowTs = Math.floor(Date.now() / 1000);
-    let winner: AnalyteReferenceRange | null = null;
+    const byKey = new Map<string, Lineage>();
     for (const r of this.ranges()) {
-      if (r.effectiveFrom > nowTs) continue;
-      if (!winner || r.effectiveFrom > winner.effectiveFrom) winner = r;
+      const key = `${r.kind} ${r.label.trim().toLowerCase()}`;
+      const existing = byKey.get(key);
+      if (existing) existing.rows.push(r);
+      else byKey.set(key, { key, label: r.label, kind: r.kind, rows: [r], currentId: null });
     }
-    return winner?.id ?? null;
+    const out = Array.from(byKey.values());
+    for (const lin of out) {
+      lin.rows.sort((a, b) => b.effectiveFrom - a.effectiveFrom);
+      lin.currentId = lin.rows.find((r) => r.effectiveFrom <= nowTs)?.id ?? null;
+    }
+    out.sort((a, b) => (a.kind === b.kind ? a.label.localeCompare(b.label) : a.kind === 'reference' ? -1 : 1));
+    return out;
   });
 
   private numericPoints = computed(() => (this.history()?.points ?? []).filter((p) => p.value !== null));
@@ -353,16 +360,17 @@ export class AnalyteDetailPage implements OnInit {
     if (!points.length) return null;
     const times = points.map((p) => p.observedAt);
     const values: number[] = points.map((p) => p.value as number);
-    // The chart is for reading a value against its standards, so the standards set the scale too.
+    // The chart is for reading a value against its standards, so the standards set the scale too —
+    // every bound of every range, or a band the values never reach would be clipped off.
     for (const r of this.history()?.ranges ?? []) {
-      if (r.refLow !== null) values.push(r.refLow);
-      if (r.refHigh !== null) values.push(r.refHigh);
+      if (r.low !== null) values.push(r.low);
+      if (r.high !== null) values.push(r.high);
     }
-    const goal = this.history()?.goal;
-    if (goal?.goalLow != null) values.push(goal.goalLow);
-    if (goal?.goalHigh != null) values.push(goal.goalHigh);
     const minT = Math.min(...times);
-    const maxT = Math.max(...times);
+    // The right edge is today, not the last result: a range that took effect with the newest
+    // result would otherwise be zero-width and vanish, which is precisely the standard a reader
+    // most needs to see. Ranges effective in the future stay off the chart until they apply.
+    const maxT = Math.max(...times, Math.floor(Date.now() / 1000));
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
     return {
@@ -398,53 +406,66 @@ export class AnalyteDetailPage implements OnInit {
 
   polylinePoints = computed(() => this.plotted().map((p) => `${p.x},${p.y}`).join(' '));
 
-  /** One band per range, spanning from its effective date to where the next one takes over. */
+  /**
+   * One band per row, spanning from its effective date to where the next row **in its own lineage**
+   * takes over. Lineages are independent: a new reference range doesn't end a goal.
+   */
   rangeBands = computed<RangeBand[]>(() => {
     const d = this.domain();
-    const ranges = this.history()?.ranges ?? [];
     if (!d) return [];
-    const bands: RangeBand[] = [];
-    ranges.forEach((r, i) => {
-      if (r.refLow === null && r.refHigh === null) return; // text-only range: nothing to draw
-      const startTs = Math.max(r.effectiveFrom, d.minT);
-      const endTs = i + 1 < ranges.length ? Math.min(ranges[i + 1].effectiveFrom, d.maxT) : d.maxT;
-      if (endTs <= startTs) return;
-      const top = this.yFor(r.refHigh ?? d.maxV);
-      const bottom = this.yFor(r.refLow ?? d.minV);
-      bands.push({
-        x: this.xFor(startTs),
-        width: this.xFor(endTs) - this.xFor(startTs),
-        y: top,
-        height: Math.max(bottom - top, 1),
-        label: `Reference ${this.describeRange(r)}`,
-      });
-    });
-    return bands;
-  });
+    const rows = this.history()?.ranges ?? [];
+    const byLineage = new Map<string, AnalyteRange[]>();
+    for (const r of rows) {
+      const key = `${r.kind} ${r.label.trim().toLowerCase()}`;
+      const bucket = byLineage.get(key);
+      if (bucket) bucket.push(r);
+      else byLineage.set(key, [r]);
+    }
 
-  goalLines = computed(() => {
-    const goal = this.history()?.goal;
-    if (!goal || !this.domain()) return [];
-    const lines: Array<{ y: number; label: string }> = [];
-    if (goal.goalLow != null) lines.push({ y: this.yFor(goal.goalLow), label: `Goal at or above ${goal.goalLow}` });
-    if (goal.goalHigh != null) lines.push({ y: this.yFor(goal.goalHigh), label: `Goal at or below ${goal.goalHigh}` });
-    return lines;
+    const bands: RangeBand[] = [];
+    for (const bucket of byLineage.values()) {
+      const ordered = bucket.slice().sort((a, b) => a.effectiveFrom - b.effectiveFrom);
+      ordered.forEach((r, i) => {
+        if (r.low === null && r.high === null) return; // text-only: nothing to draw
+        const startTs = Math.max(r.effectiveFrom, d.minT);
+        const endTs = i + 1 < ordered.length ? Math.min(ordered[i + 1].effectiveFrom, d.maxT) : d.maxT;
+        if (endTs <= startTs) return;
+        // An open-ended range fills to the edge of the chart in that direction.
+        const top = this.yFor(r.high ?? d.maxV);
+        const bottom = this.yFor(r.low ?? d.minV);
+        const x = this.xFor(startTs);
+        bands.push({
+          x,
+          width: this.xFor(endTs) - x,
+          y: top,
+          height: Math.max(bottom - top, 1),
+          label: `${r.label} ${this.describeRange(r)}`,
+          reference: r.kind === 'reference',
+          labelX: x + 4,
+          labelY: top + 10,
+        });
+      });
+    }
+    return bands;
   });
 
   ngOnInit() {
     this.analyteId = this.route.snapshot.paramMap.get('id') ?? '';
     this.loadAnalyte();
-    this.loadRanges();
+    this.loadPatients();
+  }
+
+  private loadPatients() {
     this.api.get<Patient[]>('/patients').subscribe({
-      next: (rows) => this.patients.set(rows),
+      next: (rows) => this.patients.set(rows ?? []),
       error: (err) => this.patientsError.set(errorText(err, 'Could not load patients.')),
     });
   }
 
-  describeRange(r: { refLow: number | null; refHigh: number | null; refText: string | null }): string {
-    if (r.refLow !== null && r.refHigh !== null) return `${r.refLow}–${r.refHigh}`;
-    if (r.refHigh !== null) return `at or below ${r.refHigh}`;
-    if (r.refLow !== null) return `at or above ${r.refLow}`;
+  describeRange(r: { low: number | null; high: number | null; refText: string | null }): string {
+    if (r.low !== null && r.high !== null) return `${r.low}–${r.high}`;
+    if (r.high !== null) return `at or below ${r.high}`;
+    if (r.low !== null) return `at or above ${r.low}`;
     return r.refText ?? '—';
   }
 
@@ -459,10 +480,12 @@ export class AnalyteDetailPage implements OnInit {
   }
 
   private loadRanges() {
+    const patientId = this.patientId();
+    if (!patientId) return;
     this.rangesError.set(null);
-    this.api.get<AnalyteReferenceRange[]>(`/analytes/${this.analyteId}/reference-ranges`).subscribe({
+    this.api.get<AnalyteRange[]>(`/patients/${patientId}/analytes/${this.analyteId}/ranges`).subscribe({
       next: (rows) => this.ranges.set(rows),
-      error: (err) => this.rangesError.set(errorText(err, 'Could not load reference ranges.')),
+      error: (err) => this.rangesError.set(errorText(err, 'Could not load ranges.')),
     });
   }
 
@@ -495,14 +518,17 @@ export class AnalyteDetailPage implements OnInit {
   }
 
   addRange() {
-    if (this.rangeForm.invalid) return;
+    const patientId = this.patientId();
+    if (this.rangeForm.invalid || !patientId) return;
     this.savingRange.set(true);
     this.rangesError.set(null);
     const val = this.rangeForm.value;
     this.api
-      .post<AnalyteReferenceRange>(`/analytes/${this.analyteId}/reference-ranges`, {
-        refLow: val.refLow ?? undefined,
-        refHigh: val.refHigh ?? undefined,
+      .post<AnalyteRange>(`/patients/${patientId}/analytes/${this.analyteId}/ranges`, {
+        label: val.label,
+        kind: val.isReference ? 'reference' : 'custom',
+        low: val.low ?? undefined,
+        high: val.high ?? undefined,
         refText: val.refText?.trim() || undefined,
         effectiveFrom: new Date(`${val.effectiveFrom}T00:00:00`).toISOString(),
         source: val.source?.trim() || undefined,
@@ -511,34 +537,45 @@ export class AnalyteDetailPage implements OnInit {
         next: () => {
           this.savingRange.set(false);
           this.showRangeForm.set(false);
-          this.rangeForm.reset({ refLow: null, refHigh: null, refText: '', effectiveFrom: '', source: '' });
+          this.rangeForm.reset({
+            label: '',
+            low: null,
+            high: null,
+            refText: '',
+            effectiveFrom: '',
+            source: '',
+            isReference: false,
+          });
           this.loadRanges();
           this.loadHistory();
         },
         error: (err) => {
           this.savingRange.set(false);
-          this.rangesError.set(errorText(err, 'Could not add the reference range.'));
+          this.rangesError.set(errorText(err, 'Could not add the range.'));
         },
       });
   }
 
   deleteRange(id: string) {
     this.rangesError.set(null);
-    this.api.delete(`/reference-ranges/${id}`).subscribe({
+    this.api.delete(`/analyte-ranges/${id}`).subscribe({
       next: () => {
         this.loadRanges();
         this.loadHistory();
       },
-      error: (err) => this.rangesError.set(errorText(err, 'Could not remove the reference range.')),
+      error: (err) => this.rangesError.set(errorText(err, 'Could not remove the range.')),
     });
   }
 
   selectPatient(patientId: string | null) {
     this.patientId.set(patientId);
     this.history.set(null);
-    this.hasGoal.set(false);
-    this.goalForm.reset({ goalLow: null, goalHigh: null, note: '' });
-    if (patientId) this.loadHistory();
+    this.ranges.set([]);
+    // Ranges and history both belong to the selected patient — they reload together.
+    if (patientId) {
+      this.loadRanges();
+      this.loadHistory();
+    }
   }
 
   private loadHistory() {
@@ -546,54 +583,8 @@ export class AnalyteDetailPage implements OnInit {
     if (!patientId) return;
     this.historyError.set(null);
     this.api.get<AnalyteHistory>(`/patients/${patientId}/analytes/${this.analyteId}/history`).subscribe({
-      next: (h) => {
-        this.history.set(h);
-        this.hasGoal.set(!!h.goal);
-        this.goalForm.patchValue({
-          goalLow: h.goal?.goalLow ?? null,
-          goalHigh: h.goal?.goalHigh ?? null,
-          note: h.goal?.note ?? '',
-        });
-      },
+      next: (h) => this.history.set(h),
       error: (err) => this.historyError.set(errorText(err, 'Could not load this analyte’s history.')),
-    });
-  }
-
-  saveGoal() {
-    const patientId = this.patientId();
-    if (!patientId) return;
-    this.savingGoal.set(true);
-    this.goalError.set(null);
-    const val = this.goalForm.value;
-    this.api
-      .put(`/patients/${patientId}/analyte-goals/${this.analyteId}`, {
-        goalLow: val.goalLow ?? undefined,
-        goalHigh: val.goalHigh ?? undefined,
-        note: val.note?.trim() || undefined,
-      })
-      .subscribe({
-        next: () => {
-          this.savingGoal.set(false);
-          this.loadHistory();
-        },
-        error: (err) => {
-          this.savingGoal.set(false);
-          this.goalError.set(errorText(err, 'Could not save the goal.'));
-        },
-      });
-  }
-
-  clearGoal() {
-    const patientId = this.patientId();
-    if (!patientId) return;
-    this.goalError.set(null);
-    this.api.delete(`/patients/${patientId}/analyte-goals/${this.analyteId}`).subscribe({
-      next: () => {
-        this.goalForm.reset({ goalLow: null, goalHigh: null, note: '' });
-        this.hasGoal.set(false);
-        this.loadHistory();
-      },
-      error: (err) => this.goalError.set(errorText(err, 'Could not clear the goal.')),
     });
   }
 

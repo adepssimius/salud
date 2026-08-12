@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { forkJoin, of, switchMap } from 'rxjs';
 import {
-  AnalyteReferenceRange,
+  AnalyteRange,
   CreateObservationDto,
   LabAnalyteResolution,
   LabImportResult,
@@ -103,7 +103,7 @@ interface PanelGroup {
                   <th>Value</th>
                   <th>Flag</th>
                   <th>Reference</th>
-                  <th>Goal</th>
+                  <th>Your ranges</th>
                 </tr>
               </thead>
               <tbody>
@@ -128,7 +128,7 @@ interface PanelGroup {
                         <span class="pill pill-danger" *ngIf="row.analyte.flag">{{ row.analyte.flag }}</span>
                       </td>
                       <td class="muted small">{{ referenceText(row.analyte) }}</td>
-                      <td class="muted small">{{ goalText(row) }}</td>
+                      <td class="muted small">{{ ownRangesText(row) }}</td>
                     </tr>
                     <!-- The report and the catalog disagree. Which one is right is the caregiver's
                          call, so it is asked rather than assumed, and unchecked by default. -->
@@ -310,14 +310,13 @@ export class LabImportPage implements OnInit {
     return false;
   }
 
-  // Display-only, like isOutOfRange: a goal never becomes part of the record (P6).
+  // Display-only, like isOutOfRange: the patient's own ranges never become part of the record (P6).
   isOffGoal(row: AnalyteRow): boolean {
-    const goal = row.resolution.goal;
     const value = row.analyte.value;
-    if (!goal || value === null) return false;
-    if (goal.goalLow != null && value < goal.goalLow) return true;
-    if (goal.goalHigh != null && value > goal.goalHigh) return true;
-    return false;
+    if (value === null) return false;
+    return (row.resolution.ranges ?? []).some(
+      (r) => (r.low != null && value < r.low) || (r.high != null && value > r.high),
+    );
   }
 
   referenceText(a: { refLow: number | null; refHigh: number | null; refText: string | null; unit?: string | null }): string {
@@ -330,16 +329,20 @@ export class LabImportPage implements OnInit {
 
   catalogRangeText(row: AnalyteRow): string {
     const range = row.resolution.catalogRange;
-    return range ? this.referenceText(range) : '—';
+    return range ? this.rangeText(range) : '—';
   }
 
-  goalText(row: AnalyteRow): string {
-    const goal = row.resolution.goal;
-    if (!goal) return '';
-    if (goal.goalLow != null && goal.goalHigh != null) return `${goal.goalLow}–${goal.goalHigh}`;
-    if (goal.goalLow != null) return `at or above ${goal.goalLow}`;
-    if (goal.goalHigh != null) return `at or below ${goal.goalHigh}`;
-    return '';
+  /** The patient's own named ranges for this analyte — "Athletic goal at or above 120". */
+  ownRangesText(row: AnalyteRow): string {
+    return (row.resolution.ranges ?? []).map((r) => `${r.label} ${this.rangeText(r)}`).join(', ');
+  }
+
+  private rangeText(r: { low: number | null; high: number | null; refText: string | null }): string {
+    if (r.low !== null && r.high !== null) return `${r.low}–${r.high}`;
+    if (r.refText) return r.refText;
+    if (r.high !== null) return `at or below ${r.high}`;
+    if (r.low !== null) return `at or above ${r.low}`;
+    return '—';
   }
 
   onFileSelected(event: Event) {
@@ -446,14 +449,21 @@ export class LabImportPage implements OnInit {
           const rangeWrites = selected
             .filter((row) => this.shouldWriteRange(row))
             .map((row) =>
-              this.api.post<AnalyteReferenceRange>(`/analytes/${idByName.get(row.analyte.analyte)}/reference-ranges`, {
-                refLow: row.analyte.refLow ?? undefined,
-                refHigh: row.analyte.refHigh ?? undefined,
-                refText: row.analyte.refText ?? undefined,
-                // The observation's own time, so the range resolves against this very result.
-                effectiveFrom: observedAt,
-                source: this.rangeSource(),
-              }),
+              this.api.post<AnalyteRange>(
+                `/patients/${this.patientId}/analytes/${idByName.get(row.analyte.analyte)}/ranges`,
+                {
+                  // The lineage the importer owns for this patient. Its label is fixed so a rename
+                  // in the UI doesn't fork the lineage an incoming report is compared against.
+                  label: 'Reference',
+                  kind: 'reference',
+                  low: row.analyte.refLow ?? undefined,
+                  high: row.analyte.refHigh ?? undefined,
+                  refText: row.analyte.refText ?? undefined,
+                  // The observation's own time, so the range resolves against this very result.
+                  effectiveFrom: observedAt,
+                  source: this.rangeSource(),
+                },
+              ),
             );
           return (rangeWrites.length ? forkJoin(rangeWrites) : of([])).pipe(switchMap(() => of(idByName)));
         }),

@@ -466,15 +466,20 @@ describe('Observations (e2e)', () => {
         .expect(201)
     ).body;
     await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ refText: 'For 8 a.m. Specimen: 4.0-22.0', effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .send({
+        label: 'Reference',
+        kind: 'reference',
+        refText: 'For 8 a.m. Specimen: 4.0-22.0',
+        effectiveFrom: '2020-01-01T00:00:00.000Z',
+      })
       .expect(201);
     await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ goalHigh: 18 })
-      .expect(200);
+      .send({ label: 'My target', high: 18, effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .expect(201);
 
     // Same write-time phantom-file check as photo entries, own code (api.md → error codes).
     const phantom = await request(app.getHttpServer())
@@ -530,8 +535,11 @@ describe('Observations (e2e)', () => {
     expect(lab.metadata).toEqual(labMetadata); // stored exactly as written
     // ...and the catalog's standard rides alongside it, never inside it.
     expect(lab.labContext.displayName).toBe('Cortisol, Total');
-    expect(lab.labContext.referenceRange.refText).toBe('For 8 a.m. Specimen: 4.0-22.0');
-    expect(lab.labContext.goal).toEqual({ goalLow: null, goalHigh: 18, note: null });
+    // Both lineages resolve at this observation's own observedAt — the lab's and the caregiver's.
+    const reference = lab.labContext.ranges.find((r: any) => r.kind === 'reference');
+    expect(reference.refText).toBe('For 8 a.m. Specimen: 4.0-22.0');
+    const own = lab.labContext.ranges.find((r: any) => r.kind === 'custom');
+    expect(own).toMatchObject({ label: 'My target', low: null, high: 18 });
     const doc = fetched.body.entries.find((e: any) => e.type === 'document');
     expect(doc.metadata).toEqual({ fileId: upload.body.fileId, label: 'Quest labs Jul 2026' });
 

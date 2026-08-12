@@ -192,7 +192,7 @@ describe('Lab imports (e2e)', () => {
       .expect(200);
   });
 
-  it('reports match, conflict and new_range against the catalog, and carries the goal', async () => {
+  it('reports match, conflict and new_range against this patient\'s reference range, and carries their own ranges', async () => {
     // A patient of their own, so the catalog state this test builds can't leak into the others.
     const patient = await request(app.getHttpServer())
       .post('/api/patients')
@@ -212,20 +212,20 @@ describe('Lab imports (e2e)', () => {
     // The fixture prints ferritin 38-380 and hemoglobin 13.2-17.1, both effective before the
     // 2026-07-20 collection date. MPV gets no range at all.
     await request(app.getHttpServer())
-      .post(`/api/analytes/${ferritin}/reference-ranges`)
+      .post(`/api/patients/${catalogPatientId}/analytes/${ferritin}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ refLow: 30, refHigh: 400, effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 30, high: 400, effectiveFrom: '2020-01-01T00:00:00.000Z' })
       .expect(201);
     await request(app.getHttpServer())
-      .post(`/api/analytes/${hemoglobin}/reference-ranges`)
+      .post(`/api/patients/${catalogPatientId}/analytes/${hemoglobin}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ refLow: 13.2, refHigh: 17.1, effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 13.2, high: 17.1, effectiveFrom: '2020-01-01T00:00:00.000Z' })
       .expect(201);
     await request(app.getHttpServer())
-      .put(`/api/patients/${catalogPatientId}/analyte-goals/${ferritin}`)
+      .post(`/api/patients/${catalogPatientId}/analytes/${ferritin}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ goalLow: 120, note: 'athletic target' })
-      .expect(200);
+      .send({ label: 'Athletic goal', low: 120, effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .expect(201);
 
     const res = await request(app.getHttpServer())
       .post(`/api/patients/${catalogPatientId}/lab-imports`)
@@ -239,8 +239,7 @@ describe('Lab imports (e2e)', () => {
       analyteId: ferritin,
       displayName: 'Ferritin',
       status: 'conflict',
-      catalogRange: { refLow: 30, refHigh: 400 },
-      goal: { goalLow: 120, goalHigh: null, note: 'athletic target' },
+      catalogRange: { label: 'Reference', low: 30, high: 400 },
     });
     // Identical range: nothing to do.
     expect(byName('HEMOGLOBIN')).toMatchObject({ analyteId: hemoglobin, status: 'match' });
@@ -269,15 +268,15 @@ describe('Lab imports (e2e)', () => {
 
     // What the report printed, effective long before it was drawn...
     await request(app.getHttpServer())
-      .post(`/api/analytes/${albumin}/reference-ranges`)
+      .post(`/api/patients/${datedPatientId}/analytes/${albumin}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ refLow: 3.6, refHigh: 5.1, effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 3.6, high: 5.1, effectiveFrom: '2020-01-01T00:00:00.000Z' })
       .expect(201);
     // ...and a revised standard that only takes effect after this specimen was collected.
     await request(app.getHttpServer())
-      .post(`/api/analytes/${albumin}/reference-ranges`)
+      .post(`/api/patients/${datedPatientId}/analytes/${albumin}/ranges`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ refLow: 4.0, refHigh: 5.0, effectiveFrom: '2030-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 4.0, high: 5.0, effectiveFrom: '2030-01-01T00:00:00.000Z' })
       .expect(201);
 
     const res = await request(app.getHttpServer())
@@ -288,6 +287,6 @@ describe('Lab imports (e2e)', () => {
     const albuminResolution = res.body.resolutions.find((r: any) => r.analyte === 'ALBUMIN');
     // Read against the 2020 row, so it matches — the 2030 revision is not yet in effect.
     expect(albuminResolution.status).toBe('match');
-    expect(albuminResolution.catalogRange).toMatchObject({ refLow: 3.6, refHigh: 5.1 });
+    expect(albuminResolution.catalogRange).toMatchObject({ low: 3.6, high: 5.1 });
   });
 });

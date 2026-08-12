@@ -111,40 +111,36 @@ export class LabImportsService {
           displayName: titleCaseAnalyte(analyte.analyte),
           status: 'new' as const,
           catalogRange: null,
-          goal: null,
+          ranges: [],
         };
       }
       const source = sources.get(match.id);
-      const effective = source ? AnalytesService.resolveRangeAt(source.ranges, atTs) : null;
-      const catalogRange = effective
-        ? {
-            id: effective.id,
-            refLow: effective.refLow,
-            refHigh: effective.refHigh,
-            refText: effective.refText,
-            effectiveFrom: effective.effectiveFrom,
-          }
-        : null;
+      // Only the patient's own 'reference' lineage is what an incoming report is talking about;
+      // their targets and interpretation bands ride along for display and are never touched.
+      const effectiveByLineage = source ? AnalytesService.resolveLineagesAt(source.ranges, atTs) : [];
+      const effective = effectiveByLineage.find((r) => r.kind === 'reference') ?? null;
       return {
         analyte: analyte.analyte,
         analyteId: match.id,
         displayName: match.displayName,
         status: this.rangeStatus(analyte, effective),
-        catalogRange,
-        goal: source?.goal ?? null,
+        catalogRange: effective ? AnalytesService.rangeContext(effective) : null,
+        ranges: effectiveByLineage
+          .filter((r) => r.kind !== 'reference')
+          .map((r) => AnalytesService.rangeContext(r)),
       };
     });
   }
 
   private rangeStatus(
     analyte: ParsedLabAnalyte,
-    effective: { refLow: number | null; refHigh: number | null; refText: string | null } | null,
+    effective: { low: number | null; high: number | null; refText: string | null } | null,
   ): LabAnalyteResolution['status'] {
     const printsRange = analyte.refLow !== null || analyte.refHigh !== null || !!analyte.refText;
     if (!printsRange) return 'no_printed_range';
     if (!effective) return 'new_range';
     const sameText = (effective.refText ?? '').trim() === (analyte.refText ?? '').trim();
-    const same = effective.refLow === analyte.refLow && effective.refHigh === analyte.refHigh && sameText;
+    const same = effective.low === analyte.refLow && effective.high === analyte.refHigh && sameText;
     return same ? 'match' : 'conflict';
   }
 }

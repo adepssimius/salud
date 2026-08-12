@@ -47,8 +47,10 @@ const RESOLUTIONS = [
     analyteId: 'a-ferritin',
     displayName: 'Ferritin',
     status: 'conflict',
-    catalogRange: { id: 'r1', refLow: 30, refHigh: 400, refText: null, effectiveFrom: 1700000000 },
-    goal: { goalLow: 120, goalHigh: null, note: 'athletic target' },
+    catalogRange: { id: 'r1', kind: 'reference', label: 'Reference', low: 30, high: 400, refText: null, effectiveFrom: 1700000000 },
+    ranges: [
+      { id: 'r9', kind: 'custom', label: 'Athletic goal', low: 120, high: null, refText: null, effectiveFrom: 1700000000 },
+    ],
   },
   {
     analyte: 'ALBUMIN',
@@ -56,7 +58,7 @@ const RESOLUTIONS = [
     displayName: 'Albumin',
     status: 'new',
     catalogRange: null,
-    goal: null,
+    ranges: [],
   },
 ];
 
@@ -105,8 +107,8 @@ describe('LabImportPage', () => {
     expect(text).toContain('new');
     expect(text).toContain('Update the catalog');
     expect(fixture.componentInstance.rows()[0].updateCatalog).toBe(false);
-    // The patient's goal rides along for display.
-    expect(text).toContain('at or above 120');
+    // The patient's own named ranges ride along for display.
+    expect(text).toContain('Athletic goal at or above 120');
     // All rows selected by default, label prefilled from the file name.
     expect(fixture.componentInstance.selectedCount()).toBe(2);
     expect(fixture.componentInstance.documentLabel).toBe('Quest_Labs.pdf');
@@ -122,7 +124,7 @@ describe('LabImportPage', () => {
           { name: 'ALBUMIN', analyteId: 'a-albumin', displayName: 'Albumin', created: true },
         ]),
       )
-      .mockReturnValueOnce(of({ id: 'range-new' })) // albumin's first range (status 'new')
+      .mockReturnValueOnce(of({ id: 'range-new' })) // albumin's first reference range (status 'new')
       .mockReturnValueOnce(of({ id: 'obs1' }));
     const fixture = TestBed.createComponent(LabImportPage);
     fixture.detectChanges();
@@ -143,10 +145,17 @@ describe('LabImportPage', () => {
 
     // 2. Only the new analyte's range is written — the ferritin conflict was left unchecked, so
     //    the catalog keeps what it had.
-    const rangeCalls = apiMock.post.mock.calls.filter((c: any[]) => String(c[0]).includes('reference-ranges'));
+    const rangeCalls = apiMock.post.mock.calls.filter((c: any[]) => String(c[0]).includes('/ranges'));
     expect(rangeCalls).toHaveLength(1);
-    expect(rangeCalls[0][0]).toBe('/analytes/a-albumin/reference-ranges');
-    expect(rangeCalls[0][1]).toMatchObject({ refLow: 3.6, refHigh: 5.1, source: 'Quest Diagnostics report AB123456C' });
+    // Patient-scoped, and into the lineage the importer owns — labeled and kind 'reference'.
+    expect(rangeCalls[0][0]).toBe('/patients/p1/analytes/a-albumin/ranges');
+    expect(rangeCalls[0][1]).toMatchObject({
+      label: 'Reference',
+      kind: 'reference',
+      low: 3.6,
+      high: 5.1,
+      source: 'Quest Diagnostics report AB123456C',
+    });
 
     // 3. The observation carries analyteIds and no reference-range fields.
     const [path, body] = apiMock.post.mock.calls[4];
@@ -184,10 +193,10 @@ describe('LabImportPage', () => {
     fixture.componentInstance.rows()[0].updateCatalog = true;
     fixture.componentInstance.confirm();
 
-    const rangeCalls = apiMock.post.mock.calls.filter((c: any[]) => String(c[0]).includes('reference-ranges'));
+    const rangeCalls = apiMock.post.mock.calls.filter((c: any[]) => String(c[0]).includes('/ranges'));
     expect(rangeCalls).toHaveLength(1);
-    expect(rangeCalls[0][0]).toBe('/analytes/a-ferritin/reference-ranges');
-    expect(rangeCalls[0][1]).toMatchObject({ refLow: 38, refHigh: 380 });
+    expect(rangeCalls[0][0]).toBe('/patients/p1/analytes/a-ferritin/ranges');
+    expect(rangeCalls[0][1]).toMatchObject({ label: 'Reference', kind: 'reference', low: 38, high: 380 });
   });
 
   it('maps a parse failure to its sentence and stays on the upload step, keeping the file', () => {

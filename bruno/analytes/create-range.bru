@@ -1,27 +1,42 @@
 meta {
-  name: Create Reference Range
+  name: Create Range
   type: http
   seq: 7
 }
 
 post {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{analyteId}}/reference-ranges
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/analytes/{{analyteId}}/ranges
   body: json
   auth: inherit
 }
 
 body:json {
   {
-    "refLow": 38,
-    "refHigh": 380,
+    "label": "Reference",
+    "kind": "reference",
+    "low": 38,
+    "high": 380,
     "effectiveFrom": "2026-07-20T09:10:00.000Z",
     "source": "Quest report AB123456C"
   }
 }
 
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients && patients.length) {
+      bru.setVar('patientId', patients[0].id);
+    } else {
+      console.log('No patients found. Create one first.');
+    }
+  }
+}
+
 script:post-response {
   if (res.status === 201) {
-    bru.setVar('referenceRangeId', res.body.id);
+    bru.setVar('analyteRangeId', res.body.id);
   }
 }
 
@@ -31,9 +46,15 @@ settings {
 }
 
 docs {
-  Reference ranges are effective-dated: the one in effect at time t is the row with the greatest
-  effectiveFrom at or before t, so a result recorded years ago keeps being read against the
-  standard that applied when the specimen was drawn. At least one of refLow/refHigh/refText is
-  required (400 ANALYTE_RANGE_EMPTY). Retry-safe: posting values identical to the row already in
-  effect returns that row instead of stacking a duplicate.
+  Every named band a value is read against is one row here, belonging to one patient: the lab's
+  "Reference", an interpretation band ("Optimal"), a personal target ("Athletic goal"). Rows
+  sharing (patient, analyte, kind, case-insensitive label) form a LINEAGE, and the row in effect
+  at time t is the greatest effectiveFrom at or before t **within that lineage** — so a result
+  recorded years ago keeps being read against the standard that applied when it was drawn, and a
+  new reference range does not end a goal.
+
+  One-sided is normal: { "label": "Athletic goal", "low": 120 } with no high. At least one of
+  low/high/refText is required (400 ANALYTE_RANGE_EMPTY). kind defaults to "custom"; "reference"
+  marks the single lineage imported reports are compared against. Retry-safe: posting values
+  identical to the row already in effect in that lineage returns it instead of stacking.
 }

@@ -338,10 +338,9 @@ export class TimelineService {
       if (!source) continue;
       entry.labContext = {
         displayName: source.displayName,
-        referenceRange: AnalytesService.rangeContext(
-          AnalytesService.resolveRangeAt(source.ranges, summary.observedAt ?? 0),
+        ranges: AnalytesService.resolveLineagesAt(source.ranges, summary.observedAt ?? 0).map((r) =>
+          AnalytesService.rangeContext(r),
         ),
-        goal: source.goal,
       };
     }
   }
