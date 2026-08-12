@@ -213,10 +213,14 @@ resolved from the analyte catalog at the observation's `observedAt`:
 ```
 labContext: {
   displayName: string,
-  referenceRange: { id, refLow, refHigh, refText, effectiveFrom } | null,   // in effect at observedAt
-  goal: { goalLow, goalHigh, note } | null                                  // this patient's goal
+  ranges: [{ id, kind, label, low, high, refText, effectiveFrom }]   // one per lineage, in effect at observedAt
 } | undefined
 ```
+
+`ranges` carries **every** named range this patient holds for the analyte, each resolved to the row
+in effect at `observedAt` — the lab's `"Reference"` (38–380) and any of the caregiver's own
+(`"Athletic goal"`, ≥120) side by side, distinguished by `kind` rather than by which field they
+arrived in. Empty when the patient has no ranges for that analyte.
 
 It is a sibling of `metadata`, never inside it — stored metadata stays exactly what was written,
 and a client echoing an observation back through `PATCH` must not (and cannot) submit it. An entry
@@ -241,22 +245,26 @@ the parser layer is format-pluggable — see api.md → Lab imports). The record
   `valueText` always preserves the verbatim printed value; `value` is its numeric parse when one
   exists (`"<0.2"` → `value: null`).
 - `flag` records only what the report printed (P6: the app does not compute abnormality into the
-  record). The UI may *highlight* values outside the resolved reference range or the patient's goal
-  at display time — highlighting is display-only, never written back.
+  record). The UI may *highlight* values outside any of the patient's resolved ranges at display
+  time — highlighting is display-only, never written back.
 - **The printed reference range is parsed but not stored on the entry.** It is evidence: the parse
-  response compares it against the catalog's currently-effective range and reports a per-analyte
-  resolution status (api.md → Lab imports). New analytes are auto-created at confirm (with the
-  printed range as their first effective-dated range); a printed range that *conflicts* with the
-  catalog's effective range prompts the caregiver per analyte before the catalog is updated —
-  the app never silently arbitrates between the report and the catalog (P6).
+  response compares it against **this patient's** currently-effective `reference`-kind range and
+  reports a per-analyte resolution status (api.md → Lab imports). New analytes are auto-created at
+  confirm (with the printed range as the patient's first effective-dated `reference` range); a
+  printed range that *conflicts* with the patient's effective one prompts the caregiver per analyte
+  before anything is written — the app never silently arbitrates between the report and the
+  catalog (P6).
 - Confirm is a three-step client orchestration: `POST /api/analytes/resolve` (create/lookup ids)
-  → `POST /api/analytes/:id/reference-ranges` for accepted updates → the standard observation
-  create. Partial failure leaves catalog rows without an observation — harmless and retry-safe
-  (range create is idempotent for identical values at the same effective date).
+  → `POST /api/patients/:patientId/analytes/:analyteId/ranges` for accepted updates → the standard
+  observation create. Partial failure leaves catalog rows without an observation — harmless and
+  retry-safe (range create is idempotent for identical values in the same lineage at the same
+  effective date).
 
 ### Analyte catalog
 
-Global, like the medication catalog — not patient-scoped. Populated by ingestion (that is the
+The **analyte** is global, like the medication catalog. Its **ranges are per-patient**: what counts
+as normal depends on who was measured — a child's hemoglobin reference is not an adult's, and a
+personal target is one caregiver's decision about one person. Populated by ingestion (that is the
 point); there is no seed. Matching is always **case-insensitive** on `name`.
 
 #### Analyte
@@ -275,41 +283,59 @@ point); there is no seed. Matching is always **case-insensitive** on `name`.
   them without their panel is unreadable. Searchable alongside the names, so "iron" finds
   `% Saturation`, which never mentions iron itself. Editable.
 - `unit` and `panel` are set from the report **only when the analyte is created**. A later import
-  never rewrites them — same rule as reference ranges, minus the prompt, since these are labels
-  rather than the standard a result is judged against.
+  never rewrites them — same rule as ranges, minus the prompt, since these are labels rather than
+  the standard a result is judged against.
 - `createdAt`, `updatedAt`
 - Deletion is guarded: 409 `ANALYTE_IN_USE` with `dependents: { labResults: n }` when any
-  `lab_result` entry references it. When unreferenced, deleting the analyte also deletes its own
-  reference ranges and goals — a deliberate divergence from the medication catalog's
-  block-on-own-children rule: ranges and goals have no independent referents, so a two-step delete
-  of an auto-created analyte would be pure ceremony.
+  `lab_result` entry references it. When unreferenced, deleting the analyte also deletes every
+  patient's ranges for it — a deliberate divergence from the medication catalog's
+  block-on-own-children rule: ranges have no independent referents, so a two-step delete of an
+  auto-created analyte would be pure ceremony.
 
-#### AnalyteReferenceRange
+#### AnalyteRange
+
+One table for every named band a value is read against — the lab's reference range, a clinical
+interpretation segment, a personal target. They differ in **name**, not in kind of thing, and
+collapsing them means the chart, the read-time context, and the management UI each handle one
+concept instead of three.
+
 - `id: uuid`
 - `analyteId: uuid`
-- `refLow: decimal | null`, `refHigh: decimal | null`, `refText: string | null` (≤ 300, verbatim
-  for non-simple ranges) — at least one of the three required (400 `ANALYTE_RANGE_EMPTY`).
-- `effectiveFrom: datetime` — **effective-dated**: the range in effect at time *t* is the row with
-  the greatest `effectiveFrom ≤ t`. There is no `effectiveTo`; each row ends where the next begins.
-  Importing a report older than every existing row inserts an earlier row without clobbering
-  anything. No range is in effect before the earliest row.
+- `patientId: uuid` — **required**. Every range belongs to a patient (see the section intro).
+  Patient-scoped access control: care-team membership, 404 `PATIENT_NOT_FOUND` to a non-member.
+- `kind: enum('reference','custom')` — `reference` is the one lineage the importer maintains and
+  compares printed ranges against; everything else is `custom`. This is a functional distinction,
+  not a display one: the label carries the meaning, `kind` only answers "is this the row an
+  incoming report is talking about?"
+- `label: string` (≤ 120) — `"Reference"`, `"Athletic goal"`, `"Deficiency"`, `"Optimal"`. Required,
+  including on `reference` rows, so every band on a chart can name itself.
+- `low: decimal | null`, `high: decimal | null` — **one-sided ranges are normal**, not a
+  degenerate case: `"Athletic goal"` is `low: 120` with no high; `"Deficiency"` is `high: 20` with
+  no low. At least one bound, or `refText`, is required (400 `ANALYTE_RANGE_EMPTY`).
+- `refText: string | null` (≤ 300) — verbatim text for a range that isn't a simple interval, e.g.
+  cortisol's time-of-day-dependent wording. In practice only `reference` rows carry it, since it
+  comes from a report.
+- `effectiveFrom: datetime` — **effective-dated per lineage**. Rows sharing
+  (patient, analyte, kind, case-insensitive label) form one lineage; the row in effect at time *t*
+  is the one with the greatest `effectiveFrom ≤ t` **within its lineage**. There is no
+  `effectiveTo`; each row ends where the next in its lineage begins. Importing a report older than
+  every existing row inserts an earlier row without clobbering anything. Guidance changes over
+  years — an old result keeps being read against the standard of its day.
 - `source: string | null` (≤ 200) — provenance, e.g. `"Quest report AB123456C"` or a manual note.
-  Echoed into every resolved `labContext.referenceRange` by id; same provenance rule as dose
+  Echoed into every resolved `labContext.ranges` entry by id; same provenance rule as dose
   guidelines (a resolved value always says which standard it came from).
 - `createdAt`, `updatedAt`
-- Create is retry-safe: posting values identical to the row already effective at that
-  `effectiveFrom` returns the existing row instead of inserting a duplicate.
-
-#### AnalyteGoal
-- `id: uuid`
-- `patientId: uuid`, `analyteId: uuid` — **one row per (patient, analyte)**; writes are upserts.
-- `goalLow: decimal | null`, `goalHigh: decimal | null` — at least one required (400
-  `ANALYTE_GOAL_EMPTY`). A goal is the caregiver's own target, distinct from the reference range:
-  ferritin 75 can be in-range yet below a `goalLow` of 120 set for athletic purposes.
-- `note: string | null` (≤ 2000) — why this goal exists.
-- `createdAt`, `updatedAt`
-- Patient-scoped access control (care-team membership, 404 `PATIENT_NOT_FOUND` for non-members),
-  unlike the analyte itself which is household-global.
+- Create is retry-safe: posting values identical to the row already effective in that lineage at
+  that `effectiveFrom` returns the existing row instead of inserting a duplicate.
+- **Ranges are entered manually or seeded from a report's printed reference range — never parsed
+  from a report's freeform advice text** (P6). A Quest vitamin-D report prints
+  "Deficiency: <20 / Insufficiency: 20-29 / Optimal: ≥30" as prose; the parser surfaces those lines
+  as import `warnings` and the caregiver decides whether to record them as ranges. Reading
+  interpretation bands out of arbitrary report prose would be the app inventing clinical structure.
+- **No overlap, gap, or ordering validation** — deliberately, consistent with every neighboring
+  type. Interpretation bands legitimately abut (`<20`, `20–29`, `≥30`) and a reference range
+  legitimately contains a goal; adjudicating which arrangements are sensible is clinical judgment
+  the app doesn't have.
 
 ### Intervention (base)
 - `id: uuid`

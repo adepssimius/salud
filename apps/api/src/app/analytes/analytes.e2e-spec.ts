@@ -169,119 +169,135 @@ describe('Analytes (e2e)', () => {
     expect(found.body.some((a: any) => a.name === '% SATURATION')).toBe(true);
   });
 
-  it('resolves the reference range effective at a given moment, and is retry-safe on create', async () => {
+  it('resolves each lineage independently at a given moment, and is retry-safe on create', async () => {
     const analyte = (
       await request(app.getHttpServer()).post('/api/analytes').set(auth()).send({ name: 'TSH' }).expect(201)
     ).body;
+    const rangesUrl = `/api/patients/${patientId}/analytes/${analyte.id}/ranges`;
 
     const older = await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(rangesUrl)
       .set(auth())
-      .send({ refLow: 0.4, refHigh: 4.5, effectiveFrom: '2020-01-01T00:00:00.000Z', source: 'Old standard' })
+      .send({
+        label: 'Reference',
+        kind: 'reference',
+        low: 0.4,
+        high: 4.5,
+        effectiveFrom: '2020-01-01T00:00:00.000Z',
+        source: 'Old standard',
+      })
       .expect(201);
     const newer = await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(rangesUrl)
       .set(auth())
-      .send({ refLow: 0.5, refHigh: 4.0, effectiveFrom: '2025-01-01T00:00:00.000Z', source: 'Revised standard' })
+      .send({
+        label: 'Reference',
+        kind: 'reference',
+        low: 0.5,
+        high: 4.0,
+        effectiveFrom: '2025-01-01T00:00:00.000Z',
+        source: 'Revised standard',
+      })
       .expect(201);
     expect(newer.body.id).not.toBe(older.body.id);
 
-    // Posting the same values already in effect returns the existing row instead of stacking.
+    // Posting the same values already in effect in that lineage returns the existing row.
     const retry = await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(rangesUrl)
       .set(auth())
-      .send({ refLow: 0.5, refHigh: 4.0, effectiveFrom: '2026-06-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 0.5, high: 4.0, effectiveFrom: '2026-06-01T00:00:00.000Z' })
       .expect(201);
     expect(retry.body.id).toBe(newer.body.id);
 
-    const list = await request(app.getHttpServer())
-      .get(`/api/analytes/${analyte.id}/reference-ranges`)
+    // A DIFFERENT lineage with the same dates is its own standard, not a duplicate: one-sided,
+    // custom-kind, and it must not collide with the reference rows above.
+    const goal = await request(app.getHttpServer())
+      .post(rangesUrl)
       .set(auth())
-      .expect(200);
-    expect(list.body.length).toBe(2); // newest first
-    expect(list.body[0].id).toBe(newer.body.id);
+      .send({ label: 'Athletic goal', low: 2.0, effectiveFrom: '2025-01-01T00:00:00.000Z' })
+      .expect(201);
+    expect(goal.body.id).not.toBe(newer.body.id);
+    expect(goal.body.kind).toBe('custom');
+    expect(goal.body.high).toBeNull();
+
+    const list = await request(app.getHttpServer()).get(rangesUrl).set(auth()).expect(200);
+    expect(list.body.length).toBe(3); // newest first, all lineages
+    expect(list.body[0].effectiveFrom).toBeGreaterThanOrEqual(list.body[1].effectiveFrom);
 
     // A range with no bound and no text is meaningless.
     await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(rangesUrl)
       .set(auth())
-      .send({ effectiveFrom: '2026-01-01T00:00:00.000Z' })
+      .send({ label: 'Empty', effectiveFrom: '2026-01-01T00:00:00.000Z' })
       .expect(400)
       .expect((res) => expect(res.body.message).toBe('ANALYTE_RANGE_EMPTY'));
 
     // ...and a PATCH must not be able to empty one either.
     await request(app.getHttpServer())
-      .patch(`/api/reference-ranges/${newer.body.id}`)
+      .patch(`/api/analyte-ranges/${newer.body.id}`)
       .set(auth())
-      .send({ refLow: null, refHigh: null })
+      .send({ low: null, high: null })
       .expect(400)
       .expect((res) => expect(res.body.message).toBe('ANALYTE_RANGE_EMPTY'));
 
-    await request(app.getHttpServer()).delete(`/api/reference-ranges/${older.body.id}`).set(auth()).expect(200);
+    await request(app.getHttpServer()).delete(`/api/analyte-ranges/${older.body.id}`).set(auth()).expect(200);
     await request(app.getHttpServer())
-      .delete('/api/reference-ranges/11111111-1111-4111-8111-111111111111')
+      .delete('/api/analyte-ranges/11111111-1111-4111-8111-111111111111')
       .set(auth())
       .expect(404)
       .expect((res) => expect(res.body.message).toBe('ANALYTE_RANGE_NOT_FOUND'));
   });
 
-  it('upserts a per-patient goal and hides it from non-members', async () => {
+  it('keeps one patient\'s ranges out of another\'s, and out of a non-member\'s reach', async () => {
     const analyte = (
-      await request(app.getHttpServer()).post('/api/analytes').set(auth()).send({ name: 'FERRITIN GOALS' }).expect(201)
+      await request(app.getHttpServer()).post('/api/analytes').set(auth()).send({ name: 'FERRITIN SCOPED' }).expect(201)
     ).body;
 
-    const created = await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
-      .set(auth())
-      .send({ goalLow: 120, note: 'athletic target' })
-      .expect(200);
-    expect(created.body.goalLow).toBe(120);
-    expect(created.body.goalHigh).toBeNull();
+    // A second patient of the same caregiver: the analyte is shared, the ranges are not.
+    const otherPatient = (
+      await request(app.getHttpServer())
+        .post('/api/patients')
+        .set(auth())
+        .send({ fullName: 'Second Patient', dateOfBirth: '2015-05-05', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201)
+    ).body;
 
-    // Second write updates in place — one goal per (patient, analyte).
-    const updated = await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+    const mine = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .send({ goalLow: 150, note: 'raised' })
-      .expect(200);
-    expect(updated.body.id).toBe(created.body.id);
-    expect(updated.body.goalLow).toBe(150);
+      .send({ label: 'Athletic goal', low: 120, effectiveFrom: '2026-01-01T00:00:00.000Z' })
+      .expect(201);
+    expect(mine.body.patientId).toBe(patientId);
 
-    const list = await request(app.getHttpServer())
-      .get(`/api/patients/${patientId}/analyte-goals`)
+    const theirs = await request(app.getHttpServer())
+      .get(`/api/patients/${otherPatient.id}/analytes/${analyte.id}/ranges`)
       .set(auth())
       .expect(200);
-    expect(list.body.length).toBe(1);
-    expect(list.body[0].displayName).toBe('Ferritin Goals'); // joined for rendering
-
-    await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
-      .set(auth())
-      .send({ note: 'no bounds' })
-      .expect(400)
-      .expect((res) => expect(res.body.message).toBe('ANALYTE_GOAL_EMPTY'));
+    expect(theirs.body).toEqual([]); // a goal set for one person is not the other's
 
     const outsider = await registerAndLogin(app);
     await request(app.getHttpServer())
-      .get(`/api/patients/${patientId}/analyte-goals`)
+      .get(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set('Authorization', `Bearer ${outsider.token}`)
       .expect(404)
       .expect((res) => expect(res.body.message).toBe('PATIENT_NOT_FOUND'));
     await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set('Authorization', `Bearer ${outsider.token}`)
-      .send({ goalLow: 1 })
+      .send({ label: 'Sneaky', low: 1, effectiveFrom: '2026-01-01T00:00:00.000Z' })
       .expect(404);
-
+    // By-id routes find the patient through the row, and answer the same 404 a bad id gets —
+    // the row's existence isn't confirmed to someone with no business with that patient.
     await request(app.getHttpServer())
-      .delete(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
-      .set(auth())
-      .expect(200);
-    await request(app.getHttpServer())
-      .delete(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
-      .set(auth())
+      .patch(`/api/analyte-ranges/${mine.body.id}`)
+      .set('Authorization', `Bearer ${outsider.token}`)
+      .send({ low: 999 })
       .expect(404)
-      .expect((res) => expect(res.body.message).toBe('ANALYTE_GOAL_NOT_FOUND'));
+      .expect((res) => expect(res.body.message).toBe('ANALYTE_RANGE_NOT_FOUND'));
+    await request(app.getHttpServer())
+      .delete(`/api/analyte-ranges/${mine.body.id}`)
+      .set('Authorization', `Bearer ${outsider.token}`)
+      .expect(404);
   });
 
   it('returns a patient-scoped history of recorded values with its standards', async () => {
@@ -289,15 +305,15 @@ describe('Analytes (e2e)', () => {
       await request(app.getHttpServer()).post('/api/analytes').set(auth()).send({ name: 'HISTORY ANALYTE' }).expect(201)
     ).body;
     await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .send({ refLow: 10, refHigh: 20, effectiveFrom: '2024-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 10, high: 20, effectiveFrom: '2024-01-01T00:00:00.000Z' })
       .expect(201);
     await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .send({ goalLow: 18 })
-      .expect(200);
+      .send({ label: 'My target', low: 18, effectiveFrom: '2024-01-01T00:00:00.000Z' })
+      .expect(201);
 
     for (const [observedAt, valueText] of [
       ['2025-03-01T09:00:00.000Z', '12'],
@@ -329,8 +345,10 @@ describe('Analytes (e2e)', () => {
       .set(auth())
       .expect(200);
     expect(history.body.analyte.id).toBe(analyte.id);
-    expect(history.body.ranges.length).toBe(1);
-    expect(history.body.goal.goalLow).toBe(18);
+    // Both lineages come back — the lab's and the caregiver's, told apart by kind.
+    expect(history.body.ranges.length).toBe(2);
+    expect(history.body.ranges.map((r: any) => r.label).sort()).toEqual(['My target', 'Reference']);
+    expect(history.body.ranges.find((r: any) => r.kind === 'custom').low).toBe(18);
     expect(history.body.points.map((p: any) => p.valueText)).toEqual(['12', '17']); // ascending
     expect(typeof history.body.points[0].observedAt).toBe('number'); // epoch seconds
 
@@ -341,20 +359,20 @@ describe('Analytes (e2e)', () => {
       .expect(404);
   });
 
-  it('refuses to delete an analyte with recorded results, and takes its ranges and goals when it does', async () => {
+  it('refuses to delete an analyte with recorded results, and takes every patient\'s ranges when it does', async () => {
     const analyte = (
       await request(app.getHttpServer()).post('/api/analytes').set(auth()).send({ name: 'DELETE ME' }).expect(201)
     ).body;
     await request(app.getHttpServer())
-      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .send({ refLow: 1, refHigh: 2, effectiveFrom: '2024-01-01T00:00:00.000Z' })
+      .send({ label: 'Reference', kind: 'reference', low: 1, high: 2, effectiveFrom: '2024-01-01T00:00:00.000Z' })
       .expect(201);
     await request(app.getHttpServer())
-      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+      .post(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .send({ goalHigh: 5 })
-      .expect(200);
+      .send({ label: 'My target', high: 5, effectiveFrom: '2024-01-01T00:00:00.000Z' })
+      .expect(201);
 
     const observation = await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/observations`)
@@ -371,8 +389,8 @@ describe('Analytes (e2e)', () => {
     expect(blocked.body.message).toBe('ANALYTE_IN_USE');
     expect(blocked.body.dependents).toEqual({ labResults: 1 });
 
-    // Remove the measurement and the analyte goes, ranges and goals with it (unlike medications,
-    // whose own children block — see analyte-dependencies.ts).
+    // Remove the measurement and the analyte goes, every patient's ranges with it (unlike
+    // medications, whose own children block — see analyte-dependencies.ts).
     await request(app.getHttpServer())
       .patch(`/api/observations/${observation.body.id}`)
       .set(auth())
@@ -381,15 +399,18 @@ describe('Analytes (e2e)', () => {
 
     await request(app.getHttpServer()).delete(`/api/analytes/${analyte.id}`).set(auth()).expect(200);
     await request(app.getHttpServer()).get(`/api/analytes/${analyte.id}`).set(auth()).expect(404);
+    // The ranges went with it: the route now 404s on the analyte itself.
     await request(app.getHttpServer())
-      .get(`/api/patients/${patientId}/analyte-goals`)
+      .get(`/api/patients/${patientId}/analytes/${analyte.id}/ranges`)
       .set(auth())
-      .expect(200)
-      .expect((res) => expect(res.body.some((g: any) => g.analyteId === analyte.id)).toBe(false));
+      .expect(404);
   });
 
   it('requires authentication', async () => {
     await request(app.getHttpServer()).get('/api/analytes').expect(401);
     await request(app.getHttpServer()).post('/api/analytes').send({ name: 'X' }).expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/analytes/11111111-1111-4111-8111-111111111111/ranges`)
+      .expect(401);
   });
 });

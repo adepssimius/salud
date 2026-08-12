@@ -7,7 +7,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
   Query,
   Request,
   UseGuards,
@@ -18,14 +17,13 @@ import { JwtAuthGuard } from '../auth/jwt.guard';
 import { AnalytesService } from './analytes.service';
 import { CreateAnalyteDto } from './dto/create-analyte.dto';
 import { UpdateAnalyteDto } from './dto/update-analyte.dto';
-import { CreateReferenceRangeDto } from './dto/create-reference-range.dto';
-import { UpdateReferenceRangeDto } from './dto/update-reference-range.dto';
-import { UpsertAnalyteGoalDto } from './dto/upsert-analyte-goal.dto';
+import { CreateAnalyteRangeDto } from './dto/create-analyte-range.dto';
+import { UpdateAnalyteRangeDto } from './dto/update-analyte-range.dto';
 import { ResolveAnalytesDto } from './dto/resolve-analytes.dto';
 
-// Paths written out in full (medications-controller style) so the reference-range and goal routes
-// sit at their natural top level rather than nested under a controller prefix. The analyte routes
-// are household-global; goals and history are patient-scoped and access-checked in the service.
+// Paths written out in full (medications-controller style) so the by-id range routes sit at their
+// natural top level rather than nested under a controller prefix. The analyte routes themselves
+// are household-global; ranges and history are patient-scoped and access-checked in the service.
 @Controller()
 @UseGuards(JwtAuthGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -63,57 +61,42 @@ export class AnalytesController {
     return await this.analytes.remove(id);
   }
 
-  @Post('analytes/:id/reference-ranges')
+  @Post('patients/:patientId/analytes/:analyteId/ranges')
   async createRange(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() dto: CreateReferenceRangeDto,
+    @Request() req: any,
+    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+    @Param('analyteId', new ParseUUIDPipe({ version: '4' })) analyteId: string,
+    @Body() dto: CreateAnalyteRangeDto,
   ) {
-    return await this.analytes.createRange(id, dto);
+    return await this.analytes.createRange(patientId, analyteId, req.user.userId, dto);
   }
 
-  @Get('analytes/:id/reference-ranges')
-  async listRanges(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return await this.analytes.listRanges(id);
+  @Get('patients/:patientId/analytes/:analyteId/ranges')
+  async listRanges(
+    @Request() req: any,
+    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+    @Param('analyteId', new ParseUUIDPipe({ version: '4' })) analyteId: string,
+  ) {
+    return await this.analytes.listRanges(patientId, analyteId, req.user.userId);
   }
 
-  @Patch('reference-ranges/:id')
+  // By id: the row names its own patient, so membership is checked from the row rather than the
+  // path, and a non-member gets the same 404 an unknown id gets.
+  @Patch('analyte-ranges/:id')
   async updateRange(
+    @Request() req: any,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() dto: UpdateReferenceRangeDto,
+    @Body() dto: UpdateAnalyteRangeDto,
   ) {
-    return await this.analytes.updateRange(id, dto);
+    return await this.analytes.updateRange(id, req.user.userId, dto);
   }
 
-  @Delete('reference-ranges/:id')
-  async removeRange(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return await this.analytes.removeRange(id);
-  }
-
-  @Get('patients/:patientId/analyte-goals')
-  async listGoals(
+  @Delete('analyte-ranges/:id')
+  async removeRange(
     @Request() req: any,
-    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ) {
-    return await this.analytes.listGoals(patientId, req.user.userId);
-  }
-
-  @Put('patients/:patientId/analyte-goals/:analyteId')
-  async upsertGoal(
-    @Request() req: any,
-    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
-    @Param('analyteId', new ParseUUIDPipe({ version: '4' })) analyteId: string,
-    @Body() dto: UpsertAnalyteGoalDto,
-  ) {
-    return await this.analytes.upsertGoal(patientId, analyteId, req.user.userId, dto);
-  }
-
-  @Delete('patients/:patientId/analyte-goals/:analyteId')
-  async removeGoal(
-    @Request() req: any,
-    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
-    @Param('analyteId', new ParseUUIDPipe({ version: '4' })) analyteId: string,
-  ) {
-    return await this.analytes.removeGoal(patientId, analyteId, req.user.userId);
+    return await this.analytes.removeRange(id, req.user.userId);
   }
 
   @Get('patients/:patientId/analytes/:analyteId/history')

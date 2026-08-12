@@ -1,13 +1,26 @@
 meta {
-  name: List Reference Ranges
+  name: List Ranges
   type: http
   seq: 8
 }
 
 get {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{analyteId}}/reference-ranges
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/analytes/{{analyteId}}/ranges
   body: none
   auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients && patients.length) {
+      bru.setVar('patientId', patients[0].id);
+    } else {
+      console.log('No patients found. Create one first.');
+    }
+  }
 }
 
 settings {
@@ -16,5 +29,7 @@ settings {
 }
 
 docs {
-  Newest effectiveFrom first. There is no effectiveTo — each row ends where the next begins.
+  This patient's ranges for this analyte — every lineage, newest effectiveFrom first. Another
+  patient's ranges for the same analyte are a separate set: the analyte is shared, the standards
+  are not. 404 PATIENT_NOT_FOUND to a non-member.
 }

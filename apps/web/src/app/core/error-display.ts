@@ -17,15 +17,13 @@
 
 export const ERROR_SENTENCES = {
   ADVISORY_NOT_FOUND: 'That alert is no longer showing. Refresh the page to see the current ones.',
-  ANALYTE_GOAL_EMPTY: 'A goal needs at least a low or a high bound.',
-  ANALYTE_GOAL_NOT_FOUND: 'No goal is set for this patient and analyte.',
   ANALYTE_IN_USE:
     "This analyte still has recorded lab results pointing at it, so it can't be deleted. Remove or re-map those results first.",
   ANALYTE_NAME_TAKEN:
     'An analyte with that name is already in the catalog. Open that one instead, or choose a different name.',
   ANALYTE_NOT_FOUND: 'That analyte is no longer in the catalog. Search for it again.',
-  ANALYTE_RANGE_EMPTY: 'A reference range needs a low bound, a high bound, or range text.',
-  ANALYTE_RANGE_NOT_FOUND: 'That reference range no longer exists. Reload this analyte.',
+  ANALYTE_RANGE_EMPTY: 'A range needs a low bound, a high bound, or range text.',
+  ANALYTE_RANGE_NOT_FOUND: 'That range no longer exists. Reload this analyte.',
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',

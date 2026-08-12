@@ -15,17 +15,32 @@ const ANALYTE = {
 };
 
 const day = 86400;
-const RANGES = [
-  { id: 'r2', analyteId: 'a1', refLow: 38, refHigh: 380, refText: null, effectiveFrom: 1700000000, source: 'Quest report', createdAt: 0, updatedAt: 0 },
-  { id: 'r1', analyteId: 'a1', refLow: 30, refHigh: 400, refText: null, effectiveFrom: 1600000000, source: 'Older standard', createdAt: 0, updatedAt: 0 },
-];
+const range = (over: Record<string, unknown>) => ({
+  analyteId: 'a1',
+  patientId: 'p1',
+  kind: 'reference',
+  label: 'Reference',
+  low: null,
+  high: null,
+  refText: null,
+  source: null,
+  createdAt: 0,
+  updatedAt: 0,
+  ...over,
+});
+
+// Two lineages: the lab's reference (revised once) and the caregiver's own one-sided target.
+const REFERENCE_OLD = range({ id: 'r1', low: 30, high: 400, effectiveFrom: 1600000000, source: 'Older standard' });
+const REFERENCE_NEW = range({ id: 'r2', low: 38, high: 380, effectiveFrom: 1700000000, source: 'Quest report' });
+const ATHLETIC_GOAL = range({ id: 'r3', kind: 'custom', label: 'Athletic goal', low: 120, effectiveFrom: 1600000000 });
+
+const RANGES = [REFERENCE_NEW, ATHLETIC_GOAL, REFERENCE_OLD]; // newest first, as the API returns
 
 const HISTORY = {
   analyte: ANALYTE,
-  ranges: [RANGES[1], RANGES[0]], // ascending, as the API returns them
-  goal: { id: 'g1', patientId: 'p1', analyteId: 'a1', goalLow: 120, goalHigh: null, note: 'athletic', createdAt: 0, updatedAt: 0 },
+  ranges: [REFERENCE_OLD, ATHLETIC_GOAL, REFERENCE_NEW], // ascending, as the API returns them
   // One result drawn under the older standard, one after the revision took effect — so the chart
-  // has to step its bands rather than draw one.
+  // has to step the reference bands rather than draw one.
   points: [
     { observationId: 'o1', observedAt: 1650000000, valueText: '37', value: 37, unit: 'ng/mL', flag: 'L' },
     { observationId: 'o2', observedAt: 1700000000 + 200 * day, valueText: '95', value: 95, unit: 'ng/mL', flag: null },
@@ -38,7 +53,7 @@ describe('AnalyteDetailPage', () => {
 
   function routeGets(url: string) {
     if (url === '/analytes/a1') return of(ANALYTE);
-    if (url === '/analytes/a1/reference-ranges') return of(RANGES);
+    if (url === '/patients/p1/analytes/a1/ranges') return of(RANGES);
     if (url === '/patients') return of([{ id: 'p1', fullName: 'Ben Penkacik' }]);
     if (url === '/patients/p1/analytes/a1/history') return of(HISTORY);
     return of(null);
@@ -57,41 +72,112 @@ describe('AnalyteDetailPage', () => {
     }).compileComponents();
   });
 
-  it('shows the analyte with its dated range history, marking the one in effect now', () => {
+  it('shows the analyte, and asks for a patient before any range', () => {
     const fixture = TestBed.createComponent(AnalyteDetailPage);
     fixture.detectChanges();
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Ferritin');
     expect(text).toContain('FERRITIN'); // what incoming reports match on
-    expect(text).toContain('38–380');
-    expect(text).toContain('30–400');
-    expect(text).toContain('current');
-    // The greatest effectiveFrom at or before now wins, exactly as the API resolves it.
-    expect(fixture.componentInstance.currentRangeId()).toBe('r2');
+    // Ranges belong to a patient, so nothing is fetched or shown until one is chosen.
+    expect(apiMock.get).not.toHaveBeenCalledWith('/patients/p1/analytes/a1/ranges');
+    expect(text).toContain('depends on who was measured');
   });
 
-  it('loads the goal and history once a patient is picked, and charts against range and goal', () => {
+  it('groups a patient\'s ranges into lineages, marking the row in effect within each', () => {
+    const fixture = TestBed.createComponent(AnalyteDetailPage);
+    fixture.detectChanges();
+    fixture.componentInstance.selectPatient('p1');
+    fixture.detectChanges();
+
+    expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/analytes/a1/ranges');
+    const lineages = fixture.componentInstance.lineages();
+    expect(lineages.map((l: any) => l.label)).toEqual(['Reference', 'Athletic goal']); // reference first
+    // Each lineage resolves its own current row — a newer reference doesn't unseat the goal.
+    expect(lineages[0].rows.map((r: any) => r.id)).toEqual(['r2', 'r1']); // newest first within
+    expect(lineages[0].currentId).toBe('r2');
+    expect(lineages[1].currentId).toBe('r3');
+
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('38–380');
+    expect(text).toContain('30–400');
+    expect(text).toContain('Athletic goal');
+    expect(text).toContain('at or above 120');
+  });
+
+  it('charts one band per row, clipped within its own lineage', () => {
     const fixture = TestBed.createComponent(AnalyteDetailPage);
     fixture.detectChanges();
     fixture.componentInstance.selectPatient('p1');
     fixture.detectChanges();
 
     expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/analytes/a1/history');
-    expect(fixture.componentInstance.goalForm.value.goalLow).toBe(120);
     expect(fixture.componentInstance.plotted().length).toBe(2);
-    // One band per range, the older one ending exactly where the revision takes effect.
+
     const bands = fixture.componentInstance.rangeBands();
-    expect(bands.length).toBe(2);
-    expect(bands[0].x + bands[0].width).toBeCloseTo(bands[1].x, 5);
-    expect(bands[0].label).toContain('30–400');
-    expect(bands[1].label).toContain('38–380');
-    expect(fixture.componentInstance.goalLines()).toEqual([
-      { y: expect.any(Number), label: 'Goal at or above 120' },
-    ]);
+    expect(bands.length).toBe(3); // two reference eras + the goal
+    const reference = bands.filter((b: any) => b.reference);
+    // The older reference ends exactly where the revision takes effect.
+    expect(reference[0].x + reference[0].width).toBeCloseTo(reference[1].x, 5);
+    expect(reference[0].label).toContain('30–400');
+    expect(reference[1].label).toContain('38–380');
+    // The goal spans the whole chart — a new reference range doesn't end it.
+    const goalBand = bands.find((b: any) => !b.reference);
+    expect(goalBand.label).toBe('Athletic goal at or above 120');
+    expect(goalBand.width).toBeCloseTo(fixture.componentInstance.chartWidth, 5);
+
     // Earlier point sits left of the later one, and the lower value sits below the higher one.
     const [first, second] = fixture.componentInstance.plotted();
     expect(first.x).toBeLessThan(second.x);
     expect(first.y).toBeGreaterThan(second.y);
+  });
+
+  it('scales the chart to include a bound no result has reached', () => {
+    const fixture = TestBed.createComponent(AnalyteDetailPage);
+    fixture.detectChanges();
+    fixture.componentInstance.selectPatient('p1');
+    fixture.detectChanges();
+    // Values top out at 95; the 120 goal and the 400 reference must still be on the canvas, or a
+    // caregiver would see a goal line that isn't there.
+    for (const band of fixture.componentInstance.rangeBands()) {
+      expect(band.y).toBeGreaterThanOrEqual(0);
+      expect(band.y + band.height).toBeLessThanOrEqual(fixture.componentInstance.chartHeight);
+    }
+  });
+
+  it('reloads ranges and history together when the patient changes', () => {
+    const fixture = TestBed.createComponent(AnalyteDetailPage);
+    fixture.detectChanges();
+    fixture.componentInstance.selectPatient('p1');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.ranges().length).toBe(3);
+
+    // Clearing the patient clears both — one person's standards must never render under another.
+    fixture.componentInstance.selectPatient(null);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.ranges()).toEqual([]);
+    expect(fixture.componentInstance.history()).toBeNull();
+  });
+
+  it('adds a named range for the selected patient, custom unless marked as the lab reference', () => {
+    apiMock.post.mockReturnValue(of({}));
+    const fixture = TestBed.createComponent(AnalyteDetailPage);
+    fixture.detectChanges();
+    fixture.componentInstance.selectPatient('p1');
+    fixture.componentInstance.rangeForm.setValue({
+      label: 'Optimal',
+      low: 30,
+      high: null,
+      refText: '',
+      effectiveFrom: '2026-07-20',
+      source: 'lab handout',
+      isReference: false,
+    });
+    fixture.componentInstance.addRange();
+
+    const [path, body] = apiMock.post.mock.calls[0];
+    expect(path).toBe('/patients/p1/analytes/a1/ranges');
+    expect(body).toMatchObject({ label: 'Optimal', kind: 'custom', low: 30, high: undefined, source: 'lab handout' });
+    expect(body.effectiveFrom).toEqual(expect.any(String));
   });
 
   it('lists rather than charts when the results are not all in the same unit', () => {
@@ -114,20 +200,6 @@ describe('AnalyteDetailPage', () => {
     expect(fixture.nativeElement.textContent).toContain('not all reported in the same unit');
   });
 
-  it('saves a goal for the selected patient', () => {
-    apiMock.put.mockReturnValue(of({}));
-    const fixture = TestBed.createComponent(AnalyteDetailPage);
-    fixture.detectChanges();
-    fixture.componentInstance.selectPatient('p1');
-    fixture.componentInstance.goalForm.setValue({ goalLow: 150, goalHigh: null, note: 'raised' });
-    fixture.componentInstance.saveGoal();
-    expect(apiMock.put).toHaveBeenCalledWith('/patients/p1/analyte-goals/a1', {
-      goalLow: 150,
-      goalHigh: undefined,
-      note: 'raised',
-    });
-  });
-
   it('explains an in-use analyte instead of deleting it', () => {
     apiMock.delete.mockReturnValue(throwError(() => ({ error: { message: 'ANALYTE_IN_USE' } })));
     const fixture = TestBed.createComponent(AnalyteDetailPage);
@@ -140,10 +212,10 @@ describe('AnalyteDetailPage', () => {
   it('describes open-ended and text-only ranges in words', () => {
     const fixture = TestBed.createComponent(AnalyteDetailPage);
     const page = fixture.componentInstance;
-    expect(page.describeRange({ refLow: 38, refHigh: 380, refText: null })).toBe('38–380');
-    expect(page.describeRange({ refLow: null, refHigh: 90, refText: null })).toBe('at or below 90');
-    expect(page.describeRange({ refLow: 120, refHigh: null, refText: null })).toBe('at or above 120');
-    expect(page.describeRange({ refLow: null, refHigh: null, refText: 'For 8 a.m. specimens' })).toBe(
+    expect(page.describeRange({ low: 38, high: 380, refText: null })).toBe('38–380');
+    expect(page.describeRange({ low: null, high: 90, refText: null })).toBe('at or below 90');
+    expect(page.describeRange({ low: 120, high: null, refText: null })).toBe('at or above 120');
+    expect(page.describeRange({ low: null, high: null, refText: 'For 8 a.m. specimens' })).toBe(
       'For 8 a.m. specimens',
     );
   });

@@ -313,9 +313,9 @@ what keeps a brief read three days later from claiming to show "the last 72 hour
   - Parser `warnings` (verbatim unclassified lines) shown in their own card when non-empty.
   - The analyte table, grouped under panel subheadings: checkbox (all selected by default),
     analyte (the catalog's `displayName` once known), value + unit, the **printed** flag as a
-    danger pill, the reference range, and the patient's goal when one is set. The UI may
-    additionally highlight values outside the range or the goal at display time, but records only
-    what the report printed (P6).
+    danger pill, the reference range, and this patient's own named ranges when any are set
+    ("Athletic goal at or above 120"). The UI may additionally highlight values outside a range at
+    display time, but records only what the report printed (P6).
   - **Catalog status per row** (api.md → Lab imports, `resolutions`): a `new` pill on analytes
     being added to the catalog for the first time, a `new range` pill where a range is being
     recorded for an analyte that had none in effect. Neither asks — both are additive.
@@ -339,27 +339,34 @@ what keeps a brief read three days later from claiming to show "the last 72 hour
 
 ## Analyte catalog
 - `/analytes` (list) and `/analytes/:id` (detail), reached from the dashboard beside the medication
-  catalog. Global to the household, like medications — populated by importing reports, so a fresh
-  install shows an empty catalog until the first lab import.
+  catalog. The analyte itself is global to the household, like medications — populated by importing
+  reports, so a fresh install shows an empty catalog until the first lab import. Its **ranges are
+  per-patient**, so the detail page works one patient at a time.
 - **List**: search box (`?q=`), one row per analyte showing `displayName`, the lab's verbatim
   printed `name` muted beneath it when it differs, and the unit. A minimal add form covers the rare
   hand-added analyte.
 - **Detail**, one section each:
-  - **Header** — editable `displayName` and `unit`; the verbatim `name` shown muted and read-only
-    alongside, since it is what incoming reports match against.
-  - **Reference ranges** — the dated history newest-first, each row showing its bounds (or verbatim
-    text), `effectiveFrom`, and `source`; a "current" pill marks the row in effect now. Add and
-    delete; ranges are a standard that changes over time, so editing history is normal, not a
-    correction flow.
-  - **Goals** — a patient picker; the selected patient's goal shown with edit and clear actions.
-    A goal is a personal target ("ferritin at or above 120"), deliberately separate from the
-    reference range, and it is never used to compute a flag onto the record (P6).
+  - **Header** — editable `displayName`, `unit` and `panel`; the verbatim `name` shown muted and
+    read-only alongside, since it is what incoming reports match against.
+  - **Patient picker** — everything below it is scoped to the selected patient. Switching patients
+    reloads the ranges and the history together, because both belong to that person.
+  - **Ranges** — this patient's named ranges, grouped by lineage (label), each lineage's rows dated
+    newest-first with bounds (or verbatim text), `effectiveFrom` and `source`; a "current" pill
+    marks the row in effect now within its lineage. One-sided ranges read in words — "at or above
+    120", "below 20". Add and delete; a range is a standard that changes over time, so adding a
+    newer dated row is normal, not a correction flow. The add form names the range, so the lab's
+    `"Reference"`, an interpretation band (`"Optimal"`), and a personal target
+    (`"Athletic goal"`) are entered the same way — with a checkbox marking the one lineage incoming
+    reports should compare against.
   - **History** — for the selected patient, every recorded value of this analyte over time as a
-    hand-drawn SVG chart (same no-charting-library treatment as the timeline): shaded bands for
-    each reference range's effective span, a dashed line for the goal, and the value series with
+    hand-drawn SVG chart (same no-charting-library treatment as the timeline): a labeled shaded
+    band per range lineage, clipped to each row's effective span, plus the value series with
     per-point tooltips. Non-numeric values (`"<0.2"`) are listed below the chart rather than
     plotted. If the series mixes units, the chart says so instead of co-plotting incomparable
     numbers.
+- Interpretation bands ("Deficiency below 20") are **entered by hand**, never read out of the
+  report's advice text — the parser surfaces those lines as import warnings and the caregiver
+  decides what to record (P6).
 - Deleting an analyte that has recorded results is refused, and the message says how many results
   are in the way.
 

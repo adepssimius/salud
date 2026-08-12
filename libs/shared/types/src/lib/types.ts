@@ -43,9 +43,9 @@ export interface ObservationEntry {
   id: string;
   type: ObservationType;
   metadata: Record<string, any> | null;
-  // Read-only enrichment on lab_result entries — the analyte's display name plus the reference
-  // range in effect at this observation's observedAt and the patient's goal. Never stored, never
-  // accepted on write (see LabResultContext, below).
+  // Read-only enrichment on lab_result entries — the analyte's display name plus every range this
+  // patient holds for it, resolved at this observation's observedAt. Never stored, never accepted
+  // on write (see LabResultContext, below).
   labContext?: LabResultContext;
 }
 
@@ -989,7 +989,8 @@ export interface PatientFileSummary {
 }
 
 // Analyte catalog — see app-spec/data-model.md "Analyte catalog" and api.md "Analytes".
-// Global (not patient-scoped) like the medication catalog, except goals, which are per-patient.
+// The ANALYTE is global like the medication catalog; its RANGES are per-patient, because what a
+// value should be depends on who was measured.
 export interface Analyte {
   id: string;
   name: string; // the lab's printed name, verbatim from first ingest
@@ -1002,28 +1003,40 @@ export interface Analyte {
   updatedAt: number;
 }
 
-export interface AnalyteReferenceRange {
+// Every named band a value is read against — the lab's "Reference", an interpretation segment
+// ("Optimal"), a personal target ("Athletic goal"). Rows sharing (patientId, analyteId, kind,
+// case-insensitive label) form an effective-dated LINEAGE; the row in effect at time t is the
+// greatest effectiveFrom <= t within its own lineage.
+export type AnalyteRangeKind = 'reference' | 'custom';
+
+export interface AnalyteRange {
   id: string;
   analyteId: string;
-  refLow: number | null;
-  refHigh: number | null;
+  patientId: string;
+  // 'reference' is the lineage incoming reports are compared against; everything else is 'custom'.
+  kind: AnalyteRangeKind;
+  label: string;
+  // One-sided is normal: "Athletic goal" is low-only, "Deficiency" is high-only.
+  low: number | null;
+  high: number | null;
   refText: string | null;
-  effectiveFrom: number; // epoch seconds — in effect until the next row's effectiveFrom
+  effectiveFrom: number; // epoch seconds — in effect until the next row in ITS lineage
   source: string | null;
+  displayName?: string; // joined for rendering on cross-analyte list responses
   createdAt: number;
   updatedAt: number;
 }
 
-export interface AnalyteGoal {
+// A range lineage resolved to one moment — the shape carried by read-time context and import
+// resolutions. A projection of AnalyteRange, without the row bookkeeping a reader doesn't need.
+export interface ResolvedRange {
   id: string;
-  patientId: string;
-  analyteId: string;
-  displayName?: string; // joined for rendering on list responses
-  goalLow: number | null;
-  goalHigh: number | null;
-  note: string | null;
-  createdAt: number;
-  updatedAt: number;
+  kind: AnalyteRangeKind;
+  label: string;
+  low: number | null;
+  high: number | null;
+  refText: string | null;
+  effectiveFrom: number;
 }
 
 export interface CreateAnalyteDto {
@@ -1040,21 +1053,17 @@ export interface UpdateAnalyteDto {
   panel?: string | null;
 }
 
-export interface CreateReferenceRangeDto {
-  refLow?: number | null;
-  refHigh?: number | null;
+export interface CreateAnalyteRangeDto {
+  label: string;
+  kind?: AnalyteRangeKind; // defaults to 'custom'
+  low?: number | null;
+  high?: number | null;
   refText?: string | null;
   effectiveFrom: string; // ISO datetime (request-body convention)
   source?: string | null;
 }
 
-export type UpdateReferenceRangeDto = Partial<CreateReferenceRangeDto>;
-
-export interface UpsertAnalyteGoalDto {
-  goalLow?: number | null;
-  goalHigh?: number | null;
-  note?: string | null;
-}
+export type UpdateAnalyteRangeDto = Partial<CreateAnalyteRangeDto>;
 
 // Each entry carries the context the report printed alongside the name. Context is applied only
 // when the analyte is CREATED — an import never overwrites what the catalog already says.
@@ -1086,8 +1095,7 @@ export interface AnalyteHistoryPoint {
 
 export interface AnalyteHistory {
   analyte: Analyte;
-  ranges: AnalyteReferenceRange[]; // ascending by effectiveFrom
-  goal: AnalyteGoal | null;
+  ranges: AnalyteRange[]; // this patient's rows, all lineages, ascending by effectiveFrom
   points: AnalyteHistoryPoint[]; // ascending by observedAt
 }
 
@@ -1140,14 +1148,12 @@ export interface LabAnalyteResolution {
   analyteId: string | null; // null exactly when status is 'new'
   displayName: string;
   status: LabAnalyteResolutionStatus;
-  catalogRange: {
-    id: string;
-    refLow: number | null;
-    refHigh: number | null;
-    refText: string | null;
-    effectiveFrom: number;
-  } | null;
-  goal: { goalLow: number | null; goalHigh: number | null; note: string | null } | null;
+  // This patient's 'reference'-kind range effective at the report's collection time — what the
+  // printed range is being compared against. Null when they have none yet.
+  catalogRange: ResolvedRange | null;
+  // Their other effective ranges for this analyte (targets, interpretation bands), for preview
+  // display only — the import never touches them.
+  ranges: ResolvedRange[];
 }
 
 export interface LabImportResult {
@@ -1174,14 +1180,10 @@ export interface LabResultMetadata {
 // through PATCH must not carry it.
 export interface LabResultContext {
   displayName: string;
-  referenceRange: {
-    id: string;
-    refLow: number | null;
-    refHigh: number | null;
-    refText: string | null;
-    effectiveFrom: number;
-  } | null;
-  goal: { goalLow: number | null; goalHigh: number | null; note: string | null } | null;
+  // One entry per range lineage this patient holds for the analyte, each resolved to the row in
+  // effect at the observation's observedAt. The lab's "Reference" and the caregiver's own
+  // "Athletic goal" sit side by side, told apart by `kind`, not by which field they arrived in.
+  ranges: ResolvedRange[];
 }
 
 export interface DocumentMetadata {

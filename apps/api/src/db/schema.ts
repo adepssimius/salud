@@ -196,36 +196,36 @@ export const analytes = sqliteTable('analytes', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
 
-// Effective-dated: the range in effect at time t is the row with the greatest effectiveFrom <= t.
-// No effectiveTo — each row ends where the next begins, so importing an older report inserts an
-// earlier row without rewriting anything (data-model.md → AnalyteReferenceRange).
-export const analyteReferenceRanges = sqliteTable('analyte_reference_ranges', {
+// Every named band a value is read against — the lab's "Reference", an interpretation segment
+// ("Optimal"), a personal target ("Athletic goal") — is one row here, belonging to one patient:
+// what counts as normal depends on who was measured (data-model.md → AnalyteRange).
+//
+// Effective-dated per LINEAGE, where a lineage is (patientId, analyteId, kind, lower(label)):
+// the row in effect at time t is the greatest effectiveFrom <= t within its own lineage. No
+// effectiveTo — each row ends where the next in its lineage begins, so importing an older report
+// inserts an earlier row without rewriting anything.
+export const analyteRanges = sqliteTable('analyte_ranges', {
   id: text('id').primaryKey(),
   analyteId: text('analyte_id')
     .notNull()
     .references(() => analytes.id),
-  refLow: real('ref_low'),
-  refHigh: real('ref_high'),
-  refText: text('ref_text'),
-  effectiveFrom: integer('effective_from', { mode: 'timestamp' }).notNull(),
-  source: text('source'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
-});
-
-// One row per (patient, analyte) — writes are upserts. A goal is the caregiver's own target,
-// distinct from the reference range, and never computes a flag onto the record (P6).
-export const analyteGoals = sqliteTable('analyte_goals', {
-  id: text('id').primaryKey(),
   patientId: text('patient_id')
     .notNull()
     .references(() => patients.id),
-  analyteId: text('analyte_id')
+  // 'reference' is the single lineage the importer maintains and compares printed ranges against;
+  // everything else is 'custom'. A functional distinction, not a display one — `label` carries
+  // the meaning.
+  kind: text('kind', { enum: ['reference', 'custom'] })
     .notNull()
-    .references(() => analytes.id),
-  goalLow: real('goal_low'),
-  goalHigh: real('goal_high'),
-  note: text('note'),
+    .default('custom'),
+  label: text('label').notNull(),
+  // One-sided ranges are normal, not degenerate: "Athletic goal" is low-only, "Deficiency" is
+  // high-only. At least one of low/high/refText is required, enforced service-side.
+  low: real('low'),
+  high: real('high'),
+  refText: text('ref_text'),
+  effectiveFrom: integer('effective_from', { mode: 'timestamp' }).notNull(),
+  source: text('source'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });

@@ -136,7 +136,7 @@ export class ObservationsService {
     if (!analyteIds.length) return mapped;
 
     // Every observation in one response belongs to one patient (list is patient-scoped, getById
-    // returns one), so a single goal lookup covers them all.
+    // returns one), so a single range lookup covers them all.
     const sources = await this.analytesService.labContextSources(mapped[0].patientId, analyteIds);
     for (const obs of mapped) {
       for (const entry of obs.entries) {
@@ -145,10 +145,9 @@ export class ObservationsService {
         if (!source) continue; // deleted analyte: no context rather than a broken read
         entry.labContext = {
           displayName: source.displayName,
-          referenceRange: AnalytesService.rangeContext(
-            AnalytesService.resolveRangeAt(source.ranges, obs.observedAt ?? 0),
+          ranges: AnalytesService.resolveLineagesAt(source.ranges, obs.observedAt ?? 0).map((r) =>
+            AnalytesService.rangeContext(r),
           ),
-          goal: source.goal,
         };
       }
     }

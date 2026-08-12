@@ -223,7 +223,8 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       Reference-range fields are **rejected** on `lab_result` metadata (`OBSERVATION_SCHEMA_INVALID`,
       like any unrecognized field): the range is a catalog standard, not measurement data.
   - **Reads hydrate `lab_result` entries** with a non-persisted `labContext` sibling
-    (`{ displayName, referenceRange, goal }`, the range resolved at the observation's `observedAt`)
+    (`{ displayName, ranges }` — every one of the patient's range lineages for that analyte,
+    each resolved at the observation's `observedAt`)
     — data-model.md → "Lab result read-time context". It is never accepted on write; a `PATCH` that
     echoes an observation back must omit it.
     - Numeric entry metadata is range-checked (data-model.md → "Observation entry structured
@@ -844,9 +845,10 @@ not a new API.
       "resolutions": [
         { "analyte": "FERRITIN", "analyteId": "…", "displayName": "Ferritin",
           "status": "conflict",
-          "catalogRange": { "id": "…", "refLow": 30, "refHigh": 400, "refText": null,
-                            "effectiveFrom": 1750000000 },
-          "goal": { "goalLow": 120, "goalHigh": null, "note": "athletic target" } }
+          "catalogRange": { "id": "…", "label": "Reference", "low": 30, "high": 400,
+                            "refText": null, "effectiveFrom": 1750000000 },
+          "ranges": [ { "id": "…", "kind": "custom", "label": "Athletic goal", "low": 120,
+                        "high": null, "refText": null, "effectiveFrom": 1750000000 } ] }
       ]
     }
     ```
@@ -854,18 +856,20 @@ not a new API.
     persisted. Partial parses are successes: unclassifiable lines land in `warnings` (deduped,
     capped) so the preview can show them; zero parsed analytes is still a 201.
   - `resolutions` is **index-aligned with `parsed.analytes`**. Each entry compares the report's
-    printed range against the catalog range in effect at `collectedAt` (falling back to
-    `reportedAt`, then now, when the report prints no collection time). `status` is one of:
+    printed range against **this patient's** `reference`-kind range in effect at `collectedAt`
+    (falling back to `reportedAt`, then now, when the report prints no collection time). `status`
+    is one of:
     | status | meaning | what confirm does |
     | --- | --- | --- |
-    | `new` | name not in the catalog (case-insensitive) | auto-creates the analyte, and its printed range as the first effective-dated row |
-    | `match` | printed range equals the effective catalog range | nothing |
-    | `conflict` | printed range differs from the effective catalog range | **asks** — adds a new effective-dated range only if the caregiver accepts |
-    | `new_range` | analyte exists but no range is effective at `collectedAt`, and the report prints one | adds it (nothing is being overwritten) |
+    | `new` | name not in the catalog (case-insensitive) | auto-creates the analyte, and its printed range as this patient's first `reference` row |
+    | `match` | printed range equals the patient's effective `reference` range | nothing |
+    | `conflict` | printed range differs from the patient's effective `reference` range | **asks** — adds a new effective-dated `reference` row only if the caregiver accepts |
+    | `new_range` | analyte exists but this patient has no `reference` range effective at `collectedAt`, and the report prints one | adds it (nothing is being overwritten) |
     | `no_printed_range` | the report prints no range for this row | nothing |
-    Equality is numeric on `refLow`/`refHigh` and trimmed-string on `refText`, with `null` equal to
-    `null`. `analyteId` is `null` exactly when `status` is `new`. `goal` is this patient's goal for
-    the analyte, for preview display only.
+    Equality is numeric on `low`/`high` and trimmed-string on `refText`, with `null` equal to
+    `null`. `analyteId` is `null` exactly when `status` is `new`. `ranges` carries this patient's
+    other effective ranges for the analyte (`custom` lineages — targets, interpretation bands), for
+    preview display only.
   - Errors: 404 `PATIENT_NOT_FOUND` (non-member); 400 `LAB_FILE_NOT_FOUND` (unknown fileId, or a
     file that doesn't belong to this patient — same non-disclosure semantics as
     `PHOTO_FILE_NOT_FOUND`); 400 `LAB_PDF_UNPARSEABLE` (not a PDF, unreadable, or image-only with
@@ -874,9 +878,9 @@ not a new API.
 
 ## Analytes
 
-The lab-analyte catalog (data-model.md → "Analyte catalog"): global like the medication catalog,
-not patient-scoped, populated by ingestion rather than a seed. Reference ranges are effective-dated
-standards; goals are per-patient targets.
+The lab-analyte catalog (data-model.md → "Analyte catalog"). The **analyte** is global like the
+medication catalog, populated by ingestion rather than a seed; its **ranges are per-patient**, since
+what a value should be depends on who was measured.
 
 - `POST /api/analytes` — `{ name, displayName?, unit?, panel? }`. `displayName` defaults to Title
   Case of `name`. 409 `ANALYTE_NAME_TAKEN` on a case-insensitive collision with an existing `name`.
@@ -886,8 +890,8 @@ standards; goals are per-patient targets.
 - `PATCH /api/analytes/:id` — `{ name?, displayName?, unit?, panel? }`; a rename re-checks
   availability (renaming to its own current name is a no-op, not a conflict).
 - `DELETE /api/analytes/:id` — 409 `ANALYTE_IN_USE` with `{ dependents: { labResults: n } }` when
-  any `lab_result` entry references it. Otherwise deletes the analyte together with its own
-  reference ranges and goals (data-model.md explains the divergence from the medication catalog).
+  any `lab_result` entry references it. Otherwise deletes the analyte together with every patient's
+  ranges for it (data-model.md explains the divergence from the medication catalog).
 - `POST /api/analytes/resolve` — `{ analytes: [{ name, unit?, panel? }] }` (≤ 200 entries) →
   `[{ name, analyteId, displayName, created }]` **in input order**. Case-insensitive match on
   `name`; missing analytes are created with a title-cased `displayName` and the submitted
@@ -895,23 +899,31 @@ standards; goals are per-patient targets.
   second time, and the second call's `unit`/`panel` are **ignored** — an import never rewrites
   what the catalog already says. This is how a client turns printed names into `analyteId`s before
   writing `lab_result` entries.
-- `POST /api/analytes/:id/reference-ranges` — `{ refLow?, refHigh?, refText?, effectiveFrom, source? }`.
-  At least one of `refLow`/`refHigh`/`refText` required (400 `ANALYTE_RANGE_EMPTY`);
-  `effectiveFrom` is an ISO datetime. **Retry-safe**: if the row already effective at that
-  `effectiveFrom` carries identical values, the existing row is returned and nothing is inserted.
-- `GET /api/analytes/:id/reference-ranges` — newest `effectiveFrom` first.
-- `PATCH /api/reference-ranges/:id`, `DELETE /api/reference-ranges/:id` — 404
-  `ANALYTE_RANGE_NOT_FOUND`.
-- `GET /api/patients/:patientId/analyte-goals` — this patient's goals, each with the analyte's
-  `displayName` for rendering.
-- `PUT /api/patients/:patientId/analyte-goals/:analyteId` — upsert `{ goalLow?, goalHigh?, note? }`;
-  one row per (patient, analyte). At least one bound required (400 `ANALYTE_GOAL_EMPTY`).
-- `DELETE /api/patients/:patientId/analyte-goals/:analyteId` — 404 `ANALYTE_GOAL_NOT_FOUND`.
+
+### Analyte ranges
+
+Every named band a value is read against — the lab's `"Reference"`, an interpretation segment
+(`"Optimal"`), a personal target (`"Athletic goal"`) — is one `AnalyteRange` row belonging to one
+patient. Rows sharing (patient, analyte, `kind`, case-insensitive `label`) form an effective-dated
+**lineage**; the row in effect at time *t* is the greatest `effectiveFrom ≤ t` within that lineage.
+
+- `POST /api/patients/:patientId/analytes/:analyteId/ranges` —
+  `{ label, kind?, low?, high?, refText?, effectiveFrom, source? }`. `kind` defaults to `custom`;
+  `reference` marks the lineage the importer maintains. `label` is required; at least one of
+  `low`/`high`/`refText` is required (400 `ANALYTE_RANGE_EMPTY`) — **one-sided ranges are normal**
+  (`{ label: "Athletic goal", low: 120 }`). `effectiveFrom` is an ISO datetime. **Retry-safe**: if
+  the row already effective in that lineage at that `effectiveFrom` carries identical values, the
+  existing row is returned and nothing is inserted.
+- `GET /api/patients/:patientId/analytes/:analyteId/ranges` — all lineages, newest `effectiveFrom`
+  first.
+- `PATCH /api/analyte-ranges/:id`, `DELETE /api/analyte-ranges/:id` — 404
+  `ANALYTE_RANGE_NOT_FOUND`. Membership is checked against the row's own `patientId`; a non-member
+  gets the same 404, which is also what a caller with a bad id gets.
 - `GET /api/patients/:patientId/analytes/:analyteId/history` — everything the history view needs in
-  one request: `{ analyte, ranges: AnalyteReferenceRange[] (ascending), goal, points: [{ observationId, observedAt, valueText, value, unit, flag }] (ascending) }`.
+  one request: `{ analyte, ranges: AnalyteRange[] (ascending by effectiveFrom), points: [{ observationId, observedAt, valueText, value, unit, flag }] (ascending) }`.
   Points come from this patient's `lab_result` entries naming the analyte.
-- All goal/history routes are patient-scoped and answer 404 `PATIENT_NOT_FOUND` to a non-member;
-  the analyte routes themselves are household-global and need only authentication.
+- All range and history routes are patient-scoped and answer 404 `PATIENT_NOT_FOUND` to a
+  non-member; the analyte routes themselves are household-global and need only authentication.
 
 ## Validation & errors
 - Error codes are returned as the message string so clients can branch on them.
@@ -1013,10 +1025,8 @@ sentence silently falls back to that call site's generic message rather than rea
 | `ANALYTE_NAME_TAKEN` | 409 | analyte create/rename colliding case-insensitively with an existing `name` |
 | `ANALYTE_NOT_FOUND` | 404, or 400 (array form) | unknown analyte id on an analyte route; 400 from an observation write whose `lab_result` entry names an analyte that does not exist |
 | `ANALYTE_IN_USE` | 409 | `DELETE /api/analytes/:id` with `lab_result` entries referencing it; body carries `dependents` |
-| `ANALYTE_RANGE_NOT_FOUND` | 404 | reference-range patch/delete — unknown id |
-| `ANALYTE_RANGE_EMPTY` | 400 | a reference range with none of `refLow`, `refHigh`, `refText` |
-| `ANALYTE_GOAL_NOT_FOUND` | 404 | goal delete for a (patient, analyte) pair with no goal set |
-| `ANALYTE_GOAL_EMPTY` | 400 | a goal with neither `goalLow` nor `goalHigh` |
+| `ANALYTE_RANGE_NOT_FOUND` | 404 | analyte-range patch/delete — unknown id, or a row belonging to a patient the caller is not on the care team for |
+| `ANALYTE_RANGE_EMPTY` | 400 | an analyte range with none of `low`, `high`, `refText` |
 
 ### Dosing warnings are not error codes
 `atypical_dose` is an advisory `type`, not an error — see "Dosing engine" above. A dose that exceeds

@@ -1,13 +1,19 @@
 meta {
-  name: Delete Reference Range
+  name: Delete Range
   type: http
   seq: 10
 }
 
 delete {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}reference-ranges/{{referenceRangeId}}
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analyte-ranges/{{analyteRangeId}}
   body: none
   auth: inherit
+}
+
+script:pre-request {
+  if (!bru.getVar('analyteRangeId')) {
+    console.log('No analyteRangeId set. Run "Create Range" first.');
+  }
 }
 
 settings {
@@ -16,6 +22,7 @@ settings {
 }
 
 docs {
-  404 ANALYTE_RANGE_NOT_FOUND for an unknown id. Deleting the row in effect makes the previous
-  one current again.
+  404 ANALYTE_RANGE_NOT_FOUND for an unknown id, or a row belonging to a patient the caller is not
+  on the care team for. Deleting a row reopens the era before it: the previous row in that lineage
+  becomes the one in effect again.
 }

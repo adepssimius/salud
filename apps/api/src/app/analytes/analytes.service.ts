@@ -3,18 +3,16 @@ import { randomUUID } from 'crypto';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import {
   Analyte,
-  AnalyteGoal,
   AnalyteHistory,
   AnalyteHistoryPoint,
-  AnalyteReferenceRange,
-  LabResultContext,
+  AnalyteRange,
   ResolveAnalyteInput,
   ResolveAnalytesResult,
+  ResolvedRange,
 } from '@salud/shared/types';
 import { DatabaseService } from '../persistence/database.service';
 import {
-  analyteGoals,
-  analyteReferenceRanges,
+  analyteRanges,
   analytes,
   careTeamMemberships,
   observationEntries,
@@ -24,9 +22,8 @@ import { normalizeTs } from '../persistence/time';
 import { analyteDependencies } from './analyte-dependencies';
 import { CreateAnalyteDto } from './dto/create-analyte.dto';
 import { UpdateAnalyteDto } from './dto/update-analyte.dto';
-import { CreateReferenceRangeDto } from './dto/create-reference-range.dto';
-import { UpdateReferenceRangeDto } from './dto/update-reference-range.dto';
-import { UpsertAnalyteGoalDto } from './dto/upsert-analyte-goal.dto';
+import { CreateAnalyteRangeDto } from './dto/create-analyte-range.dto';
+import { UpdateAnalyteRangeDto } from './dto/update-analyte-range.dto';
 
 /**
  * Title-case a lab's printed analyte name for the default display name.
@@ -47,6 +44,11 @@ export function titleCaseAnalyte(name: string): string {
 
 const normalizeName = (name: string) => name.trim().toLowerCase();
 
+// A lineage is one named band's history: rows sharing these four things are successive versions
+// of the same standard, and only they compete to be "in effect" at a moment.
+const lineageKey = (r: { patientId: string; analyteId: string; kind: string; label: string }) =>
+  `${r.patientId}\u0000${r.analyteId}\u0000${r.kind}\u0000${normalizeName(r.label)}`;
+
 @Injectable()
 export class AnalytesService {
   constructor(private readonly db: DatabaseService) {}
@@ -63,28 +65,18 @@ export class AnalytesService {
     };
   }
 
-  private pickRange(row: any): AnalyteReferenceRange {
+  private pickRange(row: any): AnalyteRange {
     return {
       id: row.id,
       analyteId: row.analyteId,
-      refLow: row.refLow ?? null,
-      refHigh: row.refHigh ?? null,
+      patientId: row.patientId,
+      kind: row.kind,
+      label: row.label,
+      low: row.low ?? null,
+      high: row.high ?? null,
       refText: row.refText ?? null,
       effectiveFrom: normalizeTs(row.effectiveFrom) as number,
       source: row.source ?? null,
-      createdAt: normalizeTs(row.createdAt),
-      updatedAt: normalizeTs(row.updatedAt),
-    };
-  }
-
-  private pickGoal(row: any): AnalyteGoal {
-    return {
-      id: row.id,
-      patientId: row.patientId,
-      analyteId: row.analyteId,
-      goalLow: row.goalLow ?? null,
-      goalHigh: row.goalHigh ?? null,
-      note: row.note ?? null,
       createdAt: normalizeTs(row.createdAt),
       updatedAt: normalizeTs(row.updatedAt),
     };
@@ -182,10 +174,9 @@ export class AnalytesService {
     if (Object.keys(dependents).length) {
       throw new ConflictException({ message: 'ANALYTE_IN_USE', dependents });
     }
-    // Ranges and goals go with it — see analyte-dependencies.ts for why this cascades where the
-    // medication catalog refuses to.
-    await db.delete(analyteReferenceRanges).where(eq(analyteReferenceRanges.analyteId, id));
-    await db.delete(analyteGoals).where(eq(analyteGoals.analyteId, id));
+    // Every patient's ranges go with it — see analyte-dependencies.ts for why this cascades where
+    // the medication catalog refuses to.
+    await db.delete(analyteRanges).where(eq(analyteRanges.analyteId, id));
     await db.delete(analytes).where(eq(analytes.id, id));
     return { deleted: true };
   }
@@ -232,16 +223,16 @@ export class AnalytesService {
     });
   }
 
-  // --- Reference ranges -----------------------------------------------------------------------
+  // --- Ranges ---------------------------------------------------------------------------------
 
   /**
-   * The range in effect at `atTs`: the row with the greatest `effectiveFrom` at or before it.
-   * Same filter-then-rank shape as DosingService.resolveGuideline, evaluated at the *event's*
+   * The row in effect at `atTs` **within one lineage**: the greatest `effectiveFrom` at or before
+   * it. Same filter-then-rank shape as DosingService.resolveGuideline, evaluated at the *event's*
    * time rather than now, so a result recorded years ago keeps being read against the standard
    * that applied when the specimen was drawn. Nothing is in effect before the earliest row.
    */
-  static resolveRangeAt(ranges: AnalyteReferenceRange[], atTs: number): AnalyteReferenceRange | null {
-    let winner: AnalyteReferenceRange | null = null;
+  static resolveRangeAt(ranges: AnalyteRange[], atTs: number): AnalyteRange | null {
+    let winner: AnalyteRange | null = null;
     for (const range of ranges) {
       if (range.effectiveFrom > atTs) continue;
       if (!winner || range.effectiveFrom > winner.effectiveFrom) winner = range;
@@ -249,164 +240,153 @@ export class AnalytesService {
     return winner;
   }
 
-  /** The resolved range as it appears on a read: the row's identity and its bounds, nothing else. */
-  static rangeContext(range: AnalyteReferenceRange | null): LabResultContext['referenceRange'] {
-    if (!range) return null;
+  /**
+   * One effective row per lineage — what a reader needs to judge a value: the lab's "Reference"
+   * and the caregiver's own "Athletic goal" side by side, each at its own version for that moment.
+   */
+  static resolveLineagesAt(ranges: AnalyteRange[], atTs: number): AnalyteRange[] {
+    const byLineage = new Map<string, AnalyteRange[]>();
+    for (const range of ranges) {
+      const key = lineageKey(range);
+      const bucket = byLineage.get(key);
+      if (bucket) bucket.push(range);
+      else byLineage.set(key, [range]);
+    }
+    const out: AnalyteRange[] = [];
+    for (const bucket of byLineage.values()) {
+      const winner = AnalytesService.resolveRangeAt(bucket, atTs);
+      if (winner) out.push(winner);
+    }
+    // Reference first, then by label, so a rendered list is stable rather than insertion-ordered.
+    out.sort((a, b) =>
+      a.kind === b.kind ? a.label.localeCompare(b.label) : a.kind === 'reference' ? -1 : 1,
+    );
+    return out;
+  }
+
+  /** A resolved row as it appears on a read: its identity and bounds, nothing else. */
+  static rangeContext(range: AnalyteRange): ResolvedRange {
     return {
       id: range.id,
-      refLow: range.refLow,
-      refHigh: range.refHigh,
+      kind: range.kind,
+      label: range.label,
+      low: range.low,
+      high: range.high,
       refText: range.refText,
       effectiveFrom: range.effectiveFrom,
     };
   }
 
-  private assertRangeNotEmpty(refLow: unknown, refHigh: unknown, refText: unknown) {
-    const hasBound = typeof refLow === 'number' || typeof refHigh === 'number';
+  private assertRangeNotEmpty(low: unknown, high: unknown, refText: unknown) {
+    const hasBound = typeof low === 'number' || typeof high === 'number';
     const hasText = typeof refText === 'string' && refText.trim().length > 0;
     if (!hasBound && !hasText) throw new BadRequestException('ANALYTE_RANGE_EMPTY');
   }
 
-  async listRanges(analyteId: string): Promise<AnalyteReferenceRange[]> {
+  /** All of one patient's ranges for one analyte, every lineage, newest first. */
+  async listRanges(patientId: string, analyteId: string, userId: string): Promise<AnalyteRange[]> {
+    await this.ensurePatientAccess(patientId, userId);
     await this.get(analyteId);
     const db = this.db.db as any;
     const rows = await db
       .select()
-      .from(analyteReferenceRanges)
-      .where(eq(analyteReferenceRanges.analyteId, analyteId))
-      .orderBy(desc(analyteReferenceRanges.effectiveFrom));
+      .from(analyteRanges)
+      .where(and(eq(analyteRanges.patientId, patientId), eq(analyteRanges.analyteId, analyteId)))
+      .orderBy(desc(analyteRanges.effectiveFrom));
     return rows.map((r: any) => this.pickRange(r));
   }
 
-  async createRange(analyteId: string, dto: CreateReferenceRangeDto): Promise<AnalyteReferenceRange> {
+  async createRange(
+    patientId: string,
+    analyteId: string,
+    userId: string,
+    dto: CreateAnalyteRangeDto,
+  ): Promise<AnalyteRange> {
+    await this.ensurePatientAccess(patientId, userId);
     await this.get(analyteId);
-    this.assertRangeNotEmpty(dto.refLow, dto.refHigh, dto.refText);
+    this.assertRangeNotEmpty(dto.low, dto.high, dto.refText);
     const db = this.db.db as any;
+    const kind = dto.kind ?? 'custom';
+    const label = dto.label.trim();
     const effectiveFrom = new Date(dto.effectiveFrom);
     const effectiveFromTs = Math.floor(effectiveFrom.getTime() / 1000);
 
     // Retry-safe: an import that partially failed and is being re-run must not stack identical
-    // ranges. Compares against the row already in effect at that moment, not just an exact-date
-    // match — re-posting the same standard is a no-op whichever date it carries.
-    const existing = await this.listRanges(analyteId);
-    const inEffect = AnalytesService.resolveRangeAt(existing, effectiveFromTs);
+    // rows. Compared within the lineage against whatever was in effect at that moment, not by
+    // exact date — re-posting the same standard is a no-op whichever date it carries.
+    const existing = await this.listRanges(patientId, analyteId, userId);
+    const sameLineage = existing.filter(
+      (r) => r.kind === kind && normalizeName(r.label) === normalizeName(label),
+    );
+    const inEffect = AnalytesService.resolveRangeAt(sameLineage, effectiveFromTs);
     if (
       inEffect &&
-      (inEffect.refLow ?? null) === (dto.refLow ?? null) &&
-      (inEffect.refHigh ?? null) === (dto.refHigh ?? null) &&
+      (inEffect.low ?? null) === (dto.low ?? null) &&
+      (inEffect.high ?? null) === (dto.high ?? null) &&
       (inEffect.refText ?? null) === (dto.refText ?? null)
     ) {
       return inEffect;
     }
 
     const id = randomUUID();
-    await db.insert(analyteReferenceRanges).values({
+    await db.insert(analyteRanges).values({
       id,
       analyteId,
-      refLow: dto.refLow ?? null,
-      refHigh: dto.refHigh ?? null,
+      patientId,
+      kind,
+      label,
+      low: dto.low ?? null,
+      high: dto.high ?? null,
       refText: dto.refText ?? null,
       effectiveFrom,
       source: dto.source ?? null,
     });
-    return this.getRange(id);
+    return this.getRange(id, userId);
   }
 
-  async getRange(id: string): Promise<AnalyteReferenceRange> {
+  /**
+   * A range is found through its own patient: membership is checked against the row's `patientId`,
+   * and a non-member gets the same 404 a bad id gets — the row's existence is not confirmed to
+   * someone who has no business with that patient.
+   */
+  async getRange(id: string, userId: string): Promise<AnalyteRange> {
     const db = this.db.db as any;
-    const rows = await db.select().from(analyteReferenceRanges).where(eq(analyteReferenceRanges.id, id)).limit(1);
+    const rows = await db.select().from(analyteRanges).where(eq(analyteRanges.id, id)).limit(1);
     if (!rows.length) throw new NotFoundException('ANALYTE_RANGE_NOT_FOUND');
-    return this.pickRange(rows[0]);
+    const range = this.pickRange(rows[0]);
+    try {
+      await this.ensurePatientAccess(range.patientId, userId);
+    } catch {
+      throw new NotFoundException('ANALYTE_RANGE_NOT_FOUND');
+    }
+    return range;
   }
 
-  async updateRange(id: string, dto: UpdateReferenceRangeDto) {
+  async updateRange(id: string, userId: string, dto: UpdateAnalyteRangeDto) {
     const db = this.db.db as any;
-    const current = await this.getRange(id);
+    const current = await this.getRange(id, userId);
     const merged = {
-      refLow: dto.refLow !== undefined ? dto.refLow : current.refLow,
-      refHigh: dto.refHigh !== undefined ? dto.refHigh : current.refHigh,
+      low: dto.low !== undefined ? dto.low : current.low,
+      high: dto.high !== undefined ? dto.high : current.high,
       refText: dto.refText !== undefined ? dto.refText : current.refText,
     };
-    // Against the merged row, not the submitted fields: clearing the last bound of a range through
-    // a partial PATCH is invisible to any per-field validator, and an empty range silently matches
-    // nothing at read time.
-    this.assertRangeNotEmpty(merged.refLow, merged.refHigh, merged.refText);
+    // Against the merged row, not the submitted fields: clearing the last bound through a partial
+    // PATCH is invisible to any per-field validator, and an empty range matches nothing at read
+    // time.
+    this.assertRangeNotEmpty(merged.low, merged.high, merged.refText);
     const updates: Record<string, any> = { ...merged, updatedAt: new Date() };
+    if (dto.label !== undefined) updates.label = dto.label.trim();
+    if (dto.kind !== undefined) updates.kind = dto.kind;
     if (dto.effectiveFrom !== undefined) updates.effectiveFrom = new Date(dto.effectiveFrom);
     if (dto.source !== undefined) updates.source = dto.source;
-    await db.update(analyteReferenceRanges).set(updates).where(eq(analyteReferenceRanges.id, id));
-    return this.getRange(id);
+    await db.update(analyteRanges).set(updates).where(eq(analyteRanges.id, id));
+    return this.getRange(id, userId);
   }
 
-  async removeRange(id: string) {
-    await this.getRange(id);
+  async removeRange(id: string, userId: string) {
+    await this.getRange(id, userId);
     const db = this.db.db as any;
-    await db.delete(analyteReferenceRanges).where(eq(analyteReferenceRanges.id, id));
-    return { deleted: true };
-  }
-
-  // --- Goals ----------------------------------------------------------------------------------
-
-  async listGoals(patientId: string, userId: string): Promise<AnalyteGoal[]> {
-    await this.ensurePatientAccess(patientId, userId);
-    const db = this.db.db as any;
-    const rows = await db.select().from(analyteGoals).where(eq(analyteGoals.patientId, patientId));
-    if (!rows.length) return [];
-    const names = await db
-      .select({ id: analytes.id, displayName: analytes.displayName })
-      .from(analytes)
-      .where(inArray(analytes.id, rows.map((r: any) => r.analyteId)));
-    const nameById = new Map<string, string>(names.map((n: any) => [n.id, n.displayName]));
-    return rows.map((r: any) => ({ ...this.pickGoal(r), displayName: nameById.get(r.analyteId) }));
-  }
-
-  async getGoal(patientId: string, analyteId: string, userId: string): Promise<AnalyteGoal | null> {
-    await this.ensurePatientAccess(patientId, userId);
-    const db = this.db.db as any;
-    const rows = await db
-      .select()
-      .from(analyteGoals)
-      .where(and(eq(analyteGoals.patientId, patientId), eq(analyteGoals.analyteId, analyteId)))
-      .limit(1);
-    return rows.length ? this.pickGoal(rows[0]) : null;
-  }
-
-  async upsertGoal(patientId: string, analyteId: string, userId: string, dto: UpsertAnalyteGoalDto) {
-    await this.ensurePatientAccess(patientId, userId);
-    await this.get(analyteId);
-    if (typeof dto.goalLow !== 'number' && typeof dto.goalHigh !== 'number') {
-      throw new BadRequestException('ANALYTE_GOAL_EMPTY');
-    }
-    const db = this.db.db as any;
-    const existing = await this.getGoal(patientId, analyteId, userId);
-    if (existing) {
-      await db
-        .update(analyteGoals)
-        .set({
-          goalLow: dto.goalLow ?? null,
-          goalHigh: dto.goalHigh ?? null,
-          note: dto.note ?? null,
-          updatedAt: new Date(),
-        })
-        .where(eq(analyteGoals.id, existing.id));
-    } else {
-      await db.insert(analyteGoals).values({
-        id: randomUUID(),
-        patientId,
-        analyteId,
-        goalLow: dto.goalLow ?? null,
-        goalHigh: dto.goalHigh ?? null,
-        note: dto.note ?? null,
-      });
-    }
-    return (await this.getGoal(patientId, analyteId, userId)) as AnalyteGoal;
-  }
-
-  async removeGoal(patientId: string, analyteId: string, userId: string) {
-    const existing = await this.getGoal(patientId, analyteId, userId);
-    if (!existing) throw new NotFoundException('ANALYTE_GOAL_NOT_FOUND');
-    const db = this.db.db as any;
-    await db.delete(analyteGoals).where(eq(analyteGoals.id, existing.id));
+    await db.delete(analyteRanges).where(eq(analyteRanges.id, id));
     return { deleted: true };
   }
 
@@ -415,36 +395,28 @@ export class AnalytesService {
   /**
    * Everything the observation read paths need to attach `labContext` to lab_result entries, in
    * one batched pass per patient (the `medicationNames` shape, not the N+1 one). Callers resolve
-   * the range themselves with resolveRangeAt at each observation's own observedAt.
+   * the lineages themselves with resolveLineagesAt at each observation's own observedAt.
    */
   async labContextSources(
     patientId: string,
     analyteIds: string[],
-  ): Promise<Map<string, { displayName: string; ranges: AnalyteReferenceRange[]; goal: LabResultContext['goal'] }>> {
-    const out = new Map<string, { displayName: string; ranges: AnalyteReferenceRange[]; goal: LabResultContext['goal'] }>();
+  ): Promise<Map<string, { displayName: string; ranges: AnalyteRange[] }>> {
+    const out = new Map<string, { displayName: string; ranges: AnalyteRange[] }>();
     const ids = Array.from(new Set(analyteIds.filter(Boolean)));
     if (!ids.length) return out;
     const db = this.db.db as any;
-    const [analyteRows, rangeRows, goalRows] = await Promise.all([
+    const [analyteRows, rangeRows] = await Promise.all([
       db.select().from(analytes).where(inArray(analytes.id, ids)),
-      db.select().from(analyteReferenceRanges).where(inArray(analyteReferenceRanges.analyteId, ids)),
       db
         .select()
-        .from(analyteGoals)
-        .where(and(eq(analyteGoals.patientId, patientId), inArray(analyteGoals.analyteId, ids))),
+        .from(analyteRanges)
+        .where(and(eq(analyteRanges.patientId, patientId), inArray(analyteRanges.analyteId, ids))),
     ]);
 
-    const goalByAnalyte = new Map<string, LabResultContext['goal']>(
-      goalRows.map((g: any) => [
-        g.analyteId,
-        { goalLow: g.goalLow ?? null, goalHigh: g.goalHigh ?? null, note: g.note ?? null },
-      ]),
-    );
     for (const row of analyteRows) {
       out.set(row.id, {
         displayName: row.displayName,
         ranges: rangeRows.filter((r: any) => r.analyteId === row.id).map((r: any) => this.pickRange(r)),
-        goal: goalByAnalyte.get(row.id) ?? null,
       });
     }
     return out;
@@ -487,8 +459,9 @@ export class AnalytesService {
     }
     points.sort((a, b) => a.observedAt - b.observedAt);
 
-    const ranges = (await this.listRanges(analyteId)).slice().sort((a, b) => a.effectiveFrom - b.effectiveFrom);
-    const goal = await this.getGoal(patientId, analyteId, userId);
-    return { analyte, ranges, goal, points };
+    const ranges = (await this.listRanges(patientId, analyteId, userId))
+      .slice()
+      .sort((a, b) => a.effectiveFrom - b.effectiveFrom);
+    return { analyte, ranges, points };
   }
 }

@@ -1,18 +1,24 @@
 meta {
-  name: Update Reference Range
+  name: Update Range
   type: http
   seq: 9
 }
 
 patch {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}reference-ranges/{{referenceRangeId}}
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analyte-ranges/{{analyteRangeId}}
   body: json
   auth: inherit
 }
 
 body:json {
   {
-    "refHigh": 400
+    "high": 400
+  }
+}
+
+script:pre-request {
+  if (!bru.getVar('analyteRangeId')) {
+    console.log('No analyteRangeId set. Run "Create Range" first.');
   }
 }
 
@@ -22,6 +28,11 @@ settings {
 }
 
 docs {
-  Emptiness is checked against the merged row, so a partial patch cannot leave a range with no
-  bound and no text (400 ANALYTE_RANGE_EMPTY).
+  By id — the row names its own patient, so membership is checked from the row rather than the
+  path. A non-member gets the same 404 ANALYTE_RANGE_NOT_FOUND an unknown id gets, so the row's
+  existence isn't confirmed to someone with no business with that patient.
+
+  "At least one bound or text" is re-checked against the MERGED row, not the submitted fields:
+  clearing the last bound through a partial patch is invisible to a per-field validator, and an
+  empty range matches nothing at read time (400 ANALYTE_RANGE_EMPTY).
 }
