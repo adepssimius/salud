@@ -6,9 +6,17 @@ import { PatientsModule } from '../patients/patients.module';
 import { ObservationsModule } from '../observations/observations.module';
 import { InterventionsModule } from '../interventions/interventions.module';
 import { EpisodesModule } from '../episodes/episodes.module';
+import { AnalytesModule } from '../analytes/analytes.module';
 
 @Module({
-  imports: [PersistenceModule, PatientsModule, ObservationsModule, InterventionsModule, EpisodesModule],
+  imports: [
+    PersistenceModule,
+    PatientsModule,
+    ObservationsModule,
+    InterventionsModule,
+    EpisodesModule,
+    AnalytesModule,
+  ],
   providers: [TimelineService],
   controllers: [TimelineController],
   exports: [TimelineService],

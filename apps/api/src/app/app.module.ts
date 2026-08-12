@@ -19,6 +19,8 @@ import { ReactionsModule } from './reactions/reactions.module';
 import { ErBriefModule } from './er-brief/er-brief.module';
 import { WhatsNewModule } from './whats-new/whats-new.module';
 import { FilesModule } from './files/files.module';
+import { AnalytesModule } from './analytes/analytes.module';
+import { LabImportsModule } from './lab-imports/lab-imports.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -41,6 +43,8 @@ import { HealthModule } from './health/health.module';
     ErBriefModule,
     WhatsNewModule,
     FilesModule,
+    AnalytesModule,
+    LabImportsModule,
     HealthModule,
   ],
   controllers: [AppController],

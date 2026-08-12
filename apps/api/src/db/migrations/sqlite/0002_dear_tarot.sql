@@ -1,0 +1,1 @@
+ALTER TABLE `file_assets` ADD `original_name` text;

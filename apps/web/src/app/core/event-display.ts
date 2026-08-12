@@ -60,7 +60,7 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && !isNaN(v);
  * Replaces the raw `JSON.stringify(metadata)` that used to reach caregivers and triage staff.
  */
 export function entrySummary(
-  entry: { type: string; metadata?: any },
+  entry: { type: string; metadata?: any; labContext?: any },
   units: DisplayUnits = CANONICAL_UNITS,
 ): string {
   const m = entry.metadata ?? {};
@@ -110,9 +110,33 @@ export function entrySummary(
       const size = isNum(m.sizeCm) ? ` · ${fromCm(m.sizeCm, units.length)} ${units.length}` : '';
       return `photo${m.bodyLocation ? ` · ${m.bodyLocation}` : ''}${side}${size}${note}`;
     }
+    case 'lab_result': {
+      // Stored as reported, never converted (data-model.md → "Lab report import"); the flag is
+      // only ever what the report printed. The catalog's display name comes from labContext when
+      // the entry has been hydrated, and falls back to the lab's printed name when it hasn't.
+      const name = entry.labContext?.displayName ?? m.analyte ?? '—';
+      const unit = m.unit ? ` ${m.unit}` : '';
+      const flag = m.flag ? ` (${m.flag})` : '';
+      return `${name} ${m.valueText ?? '—'}${unit}${flag}${note}`;
+    }
+    case 'document':
+      return `document${m.label ? ` · ${m.label}` : ''}${note}`;
     default:
       return entry.type;
   }
+}
+
+/**
+ * One line summarizing a set of lab_result entries — "Labs: 30 results, 1 low" — from printed
+ * flags only. A full panel must never render as 30 timeline lines (frontend.md → Timeline).
+ */
+export function labSummary(labEntries: Array<{ metadata?: any }>): string {
+  const low = labEntries.filter((e) => e.metadata?.flag === 'L').length;
+  const high = labEntries.filter((e) => e.metadata?.flag === 'H').length;
+  const parts = [`Labs: ${labEntries.length} result${labEntries.length === 1 ? '' : 's'}`];
+  if (low) parts.push(`${low} low`);
+  if (high) parts.push(`${high} high`);
+  return parts.join(', ');
 }
 
 /** A whole timeline event (observation, intervention, or advisory) as one line. */
@@ -120,9 +144,13 @@ export function describeEvent(entry: TimelineEntry, units: DisplayUnits = CANONI
   const display = entry.display as any;
 
   if (entry.kind === 'observation') {
-    const parts = (display.entries ?? [])
-      .filter((e: any) => e.type !== 'photo') // photos render as thumbnails instead
-      .map((e: any) => entrySummary(e, units));
+    const entries: any[] = display.entries ?? [];
+    const labs = entries.filter((e) => e.type === 'lab_result');
+    const parts = entries
+      .filter((e) => e.type !== 'photo') // photos render as thumbnails instead
+      .filter((e) => e.type !== 'lab_result') // aggregated below — never one line per analyte
+      .map((e) => entrySummary(e, units));
+    if (labs.length) parts.unshift(labSummary(labs));
     return [display.text, ...parts].filter(Boolean).join(' — ');
   }
 

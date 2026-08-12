@@ -19,6 +19,7 @@ import { DashboardPayload } from '@salud/shared/types';
         <button class="primary" type="button" (click)="goToNewObservation()">Create observation</button>
         <button class="secondary" type="button" (click)="goToNewIntervention()">Log intervention</button>
         <button class="secondary" type="button" (click)="goToMedications()">Medication catalog</button>
+        <button class="secondary" type="button" (click)="goToAnalytes()">Analyte catalog</button>
         <button class="secondary" type="button" (click)="goToNewSchedule()">New schedule</button>
       </div>
 
@@ -327,6 +328,10 @@ export class DashboardPage implements OnInit {
 
   goToNewIntervention() {
     this.router.navigate(['/interventions/new']);
+  }
+
+  goToAnalytes() {
+    this.router.navigate(['/analytes']);
   }
 
   goToMedications() {

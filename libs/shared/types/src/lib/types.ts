@@ -35,12 +35,18 @@ export type ObservationType =
   | 'symptom'
   | 'note'
   | 'tag'
-  | 'photo';
+  | 'photo'
+  | 'lab_result'
+  | 'document';
 
 export interface ObservationEntry {
   id: string;
   type: ObservationType;
   metadata: Record<string, any> | null;
+  // Read-only enrichment on lab_result entries — the analyte's display name plus the reference
+  // range in effect at this observation's observedAt and the patient's goal. Never stored, never
+  // accepted on write (see LabResultContext, below).
+  labContext?: LabResultContext;
 }
 
 // Auth DTOs
@@ -972,4 +978,214 @@ export interface Revision {
 export interface UploadFileResponse {
   fileId: string;
   url: string;
+}
+
+export interface PatientFileSummary {
+  id: string;
+  originalName: string | null;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: number; // epoch seconds
+}
+
+// Analyte catalog — see app-spec/data-model.md "Analyte catalog" and api.md "Analytes".
+// Global (not patient-scoped) like the medication catalog, except goals, which are per-patient.
+export interface Analyte {
+  id: string;
+  name: string; // the lab's printed name, verbatim from first ingest
+  displayName: string; // defaults to Title Case of name; editable
+  unit: string | null;
+  // The panel it was first reported under. "% Saturation" alone is meaningless; "% Saturation
+  // (Iron and Total Iron Binding Capacity)" is not.
+  panel: string | null;
+  createdAt: number; // epoch seconds
+  updatedAt: number;
+}
+
+export interface AnalyteReferenceRange {
+  id: string;
+  analyteId: string;
+  refLow: number | null;
+  refHigh: number | null;
+  refText: string | null;
+  effectiveFrom: number; // epoch seconds — in effect until the next row's effectiveFrom
+  source: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AnalyteGoal {
+  id: string;
+  patientId: string;
+  analyteId: string;
+  displayName?: string; // joined for rendering on list responses
+  goalLow: number | null;
+  goalHigh: number | null;
+  note: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateAnalyteDto {
+  name: string;
+  displayName?: string;
+  unit?: string | null;
+  panel?: string | null;
+}
+
+export interface UpdateAnalyteDto {
+  name?: string;
+  displayName?: string;
+  unit?: string | null;
+  panel?: string | null;
+}
+
+export interface CreateReferenceRangeDto {
+  refLow?: number | null;
+  refHigh?: number | null;
+  refText?: string | null;
+  effectiveFrom: string; // ISO datetime (request-body convention)
+  source?: string | null;
+}
+
+export type UpdateReferenceRangeDto = Partial<CreateReferenceRangeDto>;
+
+export interface UpsertAnalyteGoalDto {
+  goalLow?: number | null;
+  goalHigh?: number | null;
+  note?: string | null;
+}
+
+// Each entry carries the context the report printed alongside the name. Context is applied only
+// when the analyte is CREATED — an import never overwrites what the catalog already says.
+export interface ResolveAnalyteInput {
+  name: string;
+  unit?: string | null;
+  panel?: string | null;
+}
+
+export interface ResolveAnalytesDto {
+  analytes: ResolveAnalyteInput[];
+}
+
+export interface ResolveAnalytesResult {
+  name: string; // as submitted
+  analyteId: string;
+  displayName: string;
+  created: boolean;
+}
+
+export interface AnalyteHistoryPoint {
+  observationId: string;
+  observedAt: number; // epoch seconds
+  valueText: string;
+  value: number | null;
+  unit: string | null;
+  flag: 'L' | 'H' | null;
+}
+
+export interface AnalyteHistory {
+  analyte: Analyte;
+  ranges: AnalyteReferenceRange[]; // ascending by effectiveFrom
+  goal: AnalyteGoal | null;
+  points: AnalyteHistoryPoint[]; // ascending by observedAt
+}
+
+// Lab imports — see app-spec/api.md "Lab imports" and data-model.md "Lab report import".
+// ParsedLabAnalyte carries the report's PRINTED reference range: evidence for the catalog
+// comparison, not measurement data. The confirm step picks fields explicitly and adds an
+// analyteId — it must not spread a ParsedLabAnalyte into lab_result metadata, since the entry
+// DTO rejects the ref* fields outright.
+export type LabFormat = 'quest';
+
+export interface ParsedLabAnalyte {
+  analyte: string;
+  valueText: string; // verbatim printed value, e.g. "5.8" or "<0.2"
+  value: number | null; // numeric parse of valueText when one exists
+  unit: string | null;
+  flag: 'L' | 'H' | null; // only as printed on the report — never derived
+  refLow: number | null;
+  refHigh: number | null;
+  refText: string | null; // verbatim range when not a simple low–high
+  panel: string | null;
+}
+
+export interface ParsedLabReport {
+  format: LabFormat;
+  labName: string | null;
+  specimenId: string | null;
+  collectedAt: string | null; // ISO datetime (request-body convention — feeds observedAt)
+  reportedAt: string | null;
+  orderingProvider: string | null;
+  patientName: string | null; // preview cross-check only; never persisted
+  analytes: ParsedLabAnalyte[];
+  warnings: string[]; // verbatim lines the parser could not classify
+}
+
+export interface CreateLabImportDto {
+  fileId: string;
+  format?: LabFormat;
+}
+
+// How each parsed analyte lines up with the catalog (api.md → "Lab imports"):
+//   new              — not in the catalog; confirm creates it plus its printed range
+//   match            — printed range equals the range effective at collection time
+//   conflict         — printed range differs; confirm ASKS before updating the catalog
+//   new_range        — analyte known, no range effective then, report prints one; confirm adds it
+//   no_printed_range — nothing to compare or add
+export type LabAnalyteResolutionStatus = 'new' | 'match' | 'conflict' | 'new_range' | 'no_printed_range';
+
+export interface LabAnalyteResolution {
+  analyte: string; // the printed name, matching ParsedLabAnalyte.analyte
+  analyteId: string | null; // null exactly when status is 'new'
+  displayName: string;
+  status: LabAnalyteResolutionStatus;
+  catalogRange: {
+    id: string;
+    refLow: number | null;
+    refHigh: number | null;
+    refText: string | null;
+    effectiveFrom: number;
+  } | null;
+  goal: { goalLow: number | null; goalHigh: number | null; note: string | null } | null;
+}
+
+export interface LabImportResult {
+  fileId: string;
+  parsed: ParsedLabReport;
+  resolutions: LabAnalyteResolution[]; // index-aligned with parsed.analytes
+}
+
+// Metadata shapes for the two file-backed/lab entry types (data-model.md → "Observation entry
+// structured metadata"). Other entry types keep their shape contract in the API DTO classes only.
+export interface LabResultMetadata {
+  analyteId: string; // required — must name an existing Analyte
+  analyte: string; // verbatim printed name, ground truth for what the report said
+  valueText: string;
+  value?: number | null;
+  unit?: string | null;
+  flag?: 'L' | 'H' | null;
+  panel?: string | null;
+  note?: string;
+}
+
+// Attached to lab_result entries at READ time and never stored (data-model.md → "Lab result
+// read-time context"). A sibling of `metadata`, not part of it: an observation echoed back
+// through PATCH must not carry it.
+export interface LabResultContext {
+  displayName: string;
+  referenceRange: {
+    id: string;
+    refLow: number | null;
+    refHigh: number | null;
+    refText: string | null;
+    effectiveFrom: number;
+  } | null;
+  goal: { goalLow: number | null; goalHigh: number | null; note: string | null } | null;
+}
+
+export interface DocumentMetadata {
+  fileId: string;
+  label?: string;
+  note?: string;
 }

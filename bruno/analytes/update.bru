@@ -1,0 +1,28 @@
+meta {
+  name: Update Analyte
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{analyteId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "displayName": "Ferritin",
+    "unit": "ng/mL"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Renaming re-checks case-insensitive availability; renaming to the name it already has is a
+  no-op rather than a conflict.
+}

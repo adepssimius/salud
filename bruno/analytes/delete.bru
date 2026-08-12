@@ -1,0 +1,22 @@
+meta {
+  name: Delete Analyte
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{analyteId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  409 ANALYTE_IN_USE with { dependents: { labResults: n } } when recorded results reference it.
+  Otherwise the analyte goes together with its own reference ranges and goals — they have no
+  independent referents, unlike a medication's embodiments and guidelines.
+}

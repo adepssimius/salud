@@ -1,0 +1,116 @@
+%PDF-1.3
+%“Œ‹ž ReportLab Generated PDF document (opensource)
+1 0 obj
+<<
+/F1 2 0 R
+>>
+endobj
+2 0 obj
+<<
+/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
+>>
+endobj
+3 0 obj
+<<
+/Contents 7 0 R /MediaBox [ 0 0 612 792 ] /Parent 6 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
+endobj
+4 0 obj
+<<
+/PageMode /UseNone /Pages 6 0 R /Type /Catalog
+>>
+endobj
+5 0 obj
+<<
+/Author (anonymous) /CreationDate (D:20260811153701-04'00') /Creator (anonymous) /Keywords () /ModDate (D:20260811153701-04'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+  /Subject (unspecified) /Title (untitled) /Trapped /False
+>>
+endobj
+6 0 obj
+<<
+/Count 1 /Kids [ 3 0 R ] /Type /Pages
+>>
+endobj
+7 0 obj
+<<
+/Length 3118
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 8 Tf 9.6 TL ET
+BT 1 0 0 1 40 770 Tm (EXAMPLE REGIONAL LABORATORY) Tj T* ET
+BT 1 0 0 1 40 760 Tm (Patient: DOE,JANE   Collected: 07/20/2026) Tj T* ET
+BT 1 0 0 1 40 750 Tm (Specimen: ZZ000000X   Reported: 07/21/2026) Tj T* ET
+BT 1 0 0 1 40 740 Tm (CHEMISTRY PANEL) Tj T* ET
+BT 1 0 0 1 40 730 Tm (Analyte Result Reference) Tj T* ET
+BT 1 0 0 1 40 720 Tm (WBC 5.8 3.8-10.8 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 710 Tm (HEMOGLOBIN 13.9 13.2-17.1 g/dL) Tj T* ET
+BT 1 0 0 1 40 700 Tm (PLATELET COUNT 262 140-400 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 690 Tm (SODIUM 140 135-146 mmol/L) Tj T* ET
+BT 1 0 0 1 40 680 Tm (POTASSIUM 4.2 3.5-5.3 mmol/L) Tj T* ET
+BT 1 0 0 1 40 670 Tm (CHLORIDE 102 98-110 mmol/L) Tj T* ET
+BT 1 0 0 1 40 660 Tm (GLUCOSE 88 65-99 mg/dL) Tj T* ET
+BT 1 0 0 1 40 650 Tm (This is a synthetic text PDF from a fictional laboratory whose format) Tj T* ET
+BT 1 0 0 1 40 640 Tm (no registered parser recognizes. Used by lab-imports.e2e-spec.ts to) Tj T* ET
+BT 1 0 0 1 40 630 Tm (assert the unsupported-format error path.) Tj T* ET
+BT 1 0 0 1 40 620 Tm (EXAMPLE REGIONAL LABORATORY) Tj T* ET
+BT 1 0 0 1 40 610 Tm (Patient: DOE,JANE   Collected: 07/20/2026) Tj T* ET
+BT 1 0 0 1 40 600 Tm (Specimen: ZZ000000X   Reported: 07/21/2026) Tj T* ET
+BT 1 0 0 1 40 590 Tm (CHEMISTRY PANEL) Tj T* ET
+BT 1 0 0 1 40 580 Tm (Analyte Result Reference) Tj T* ET
+BT 1 0 0 1 40 570 Tm (WBC 5.8 3.8-10.8 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 560 Tm (HEMOGLOBIN 13.9 13.2-17.1 g/dL) Tj T* ET
+BT 1 0 0 1 40 550 Tm (PLATELET COUNT 262 140-400 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 540 Tm (SODIUM 140 135-146 mmol/L) Tj T* ET
+BT 1 0 0 1 40 530 Tm (POTASSIUM 4.2 3.5-5.3 mmol/L) Tj T* ET
+BT 1 0 0 1 40 520 Tm (CHLORIDE 102 98-110 mmol/L) Tj T* ET
+BT 1 0 0 1 40 510 Tm (GLUCOSE 88 65-99 mg/dL) Tj T* ET
+BT 1 0 0 1 40 500 Tm (This is a synthetic text PDF from a fictional laboratory whose format) Tj T* ET
+BT 1 0 0 1 40 490 Tm (no registered parser recognizes. Used by lab-imports.e2e-spec.ts to) Tj T* ET
+BT 1 0 0 1 40 480 Tm (assert the unsupported-format error path.) Tj T* ET
+BT 1 0 0 1 40 470 Tm (EXAMPLE REGIONAL LABORATORY) Tj T* ET
+BT 1 0 0 1 40 460 Tm (Patient: DOE,JANE   Collected: 07/20/2026) Tj T* ET
+BT 1 0 0 1 40 450 Tm (Specimen: ZZ000000X   Reported: 07/21/2026) Tj T* ET
+BT 1 0 0 1 40 440 Tm (CHEMISTRY PANEL) Tj T* ET
+BT 1 0 0 1 40 430 Tm (Analyte Result Reference) Tj T* ET
+BT 1 0 0 1 40 420 Tm (WBC 5.8 3.8-10.8 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 410 Tm (HEMOGLOBIN 13.9 13.2-17.1 g/dL) Tj T* ET
+BT 1 0 0 1 40 400 Tm (PLATELET COUNT 262 140-400 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 390 Tm (SODIUM 140 135-146 mmol/L) Tj T* ET
+BT 1 0 0 1 40 380 Tm (POTASSIUM 4.2 3.5-5.3 mmol/L) Tj T* ET
+BT 1 0 0 1 40 370 Tm (CHLORIDE 102 98-110 mmol/L) Tj T* ET
+BT 1 0 0 1 40 360 Tm (GLUCOSE 88 65-99 mg/dL) Tj T* ET
+BT 1 0 0 1 40 350 Tm (This is a synthetic text PDF from a fictional laboratory whose format) Tj T* ET
+BT 1 0 0 1 40 340 Tm (no registered parser recognizes. Used by lab-imports.e2e-spec.ts to) Tj T* ET
+BT 1 0 0 1 40 330 Tm (assert the unsupported-format error path.) Tj T* ET
+ 
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000061 00000 n 
+0000000092 00000 n 
+0000000199 00000 n 
+0000000392 00000 n 
+0000000460 00000 n 
+0000000721 00000 n 
+0000000780 00000 n 
+trailer
+<<
+/ID 
+[<7d4e80ce80eadb6ac76e4dbf15b0f6d0><7d4e80ce80eadb6ac76e4dbf15b0f6d0>]
+% ReportLab generated PDF document -- digest (opensource)
+
+/Info 5 0 R
+/Root 4 0 R
+/Size 8
+>>
+startxref
+3949
+%%EOF

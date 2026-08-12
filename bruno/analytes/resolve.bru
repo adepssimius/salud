@@ -1,0 +1,37 @@
+meta {
+  name: Resolve Analyte Names
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/resolve
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "analytes": [
+      { "name": "FERRITIN", "unit": "ng/mL", "panel": "FERRITIN" },
+      { "name": "IRON, TOTAL", "unit": "mcg/dL", "panel": "IRON AND TOTAL IRON BINDING CAPACITY" },
+      { "name": "% SATURATION", "unit": "%", "panel": "IRON AND TOTAL IRON BINDING CAPACITY" }
+    ]
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Turns printed names into analyte ids, creating what's missing, and returns
+  [{ name, analyteId, displayName, created }] in input order. This is how a client obtains the
+  analyteId a lab_result entry requires. Idempotent — run it twice and `created` flips to false.
+
+  The unit and panel a report printed are applied only when the analyte is CREATED; a later
+  import never rewrites them. The panel matters for names that mean nothing alone: the catalog
+  entry reads "% Saturation — Iron and Total Iron Binding Capacity" rather than a bare
+  "% Saturation".
+}

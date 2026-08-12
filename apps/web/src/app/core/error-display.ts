@@ -17,10 +17,21 @@
 
 export const ERROR_SENTENCES = {
   ADVISORY_NOT_FOUND: 'That alert is no longer showing. Refresh the page to see the current ones.',
+  ANALYTE_GOAL_EMPTY: 'A goal needs at least a low or a high bound.',
+  ANALYTE_GOAL_NOT_FOUND: 'No goal is set for this patient and analyte.',
+  ANALYTE_IN_USE:
+    "This analyte still has recorded lab results pointing at it, so it can't be deleted. Remove or re-map those results first.",
+  ANALYTE_NAME_TAKEN:
+    'An analyte with that name is already in the catalog. Open that one instead, or choose a different name.',
+  ANALYTE_NOT_FOUND: 'That analyte is no longer in the catalog. Search for it again.',
+  ANALYTE_RANGE_EMPTY: 'A reference range needs a low bound, a high bound, or range text.',
+  ANALYTE_RANGE_NOT_FOUND: 'That reference range no longer exists. Reload this analyte.',
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   CONDITION_NOT_FOUND: 'That condition is no longer available. It may have been deleted.',
+  // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
+  DOCUMENT_FILE_NOT_FOUND: 'That document could not be attached. Upload it again and retry.',
   EMAIL_TAKEN: 'An account with that email already exists. Try signing in instead.',
   EMBODIMENT_NOT_FOUND: 'That form of the medication is no longer available. Choose another one.',
   DATE_IN_FUTURE: 'That date and time is in the future. Check it and try again.',
@@ -38,6 +49,11 @@ export const ERROR_SENTENCES = {
   INTERVENTION_NOT_FOUND: 'That dose or treatment is no longer available. It may have been deleted.',
   INVALID_CREDENTIALS: 'That email and password do not match an account. Check both and try again.',
   INVALID_REACTION_SCOPE: 'Choose exactly one of medication, form, or tag for this reaction.',
+  LAB_FILE_NOT_FOUND: 'That uploaded report could not be found. Upload it again and retry.',
+  LAB_FORMAT_UNSUPPORTED:
+    "This lab report format isn't supported yet. Only Quest Diagnostics reports can be imported right now.",
+  LAB_PDF_UNPARSEABLE:
+    'That file could not be read as a lab report. Upload the original document from the lab, not a photo or scan.',
   MEDICATION_ID_REQUIRED: 'Choose a medication for this dose.',
   MEDICATION_IN_USE:
     'This medication is still in use. Remove its forms, guidelines and schedules first, or mark it inactive instead.',

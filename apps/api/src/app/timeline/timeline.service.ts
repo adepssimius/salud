@@ -17,6 +17,7 @@ import { PatientsService } from '../patients/patients.service';
 import { ObservationsService } from '../observations/observations.service';
 import { InterventionsService } from '../interventions/interventions.service';
 import { EpisodesService } from '../episodes/episodes.service';
+import { AnalytesService } from '../analytes/analytes.service';
 import {
   advisoriesSince,
   interventionsSince,
@@ -41,6 +42,7 @@ export class TimelineService {
     private readonly observationsService: ObservationsService,
     private readonly interventionsService: InterventionsService,
     private readonly episodesService: EpisodesService,
+    private readonly analytesService: AnalytesService,
   ) {}
 
   private async resolveMedicationIdsForTag(tag: string): Promise<Set<string>> {
@@ -324,6 +326,26 @@ export class TimelineService {
     }));
   }
 
+  private async hydrateLabContext(patientId: string, summary: { observedAt: number | null; entries: any[] }) {
+    const analyteIds = summary.entries
+      .filter((e) => e.type === 'lab_result' && typeof e.metadata?.analyteId === 'string')
+      .map((e) => e.metadata.analyteId as string);
+    if (!analyteIds.length) return;
+    const sources = await this.analytesService.labContextSources(patientId, analyteIds);
+    for (const entry of summary.entries) {
+      if (entry.type !== 'lab_result') continue;
+      const source = sources.get(entry.metadata?.analyteId);
+      if (!source) continue;
+      entry.labContext = {
+        displayName: source.displayName,
+        referenceRange: AnalytesService.rangeContext(
+          AnalytesService.resolveRangeAt(source.ranges, summary.observedAt ?? 0),
+        ),
+        goal: source.goal,
+      };
+    }
+  }
+
   private async buildActiveEpisodeSummary(episodeRow: any) {
     const db = this.db.db as any;
     const pivots = await db
@@ -352,6 +374,11 @@ export class TimelineService {
             metadata: e.metadata ? JSON.parse(e.metadata) : null,
           })),
         };
+        // This path reads observation_entries directly rather than going through
+        // ObservationsService, so it needs its own hydration to keep the ObservationEntry contract
+        // whole (data-model.md → "Lab result read-time context"). One episode's latest observation
+        // is a single row — no batching to do beyond what labContextSources already does.
+        await this.hydrateLabContext(latest.patientId, lastObservationSummary);
       }
     }
 

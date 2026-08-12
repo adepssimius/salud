@@ -5,6 +5,7 @@ import {
   entrySummary,
   fromCm,
   fromKg,
+  labSummary,
   photoFileIds,
   unitsFor,
 } from './event-display';
@@ -52,6 +53,8 @@ describe('entrySummary', () => {
       { type: 'tag', metadata: { tag: 'cough' } },
       { type: 'note', metadata: { text: 'slept badly' } },
       { type: 'photo', metadata: { fileId: 'f1', bodyLocation: 'back', side: 'n/a' } },
+      { type: 'lab_result', metadata: { analyte: 'FERRITIN', valueText: '37', unit: 'ng/mL', flag: 'L' } },
+      { type: 'document', metadata: { fileId: 'f2', label: 'Quest labs' } },
     ];
     for (const s of samples) {
       const out = entrySummary(s);
@@ -103,6 +106,46 @@ describe('entrySummary', () => {
     expect(entrySummary({ type: 'weight', metadata: {} })).toBe('Weight —');
     expect(entrySummary({ type: 'heart_rate' })).toBe('HR — bpm');
   });
+
+  it('prefers the catalog display name once the entry is hydrated', () => {
+    const entry = {
+      type: 'lab_result',
+      metadata: { analyte: 'FERRITIN', valueText: '37', unit: 'ng/mL', flag: 'L' },
+      labContext: { displayName: 'Ferritin', referenceRange: null, goal: null },
+    };
+    expect(entrySummary(entry)).toBe('Ferritin 37 ng/mL (L)');
+  });
+
+  it('shows a lab result as reported — no unit conversion, flag only as printed', () => {
+    expect(
+      entrySummary({ type: 'lab_result', metadata: { analyte: 'FERRITIN', valueText: '37', unit: 'ng/mL', flag: 'L' } }),
+    ).toBe('FERRITIN 37 ng/mL (L)');
+    // Non-numeric printed values stay verbatim; no flag, no parentheses.
+    expect(
+      entrySummary({ type: 'lab_result', metadata: { analyte: 'TSH', valueText: '<0.2', unit: 'mIU/L', flag: null } }),
+    ).toBe('TSH <0.2 mIU/L');
+  });
+
+  it('shows a document as a labeled attachment line', () => {
+    expect(entrySummary({ type: 'document', metadata: { fileId: 'f1', label: 'Quest labs Jul 2026' } })).toBe(
+      'document · Quest labs Jul 2026',
+    );
+    expect(entrySummary({ type: 'document', metadata: { fileId: 'f1' } })).toBe('document');
+  });
+});
+
+describe('labSummary', () => {
+  it('aggregates counts from printed flags only', () => {
+    const labs = [
+      { metadata: { flag: 'L' } },
+      { metadata: { flag: null } },
+      { metadata: { flag: 'H' } },
+      { metadata: { flag: 'H' } },
+      { metadata: {} },
+    ];
+    expect(labSummary(labs)).toBe('Labs: 5 results, 1 low, 2 high');
+    expect(labSummary([{ metadata: {} }])).toBe('Labs: 1 result');
+  });
 });
 
 describe('describeEvent', () => {
@@ -126,6 +169,15 @@ describe('describeEvent', () => {
       { type: 'heart_rate', metadata: { bpm: 100 } },
     ]);
     expect(describeEvent(e)).toBe('HR 100 bpm');
+  });
+
+  it('aggregates lab_result entries into one line instead of one per analyte', () => {
+    const labs = Array.from({ length: 30 }, (_, i) => ({
+      type: 'lab_result',
+      metadata: { analyte: `ANALYTE ${i}`, valueText: '1', flag: i === 0 ? 'L' : null },
+    }));
+    const e = obsEvent([...labs, { type: 'document', metadata: { fileId: 'f1', label: 'Quest labs' } }], 'Quest labs');
+    expect(describeEvent(e)).toBe('Quest labs — Labs: 30 results, 1 low — document · Quest labs');
   });
 
   it('describes interventions', () => {

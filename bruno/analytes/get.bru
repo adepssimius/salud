@@ -1,0 +1,20 @@
+meta {
+  name: Get Analyte
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{analyteId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  404 ANALYTE_NOT_FOUND for an unknown id.
+}

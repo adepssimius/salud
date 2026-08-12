@@ -1,0 +1,20 @@
+meta {
+  name: Clear Patient Goal
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/analyte-goals/{{analyteId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  404 ANALYTE_GOAL_NOT_FOUND when no goal is set for that pair.
+}

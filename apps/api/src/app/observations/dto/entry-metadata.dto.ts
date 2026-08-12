@@ -243,6 +243,74 @@ class NoteMetadata {
   symptom?: string;
 }
 
+// Lab values are stored as reported, not canonicalized (data-model.md → "Lab report import"), and
+// deliberately carry no @Min/@Max absurdity walls: legitimate analytes span orders of magnitude
+// (TSH 0.04 vs TIBC 404), and `valueText` preserves the verbatim printed value regardless.
+//
+// There are deliberately NO reference-range fields here. A reference range is a standard, not a
+// measurement: it lives in the analyte catalog, effective-dated, and is attached at read time as
+// `labContext` (data-model.md → "Analyte catalog"). Because this class is validated with
+// forbidNonWhitelisted, a client that spreads a parsed analyte in wholesale gets a clear
+// OBSERVATION_SCHEMA_INVALID rather than silently storing a second copy of the standard.
+class LabResultMetadata {
+  // Shape only. That the analyte exists is checked in ObservationsService — a DTO constraint has
+  // no DI and can't await a lookup (same split as PhotoMetadata.fileId).
+  @IsUUID('4')
+  analyteId!: string;
+
+  // The lab's printed name, kept verbatim beside the id: ground truth for what the report said,
+  // and what makes a later re-mapping auditable.
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  analyte!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  valueText!: string;
+
+  @IsOptional()
+  @IsNumber()
+  value?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  unit?: string | null;
+
+  // Only what the report printed — never derived from the range (P6).
+  @IsOptional()
+  @IsIn(['L', 'H'])
+  flag?: 'L' | 'H' | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  panel?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(NOTE_MAX)
+  note?: string;
+}
+
+class DocumentMetadata {
+  // Shape only, like PhotoMetadata — existence/ownership is ObservationsService's job.
+  @IsUUID('4')
+  fileId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  label?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(NOTE_MAX)
+  note?: string;
+}
+
 const METADATA_CLASSES: Record<ObservationType, new () => object> = {
   temperature: TemperatureMetadata,
   heart_rate: HeartRateMetadata,
@@ -256,6 +324,8 @@ const METADATA_CLASSES: Record<ObservationType, new () => object> = {
   note: NoteMetadata,
   tag: TagMetadata,
   photo: PhotoMetadata,
+  lab_result: LabResultMetadata,
+  document: DocumentMetadata,
 };
 
 @ValidatorConstraint({ name: 'entryMetadata', async: false })

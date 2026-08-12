@@ -1,0 +1,27 @@
+meta {
+  name: Update Reference Range
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}reference-ranges/{{referenceRangeId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "refHigh": 400
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Emptiness is checked against the merged row, so a partial patch cannot leave a range with no
+  bound and no text (400 ANALYTE_RANGE_EMPTY).
+}

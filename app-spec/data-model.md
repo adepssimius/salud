@@ -174,7 +174,7 @@ Caregiver-entered standing instructions from the care team, attached to a Condit
 ### ObservationEntry (multiple per Observation)
 - `id: uuid`
 - `observationId: uuid`
-- `type: enum('temperature','heart_rate','respiratory_rate','oxygen_saturation','pain_score','weight','height','lesion_size','symptom','note','tag','photo')`
+- `type: enum('temperature','heart_rate','respiratory_rate','oxygen_saturation','pain_score','weight','height','lesion_size','symptom','note','tag','photo','lab_result','document')`
 - `metadata: jsonb` (type-specific structured data, below)
 - `createdAt`, `updatedAt`
 
@@ -195,6 +195,8 @@ All numeric values stored in canonical units.
 | tag | `tag: string` (free-form or fixed tags), `note?: string` | `tag` ≤ 120 chars |
 | photo | `fileId: uuid`, `bodyLocation: string`, `side: enum(...)`, `sizeCm: decimal | null`, `note?: string` | `sizeCm` 0–200; `fileId` must exist and belong to this patient |
 | note | `text: string`, `symptom?: string` (optional symptom label) | `text` ≤ 4000 chars |
+| lab_result | `analyteId: uuid` (**required** — must name an existing `Analyte`; see "Analyte catalog"), `analyte: string` (verbatim printed name — ground truth), `valueText: string` (verbatim printed value, e.g. `"5.8"`, `"<0.2"`), `value: decimal | null` (numeric when parseable), `unit: string | null` (trailing `(calc)` stripped), `flag: enum('L','H') | null` (**only as printed on the report — never derived**), `panel: string | null`, `note?: string` | `analyte`/`panel` ≤ 120 chars, `valueText`/`unit` ≤ 40; no bounds on `value` — lab values legitimately span orders of magnitude, and `valueText` preserves ground truth. **No reference-range fields**: a reference range is a standard, not a measurement — it lives in the analyte catalog and is attached at read time (see `labContext` below) |
+| document | `fileId: uuid`, `label?: string`, `note?: string` | `label` ≤ 200 chars; `fileId` must exist and belong to this patient (same rule as `photo`) |
 
 Any `note` is capped at 2000 characters. The ranges are absurdity walls, not clinical judgment — they
 exist to keep a typo out of the record, not to tell a caregiver what is normal (P6). The one that
@@ -202,6 +204,112 @@ carries real weight is `weight`: it denormalizes onto `Patient.latestWeightKg` a
 mg/kg dose calculation, so a negative or absurd value is a dosing-input corruption. Temperature is
 range-checked in its *entered* unit because that is how it is stored; the conversion happens at
 comparison time, not at write time.
+
+#### Lab result read-time context (`labContext`)
+
+On every read, each `lab_result` entry carries a **non-persisted sibling field** `labContext`,
+resolved from the analyte catalog at the observation's `observedAt`:
+
+```
+labContext: {
+  displayName: string,
+  referenceRange: { id, refLow, refHigh, refText, effectiveFrom } | null,   // in effect at observedAt
+  goal: { goalLow, goalHigh, note } | null                                  // this patient's goal
+} | undefined
+```
+
+It is a sibling of `metadata`, never inside it — stored metadata stays exactly what was written,
+and a client echoing an observation back through `PATCH` must not (and cannot) submit it. An entry
+whose `analyteId` no longer resolves simply carries no `labContext`. Revision snapshots and frozen
+ER-Brief snapshots capture entries **as hydrated at capture time** — consistent with the ER Brief's
+freeze-at-creation contract; a snapshot records what was on screen, not a live view of the catalog.
+
+#### Lab report import
+
+Lab results enter the record by importing a lab's own report file (Quest Diagnostics PDF first;
+the parser layer is format-pluggable — see api.md → Lab imports). The recording shape:
+
+- **One observation per report**, with `observedAt` = the specimen **collection** time and one
+  `lab_result` entry per analyte. Each analyte is individually queryable and trendable over time.
+- The **original PDF is attached** to the same observation as a `document` entry. It is the source
+  of truth; parsing imperfections never destroy information.
+- Report-level header fields (specimen id, lab name, reported-at, ordering provider) are **not
+  duplicated into every entry**. They live in the attached PDF and, by default, in the observation's
+  free-form `text` (the import UI pre-fills an editable one-line summary).
+- `lab_result` values are stored **as reported**, not canonicalized — lab units are the lab's
+  vocabulary (`ng/mL`, `Thousand/uL`, …), an exception to the canonical-units rule above.
+  `valueText` always preserves the verbatim printed value; `value` is its numeric parse when one
+  exists (`"<0.2"` → `value: null`).
+- `flag` records only what the report printed (P6: the app does not compute abnormality into the
+  record). The UI may *highlight* values outside the resolved reference range or the patient's goal
+  at display time — highlighting is display-only, never written back.
+- **The printed reference range is parsed but not stored on the entry.** It is evidence: the parse
+  response compares it against the catalog's currently-effective range and reports a per-analyte
+  resolution status (api.md → Lab imports). New analytes are auto-created at confirm (with the
+  printed range as their first effective-dated range); a printed range that *conflicts* with the
+  catalog's effective range prompts the caregiver per analyte before the catalog is updated —
+  the app never silently arbitrates between the report and the catalog (P6).
+- Confirm is a three-step client orchestration: `POST /api/analytes/resolve` (create/lookup ids)
+  → `POST /api/analytes/:id/reference-ranges` for accepted updates → the standard observation
+  create. Partial failure leaves catalog rows without an observation — harmless and retry-safe
+  (range create is idempotent for identical values at the same effective date).
+
+### Analyte catalog
+
+Global, like the medication catalog — not patient-scoped. Populated by ingestion (that is the
+point); there is no seed. Matching is always **case-insensitive** on `name`.
+
+#### Analyte
+- `id: uuid`
+- `name: string` (≤ 120) — the lab's printed name, verbatim from first ingest (e.g.
+  `"TESTOSTERONE, TOTAL, MALES (ADULT), IA"`). Unique case-insensitively; enforced service-side
+  like `Medication.name` (409 `ANALYTE_NAME_TAKEN`), stored verbatim, compared trimmed+lowercased.
+- `displayName: string` (≤ 120) — defaults to Title Case of `name` at creation; editable, since
+  title-casing `"VITAMIN D,25-OH,TOTAL,IA"` is imperfect by construction.
+- `unit: string | null` (≤ 40) — informational default, first printed unit at ingest, editable.
+  Unit drift across reports is **not** a conflict in this phase; history points carry their own
+  unit and the history view annotates a mixed-unit series rather than silently co-plotting.
+- `panel: string | null` (≤ 120) — the panel it was first reported under, e.g.
+  `"IRON AND TOTAL IRON BINDING CAPACITY"`. Context, not classification: `"% SATURATION"` and
+  `"ABSOLUTE BASOPHILS"` say nothing on their own about what they measure, and a catalog listing
+  them without their panel is unreadable. Searchable alongside the names, so "iron" finds
+  `% Saturation`, which never mentions iron itself. Editable.
+- `unit` and `panel` are set from the report **only when the analyte is created**. A later import
+  never rewrites them — same rule as reference ranges, minus the prompt, since these are labels
+  rather than the standard a result is judged against.
+- `createdAt`, `updatedAt`
+- Deletion is guarded: 409 `ANALYTE_IN_USE` with `dependents: { labResults: n }` when any
+  `lab_result` entry references it. When unreferenced, deleting the analyte also deletes its own
+  reference ranges and goals — a deliberate divergence from the medication catalog's
+  block-on-own-children rule: ranges and goals have no independent referents, so a two-step delete
+  of an auto-created analyte would be pure ceremony.
+
+#### AnalyteReferenceRange
+- `id: uuid`
+- `analyteId: uuid`
+- `refLow: decimal | null`, `refHigh: decimal | null`, `refText: string | null` (≤ 300, verbatim
+  for non-simple ranges) — at least one of the three required (400 `ANALYTE_RANGE_EMPTY`).
+- `effectiveFrom: datetime` — **effective-dated**: the range in effect at time *t* is the row with
+  the greatest `effectiveFrom ≤ t`. There is no `effectiveTo`; each row ends where the next begins.
+  Importing a report older than every existing row inserts an earlier row without clobbering
+  anything. No range is in effect before the earliest row.
+- `source: string | null` (≤ 200) — provenance, e.g. `"Quest report AB123456C"` or a manual note.
+  Echoed into every resolved `labContext.referenceRange` by id; same provenance rule as dose
+  guidelines (a resolved value always says which standard it came from).
+- `createdAt`, `updatedAt`
+- Create is retry-safe: posting values identical to the row already effective at that
+  `effectiveFrom` returns the existing row instead of inserting a duplicate.
+
+#### AnalyteGoal
+- `id: uuid`
+- `patientId: uuid`, `analyteId: uuid` — **one row per (patient, analyte)**; writes are upserts.
+- `goalLow: decimal | null`, `goalHigh: decimal | null` — at least one required (400
+  `ANALYTE_GOAL_EMPTY`). A goal is the caregiver's own target, distinct from the reference range:
+  ferritin 75 can be in-range yet below a `goalLow` of 120 set for athletic purposes.
+- `note: string | null` (≤ 2000) — why this goal exists.
+- `createdAt`, `updatedAt`
+- Patient-scoped access control (care-team membership, 404 `PATIENT_NOT_FOUND` for non-members),
+  unlike the analyte itself which is household-global.
 
 ### Intervention (base)
 - `id: uuid`
@@ -338,6 +446,10 @@ comparison time, not at write time.
 - `path: string`
 - `contentType: string`
 - `sizeBytes: integer`
+- `originalName: string | null` — the client-supplied filename at upload time (sanitized, ≤ 255
+  chars). Display-only: storage paths remain server-generated UUIDs. Exists so the file picker and
+  document labels can show "Quest_Labs_Jul2026.pdf" instead of an opaque id. Nullable because files
+  uploaded before this field existed have no name.
 - `patientId: uuid | null` — nullable so `ensurePatientAccess` can gate `GET /api/files/:id` once a
   file is attached to a patient, the same access-control shape as every other patient-scoped
   resource. Set at upload time from the patient already selected in the entry form (§5.8) — there
@@ -345,8 +457,8 @@ comparison time, not at write time.
   required so a future non-patient-scoped use of the files endpoint (e.g. household-level assets)
   isn't blocked by a schema change.
 - `createdByUserId: uuid`
-- Linked to photo observation entries via `metadata.fileId` (data-model.md → "Observation entry
-  structured metadata").
+- Linked to `photo` and `document` observation entries via `metadata.fileId` (data-model.md →
+  "Observation entry structured metadata").
 
 ### Advisory
 

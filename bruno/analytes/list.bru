@@ -1,0 +1,26 @@
+meta {
+  name: List Analytes
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes?q=
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~q: ferritin
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  The lab-analyte catalog (api.md → "Analytes"). Global to the household like medications, and
+  populated by importing reports rather than a seed — expect an empty list before the first
+  lab import. `q` is a case-insensitive substring over the printed name and the display name.
+}

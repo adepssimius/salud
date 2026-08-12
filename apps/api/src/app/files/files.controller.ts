@@ -46,6 +46,16 @@ export class FilesController {
     });
   }
 
+  // Backs the "attach an existing document" picker (api.md → Files). Patient-scoped listing;
+  // non-members get 404 PATIENT_NOT_FOUND from the service like every other patient-scoped read.
+  @Get('patients/:patientId/files')
+  async listForPatient(
+    @Request() req: any,
+    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+  ) {
+    return await this.files.listForPatient(patientId, req.user.userId);
+  }
+
   @Get('files/:id')
   async get(
     @Request() req: any,

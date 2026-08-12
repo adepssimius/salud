@@ -15,6 +15,7 @@ import { EpisodesService } from '../episodes/episodes.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { FilesService } from '../files/files.service';
+import { AnalytesService } from '../analytes/analytes.service';
 import { normalizeTs } from '../persistence/time';
 
 @Injectable()
@@ -25,6 +26,7 @@ export class ObservationsService {
     private readonly advisoriesService: AdvisoriesService,
     private readonly revisionsService: RevisionsService,
     private readonly filesService: FilesService,
+    private readonly analytesService: AnalytesService,
   ) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
@@ -80,18 +82,77 @@ export class ObservationsService {
 
   // Service-level, not a DTO constraint: EntryMetadataConstraint is synchronous and has no DI, so
   // it can only check the UUID's shape. Must run before the observation row is inserted, or a
-  // rejected photo leaves an orphan observation behind.
-  private async assertPhotoFilesUsable(
+  // rejected file entry leaves an orphan observation behind.
+  private static readonly FILE_ENTRY_CODES: Record<string, string> = {
+    photo: 'PHOTO_FILE_NOT_FOUND',
+    document: 'DOCUMENT_FILE_NOT_FOUND',
+  };
+
+  private async assertEntryFilesUsable(
     entries: Array<{ type: string; metadata?: Record<string, any> }> | undefined,
     patientId: string,
     userId: string,
   ) {
     for (const entry of entries ?? []) {
-      if (entry.type !== 'photo') continue;
+      const code = ObservationsService.FILE_ENTRY_CODES[entry.type];
+      if (!code) continue;
       const fileId = entry.metadata?.fileId;
       if (typeof fileId !== 'string') continue; // shape is the DTO's job
-      await this.filesService.assertUsableForPatient(fileId, patientId, userId);
+      await this.filesService.assertUsableForPatient(fileId, patientId, userId, code);
     }
+  }
+
+  // Same reason and timing as assertEntryFilesUsable: a lab_result naming an analyte that doesn't
+  // exist can never be read against a reference range or trended, and catching it after the
+  // observation row is inserted would leave an orphan behind.
+  private async assertEntryAnalytesExist(entries: Array<{ type: string; metadata?: Record<string, any> }> | undefined) {
+    for (const entry of entries ?? []) {
+      if (entry.type !== 'lab_result') continue;
+      const analyteId = entry.metadata?.analyteId;
+      if (typeof analyteId !== 'string') continue; // shape is the DTO's job
+      await this.analytesService.assertExists(analyteId);
+    }
+  }
+
+  /**
+   * Attach `labContext` to lab_result entries: the analyte's display name, the reference range in
+   * effect at each observation's own observedAt, and this patient's goal (data-model.md → "Lab
+   * result read-time context").
+   *
+   * A sibling of `metadata`, never merged into it — update() re-inserts entries from the DTO a
+   * client echoes back, and a merged field would fail the entry schema on the round trip. One
+   * batched catalog read per call, in the shape of TimelineService.medicationNames rather than a
+   * lookup per entry.
+   */
+  private async hydrateLabContext(mapped: Array<{ patientId: string; observedAt: number | null; entries: any[] }>) {
+    const analyteIds: string[] = [];
+    for (const obs of mapped) {
+      for (const entry of obs.entries) {
+        if (entry.type === 'lab_result' && typeof entry.metadata?.analyteId === 'string') {
+          analyteIds.push(entry.metadata.analyteId);
+        }
+      }
+    }
+    if (!analyteIds.length) return mapped;
+
+    // Every observation in one response belongs to one patient (list is patient-scoped, getById
+    // returns one), so a single goal lookup covers them all.
+    const sources = await this.analytesService.labContextSources(mapped[0].patientId, analyteIds);
+    for (const obs of mapped) {
+      for (const entry of obs.entries) {
+        if (entry.type !== 'lab_result') continue;
+        const source = sources.get(entry.metadata?.analyteId);
+        if (!source) continue; // deleted analyte: no context rather than a broken read
+        entry.labContext = {
+          displayName: source.displayName,
+          referenceRange: AnalytesService.rangeContext(
+            AnalytesService.resolveRangeAt(source.ranges, obs.observedAt ?? 0),
+          ),
+          goal: source.goal,
+        };
+      }
+    }
+    return mapped;
   }
 
   async create(patientId: string, userId: string, dto: CreateObservationDto) {
@@ -99,7 +160,8 @@ export class ObservationsService {
     if (!dto.entries || !dto.entries.length) {
       throw new BadRequestException('AT_LEAST_ONE_ENTRY_REQUIRED');
     }
-    await this.assertPhotoFilesUsable(dto.entries, patientId, userId);
+    await this.assertEntryFilesUsable(dto.entries, patientId, userId);
+    await this.assertEntryAnalytesExist(dto.entries);
     const db = this.db.db as any;
     const id = randomUUID();
     const observedAtDate = new Date(dto.observedAt);
@@ -247,6 +309,8 @@ export class ObservationsService {
     if (params.limit && result.length > params.limit) {
       result = result.slice(0, params.limit);
     }
+    // After the filters and the limit: no point hydrating rows about to be dropped.
+    await this.hydrateLabContext(result);
     return result;
   }
 
@@ -267,7 +331,9 @@ export class ObservationsService {
       .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'observation')));
     const episodeIds = pivots.filter((p: any) => !p.resolvesEpisode).map((p: any) => p.episodeId);
     const resolvesEpisodeIds = pivots.filter((p: any) => !!p.resolvesEpisode).map((p: any) => p.episodeId);
-    return this.mapObservation(row, entries, episodeIds, resolvesEpisodeIds);
+    const mapped = this.mapObservation(row, entries, episodeIds, resolvesEpisodeIds);
+    await this.hydrateLabContext([mapped]);
+    return mapped;
   }
 
   async update(id: string, userId: string, dto: UpdateObservationDto) {
@@ -308,7 +374,8 @@ export class ObservationsService {
     }
 
     if (dto.entries) {
-      await this.assertPhotoFilesUsable(dto.entries, row.patientId, userId);
+      await this.assertEntryFilesUsable(dto.entries, row.patientId, userId);
+      await this.assertEntryAnalytesExist(dto.entries);
       await db.delete(observationEntries).where(eq(observationEntries.observationId, id));
       const observedAtTs = normalizeTs(row.observedAt);
       for (const entry of dto.entries) {
