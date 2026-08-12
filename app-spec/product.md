@@ -105,6 +105,17 @@ Load-bearing; every feature decision traces back to one of these.
     - **Photos**: attach to the timeline and to episodes like any other event, with a same-episode
       framing hint so a progression series stays comparable. No inventory-style attachment
       management — photos ride the existing entries model.
+    - **Lab report ingestion**: import a lab's own report file (Quest Diagnostics PDF first;
+      format-pluggable parser layer) into one observation — one `lab_result` entry per analyte,
+      the original PDF attached as a `document` entry. Parse → preview → confirm; only what the
+      lab printed is recorded (P6), and the PDF stays the source of truth
+      (data-model.md → "Lab report import", api.md → "Lab imports").
+    - **Analyte catalog**: the record keeps the measurement, the catalog keeps the standard.
+      Ingested analytes become managed entries with effective-dated reference ranges (a
+      recommendation that changes over time doesn't rewrite past results) and per-patient goal
+      ranges — in-range is not the same as at-goal, and a personal target is the caregiver's,
+      never the app's inference. A conflicting range on an incoming report asks before it
+      updates anything (data-model.md → "Analyte catalog").
 
 ## Phase 2 placeholders (not in MVP)
 - Doctor directory per patient with specialty, contact info, and appointments linked to episodes.

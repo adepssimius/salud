@@ -142,6 +142,8 @@ export const observationEntries = sqliteTable('observation_entries', {
       'note',
       'tag',
       'photo',
+      'lab_result',
+      'document',
     ],
   }).notNull(),
   metadata: text('metadata'), // JSON string for structured fields
@@ -175,6 +177,55 @@ export const episodesEventsPivot = sqliteTable('episodes_events_pivot', {
   eventId: text('event_id').notNull(),
   startsEpisode: integer('starts_episode', { mode: 'boolean' }).default(false).notNull(),
   resolvesEpisode: integer('resolves_episode', { mode: 'boolean' }).default(false).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+// Lab-analyte catalog (data-model.md → "Analyte catalog"). Global like medications, populated by
+// report ingestion rather than a seed. `name` is the lab's printed name verbatim; uniqueness is
+// case-insensitive but enforced service-side, same reasoning as medications.name.
+export const analytes = sqliteTable('analytes', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  displayName: text('display_name').notNull(),
+  unit: text('unit'),
+  // The panel the analyte was first seen under, e.g. "IRON AND TOTAL IRON BINDING CAPACITY".
+  // Context, not classification: "% Saturation" on its own says nothing about what is saturated.
+  panel: text('panel'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+// Effective-dated: the range in effect at time t is the row with the greatest effectiveFrom <= t.
+// No effectiveTo — each row ends where the next begins, so importing an older report inserts an
+// earlier row without rewriting anything (data-model.md → AnalyteReferenceRange).
+export const analyteReferenceRanges = sqliteTable('analyte_reference_ranges', {
+  id: text('id').primaryKey(),
+  analyteId: text('analyte_id')
+    .notNull()
+    .references(() => analytes.id),
+  refLow: real('ref_low'),
+  refHigh: real('ref_high'),
+  refText: text('ref_text'),
+  effectiveFrom: integer('effective_from', { mode: 'timestamp' }).notNull(),
+  source: text('source'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+// One row per (patient, analyte) — writes are upserts. A goal is the caregiver's own target,
+// distinct from the reference range, and never computes a flag onto the record (P6).
+export const analyteGoals = sqliteTable('analyte_goals', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  analyteId: text('analyte_id')
+    .notNull()
+    .references(() => analytes.id),
+  goalLow: real('goal_low'),
+  goalHigh: real('goal_high'),
+  note: text('note'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
@@ -292,6 +343,9 @@ export const fileAssets = sqliteTable('file_assets', {
   path: text('path').notNull(),
   contentType: text('content_type').notNull(),
   sizeBytes: integer('size_bytes').notNull(),
+  // Client-supplied filename at upload time, display-only (data-model.md → FileAsset). Nullable:
+  // files uploaded before this column existed have no name.
+  originalName: text('original_name'),
   patientId: text('patient_id').references(() => patients.id),
   createdByUserId: text('created_by_user_id')
     .notNull()

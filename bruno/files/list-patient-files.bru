@@ -1,0 +1,35 @@
+meta {
+  name: List Patient Files
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/files
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients && patients.length) {
+      bru.setVar('patientId', patients[0].id);
+    } else {
+      console.log('No patients found. Create one first.');
+    }
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Lists the patient's uploaded files newest-first for the "attach an existing document" picker
+  (api.md → "Files"): { id, originalName, contentType, sizeBytes, createdAt }[]. createdAt is
+  epoch seconds. Non-members get 404 PATIENT_NOT_FOUND like every other patient-scoped read.
+}

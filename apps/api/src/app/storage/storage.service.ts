@@ -46,6 +46,12 @@ export class StorageService {
     return fs.createReadStream(this.resolveLocalPath(relativePath));
   }
 
+  // Whole-file read for consumers that must parse the bytes (lab imports). Kept on this service so
+  // a later object-storage driver only changes this file, not its callers.
+  async read(relativePath: string): Promise<Buffer> {
+    return await fs.promises.readFile(this.resolveLocalPath(relativePath));
+  }
+
   async delete(relativePath: string): Promise<void> {
     await fs.promises.rm(this.resolveLocalPath(relativePath), { force: true });
   }

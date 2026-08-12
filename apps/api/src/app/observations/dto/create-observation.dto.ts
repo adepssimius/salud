@@ -31,6 +31,8 @@ class ObservationEntryDto {
     'note',
     'tag',
     'photo',
+    'lab_result',
+    'document',
   ] satisfies ObservationType[])
   type!: ObservationType;
 

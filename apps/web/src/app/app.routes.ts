@@ -54,6 +54,21 @@ export const appRoutes: Route[] = [
     loadComponent: () => import('./er-brief/er-brief.page').then((m) => m.ErBriefPage),
     canActivate: [authGuard],
   },
+  {
+    path: 'patients/:id/lab-import',
+    loadComponent: () => import('./labs/lab-import.page').then((m) => m.LabImportPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'analytes',
+    loadComponent: () => import('./analytes/analytes.page').then((m) => m.AnalytesPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'analytes/:id',
+    loadComponent: () => import('./analytes/analyte-detail.page').then((m) => m.AnalyteDetailPage),
+    canActivate: [authGuard],
+  },
   // No authGuard — a clinician opening a shared brief now downloads the framework plus this one
   // chunk instead of every page in the app.
   { path: 'brief/:token', loadComponent: () => import('./er-brief/shared-brief.page').then((m) => m.SharedBriefPage) },

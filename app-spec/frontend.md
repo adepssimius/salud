@@ -209,6 +209,11 @@ app. They therefore need somewhere to be entered.
   start/end, and are clickable through to that episode's detail page (below) — "what happened
   during this stretch" is answered better by the episode's own event list than by an in-chart
   filter, so this supersedes the in-chart filtering originally sketched for F-5.3.
+- Observations containing `lab_result` entries render as **one aggregate line** — "Labs: 30
+  results, 1 low" (counts from printed flags only, P6) — never one line per analyte; a full panel
+  would otherwise drown the day it was collected on. Per-analyte values are read on the analyte's
+  own history view (see "Analyte catalog"). Where a single lab entry does render, it uses the
+  catalog's `displayName` from `labContext`, falling back to the lab's printed name.
 
 ## Episode detail
 - `episode-detail.page.ts` at `/episodes/:episodeId` (ISSUES.md #9) — the entry point for "what
@@ -277,6 +282,86 @@ what keeps a brief read three days later from claiming to show "the last 72 hour
   - Timeline and episode views render `photo` entries as an inline thumbnail (fetched via
     `GET /api/files/:id`, same access control as every other patient-scoped read) rather than a
     text summary line.
+
+## Documents
+- The `document` entry mini-form attaches a file (PDF or image) to an observation — after-visit
+  summaries, discharge notes, lab reports. Two paths, both producing a `fileId`:
+  - **Upload new**: a file picker (`accept` PDF + images) that uploads immediately via
+    `POST /api/files`, same eager-upload pattern as photos.
+  - **Attach existing**: a picker listing the patient's already-uploaded files from
+    `GET /api/patients/:patientId/files` (shows `originalName`, date, size) — the case where the
+    file arrived via a lab import or an earlier observation and is being referenced again.
+- Optional `label` (defaults to the file's `originalName` on upload) and `note`.
+- `lab_result` is deliberately **not** offered in the manual entry form. Hand-typing lab rows is
+  exactly the transcription risk the import flow exists to avoid; the API accepts the type (the
+  import page and future correction flows use it), but the form does not surface it.
+- Timeline and event lists render `document` entries as a labeled attachment link (opens
+  `GET /api/files/:id`), not a text summary line.
+
+## Lab import
+- Entry point: an "Import lab report" action on patient detail, routing to
+  `/patients/:id/lab-import`. Flow is **upload → parse → preview → confirm**; nothing is recorded
+  until the caregiver confirms (api.md → "Lab imports").
+- **Upload**: PDF-only file picker; the file goes up via `POST /api/files`, then
+  `POST .../lab-imports { fileId }` parses it. A parse failure keeps the page on the upload step
+  with the mapped error sentence and notes the PDF itself was saved — retry doesn't re-upload.
+- **Preview**:
+  - A header card with the report's lab name, specimen id, collected/reported times, and the
+    report's printed patient name with a "check this matches ⟨patient⟩" line — the one cross-check
+    that catches importing one child's labs onto the other's record. The printed name is never
+    persisted.
+  - Parser `warnings` (verbatim unclassified lines) shown in their own card when non-empty.
+  - The analyte table, grouped under panel subheadings: checkbox (all selected by default),
+    analyte (the catalog's `displayName` once known), value + unit, the **printed** flag as a
+    danger pill, the reference range, and the patient's goal when one is set. The UI may
+    additionally highlight values outside the range or the goal at display time, but records only
+    what the report printed (P6).
+  - **Catalog status per row** (api.md → Lab imports, `resolutions`): a `new` pill on analytes
+    being added to the catalog for the first time, a `new range` pill where a range is being
+    recorded for an analyte that had none in effect. Neither asks — both are additive.
+  - **Conflicts ask.** Where the report's printed range differs from the catalog's effective range,
+    the row shows both and offers an "update the catalog to this range" checkbox, **unchecked by
+    default**. Leaving it unchecked records the results and leaves the catalog alone; the app never
+    silently arbitrates between the report and the catalog (P6).
+  - **Deselect-only**: a mis-parsed row is unchecked, not retyped — a hand-corrected number
+    silently attributed to the lab is worse than dropping the row, and the attached PDF remains
+    the source of truth.
+  - Editable before confirm: `observedAt` (prefilled from the collection time), the observation
+    `text` (prefilled one-line summary: lab, specimen, collected/reported), and the document
+    `label` (prefilled from the PDF's `originalName`).
+- **Confirm** is three requests: `POST /api/analytes/resolve` for the selected names (creating any
+  new analytes), then a reference-range `POST` per additive-or-accepted row (`effectiveFrom` = the
+  edited `observedAt`, so the range resolves against this very observation, `source` naming the
+  report), then the standard `POST .../observations` with the selected analytes as `lab_result`
+  entries plus one `document` entry — then navigates to the patient's timeline. A failure at the
+  last step leaves catalog rows created but no observation: harmless, and retrying is safe because
+  resolve and range-create are both idempotent.
+
+## Analyte catalog
+- `/analytes` (list) and `/analytes/:id` (detail), reached from the dashboard beside the medication
+  catalog. Global to the household, like medications — populated by importing reports, so a fresh
+  install shows an empty catalog until the first lab import.
+- **List**: search box (`?q=`), one row per analyte showing `displayName`, the lab's verbatim
+  printed `name` muted beneath it when it differs, and the unit. A minimal add form covers the rare
+  hand-added analyte.
+- **Detail**, one section each:
+  - **Header** — editable `displayName` and `unit`; the verbatim `name` shown muted and read-only
+    alongside, since it is what incoming reports match against.
+  - **Reference ranges** — the dated history newest-first, each row showing its bounds (or verbatim
+    text), `effectiveFrom`, and `source`; a "current" pill marks the row in effect now. Add and
+    delete; ranges are a standard that changes over time, so editing history is normal, not a
+    correction flow.
+  - **Goals** — a patient picker; the selected patient's goal shown with edit and clear actions.
+    A goal is a personal target ("ferritin at or above 120"), deliberately separate from the
+    reference range, and it is never used to compute a flag onto the record (P6).
+  - **History** — for the selected patient, every recorded value of this analyte over time as a
+    hand-drawn SVG chart (same no-charting-library treatment as the timeline): shaded bands for
+    each reference range's effective span, a dashed line for the goal, and the value series with
+    per-point tooltips. Non-numeric values (`"<0.2"`) are listed below the chart rather than
+    plotted. If the series mixes units, the chart says so instead of co-plotting incomparable
+    numbers.
+- Deleting an analyte that has recorded results is refused, and the message says how many results
+  are in the way.
 
 ## Errors & failure messages
 - **Error codes never reach the screen.** The API returns machine-readable codes as the message

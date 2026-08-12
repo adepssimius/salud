@@ -209,12 +209,23 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       schema (data model).
     - `resolvesEpisodeIds` must be subset of `episodeIds`, and every id in either list must belong to
       **this** patient (404 `EPISODE_NOT_FOUND`).
-    - If any entry type = `photo`, `metadata.fileId` is required, and the file must already exist and
-      be attached to this patient (or be a patientless upload by the acting user) — 400
-      `PHOTO_FILE_NOT_FOUND` otherwise. A shape-valid UUID that names nothing is a permanently broken
-      image in the timeline and the ER Brief, so it is caught at write time rather than at read time.
-      One code covers "no such file" and "someone else's file" alike, for the same
-      no-probing reason `GET /api/files/:fileId` returns 404 to a non-member.
+    - If any entry type = `photo` or `document`, `metadata.fileId` is required, and the file must
+      already exist and be attached to this patient (or be a patientless upload by the acting
+      user) — 400 `PHOTO_FILE_NOT_FOUND` / `DOCUMENT_FILE_NOT_FOUND` otherwise. A shape-valid UUID
+      that names nothing is a permanently broken image in the timeline and the ER Brief, so it is
+      caught at write time rather than at read time. One code covers "no such file" and "someone
+      else's file" alike, for the same no-probing reason `GET /api/files/:fileId` returns 404 to a
+      non-member.
+    - If any entry type = `lab_result`, `metadata.analyteId` is required and must name an existing
+      analyte — 400 `ANALYTE_NOT_FOUND` otherwise, checked before insert for the same
+      no-orphaned-observation reason as the file checks. Callers writing lab results directly (the
+      import page, or curl) call `POST /api/analytes/resolve` first to turn printed names into ids.
+      Reference-range fields are **rejected** on `lab_result` metadata (`OBSERVATION_SCHEMA_INVALID`,
+      like any unrecognized field): the range is a catalog standard, not measurement data.
+  - **Reads hydrate `lab_result` entries** with a non-persisted `labContext` sibling
+    (`{ displayName, referenceRange, goal }`, the range resolved at the observation's `observedAt`)
+    — data-model.md → "Lab result read-time context". It is never accepted on write; a `PATCH` that
+    echoes an observation back must omit it.
     - Numeric entry metadata is range-checked (data-model.md → "Observation entry structured
       metadata"). This matters most for `weight`: the value denormalizes onto the patient and then
       feeds mg/kg dose calculation, so a negative or absurd figure is a dosing-input corruption, not
@@ -765,26 +776,142 @@ of the record (F-1.4, data-model.md → `Revision`).
 
 ## Files
 
-Backs photo observation entries (§5.8, F-8.1). `StorageService`'s local driver does the actual
-read/write; the API surface stays storage-agnostic so a later S3-backed driver needs no route
-changes (tooling.md → "File storage").
+Backs `photo` and `document` observation entries (§5.8, F-8.1). `StorageService`'s local driver does
+the actual read/write; the API surface stays storage-agnostic so a later S3-backed driver needs no
+route changes (tooling.md → "File storage").
 
 - `POST /api/files`
   - Multipart upload (`file` field) plus a `patientId` form field — the web client always knows
     the selected patient before a photo is attached, so there is no genuinely patient-less upload
     path today (data-model.md → `FileAsset`). `ensurePatientAccess(patientId, userId)` gates the
     upload the same as every other patient-scoped write.
+  - The client-supplied filename is persisted as `originalName` (sanitized, ≤ 255 chars) for
+    display in the file picker and document labels; the storage path stays a server-generated UUID.
   - Response: `{ fileId, url }` (201). `url` is `/api/files/:fileId` — same-origin, authenticated.
 - `GET /api/files/:id`
   - Streams the file with its stored `contentType`. Access control: `ensurePatientAccess` against
     the file's `patientId` when set; for the (currently theoretical) patientless case, only the
     uploader may read it.
-  - Accepted for photo observations only (`metadata.fileId` on a `photo` entry).
-- **Write side**: a `photo` entry's `metadata.fileId` is checked at observation create/update time —
-  the file must exist and its `patientId` must match the observation's patient (or, for a patientless
-  upload, the acting user must be the uploader). 400 `PHOTO_FILE_NOT_FOUND` otherwise. Read-side
-  access control is unchanged; this stops a broken reference from being *stored* rather than
-  discovering it when the ER Brief tries to render the image.
+  - Accepted for `photo` and `document` observation entries (`metadata.fileId`).
+- `GET /api/patients/:patientId/files`
+  - Lists the patient's uploaded files, newest first, for the "attach an existing document" picker
+    (frontend.md → "Entry types"): `{ id, originalName, contentType, sizeBytes, createdAt }[]`.
+    Timestamps in epoch seconds per Conventions. `ensurePatientAccess` → 404 `PATIENT_NOT_FOUND`
+    for non-members.
+- **Write side**: a `photo` or `document` entry's `metadata.fileId` is checked at observation
+  create/update time — the file must exist and its `patientId` must match the observation's patient
+  (or, for a patientless upload, the acting user must be the uploader). 400 `PHOTO_FILE_NOT_FOUND`
+  (photo) / `DOCUMENT_FILE_NOT_FOUND` (document) otherwise. Read-side access control is unchanged;
+  this stops a broken reference from being *stored* rather than discovering it when the ER Brief
+  tries to render the image.
+
+## Lab imports
+
+Turns a lab's own report file into observation entries (data-model.md → "Lab report import";
+frontend.md → "Lab import"). Quest Diagnostics PDFs are the first supported format; parsing is
+format-pluggable behind a normalized `ParsedLabReport` shape, so adding a format is a new parser,
+not a new API.
+
+- `POST /api/patients/:patientId/lab-imports`
+  - Body: `{ "fileId": "uuid", "format": "quest" }` — `format` optional; when omitted the server
+    sniffs the extracted text against each registered parser (`quest` matches on a
+    "Quest Diagnostics" marker).
+  - **Stateless parse, persists nothing** (same compute-only POST shape as dose-checks) — including
+    the catalog: resolution *reads* the analyte catalog, it never creates rows. The client reviews
+    the result and then creates a normal observation (`lab_result` entries + a `document` entry for
+    the source PDF) via `POST /api/patients/:patientId/observations` — the observation create path
+    stays the single write path for measurements.
+  - The uploaded PDF is retained in storage whether or not parsing succeeds — a failed import
+    leaves the file available for troubleshooting and retry.
+  - Response (201):
+    ```json
+    {
+      "fileId": "…",
+      "parsed": {
+        "format": "quest",
+        "labName": "Quest Diagnostics",
+        "specimenId": "AB123456C",
+        "collectedAt": "2026-07-20T09:10:00.000Z",
+        "reportedAt": "2026-07-21T18:35:00.000Z",
+        "orderingProvider": "SMITH,ALEX",
+        "patientName": "DOE,JANE",
+        "analytes": [
+          { "analyte": "FERRITIN", "valueText": "37", "value": 37, "unit": "ng/mL",
+            "flag": "L", "refLow": 38, "refHigh": 380, "refText": null, "panel": "FERRITIN" }
+        ],
+        "warnings": ["<verbatim lines the parser could not classify>"]
+      },
+      "resolutions": [
+        { "analyte": "FERRITIN", "analyteId": "…", "displayName": "Ferritin",
+          "status": "conflict",
+          "catalogRange": { "id": "…", "refLow": 30, "refHigh": 400, "refText": null,
+                            "effectiveFrom": 1750000000 },
+          "goal": { "goalLow": 120, "goalHigh": null, "note": "athletic target" } }
+      ]
+    }
+    ```
+    `patientName` is for the preview's "check this matches" cross-check only — it is never
+    persisted. Partial parses are successes: unclassifiable lines land in `warnings` (deduped,
+    capped) so the preview can show them; zero parsed analytes is still a 201.
+  - `resolutions` is **index-aligned with `parsed.analytes`**. Each entry compares the report's
+    printed range against the catalog range in effect at `collectedAt` (falling back to
+    `reportedAt`, then now, when the report prints no collection time). `status` is one of:
+    | status | meaning | what confirm does |
+    | --- | --- | --- |
+    | `new` | name not in the catalog (case-insensitive) | auto-creates the analyte, and its printed range as the first effective-dated row |
+    | `match` | printed range equals the effective catalog range | nothing |
+    | `conflict` | printed range differs from the effective catalog range | **asks** — adds a new effective-dated range only if the caregiver accepts |
+    | `new_range` | analyte exists but no range is effective at `collectedAt`, and the report prints one | adds it (nothing is being overwritten) |
+    | `no_printed_range` | the report prints no range for this row | nothing |
+    Equality is numeric on `refLow`/`refHigh` and trimmed-string on `refText`, with `null` equal to
+    `null`. `analyteId` is `null` exactly when `status` is `new`. `goal` is this patient's goal for
+    the analyte, for preview display only.
+  - Errors: 404 `PATIENT_NOT_FOUND` (non-member); 400 `LAB_FILE_NOT_FOUND` (unknown fileId, or a
+    file that doesn't belong to this patient — same non-disclosure semantics as
+    `PHOTO_FILE_NOT_FOUND`); 400 `LAB_PDF_UNPARSEABLE` (not a PDF, unreadable, or image-only with
+    no extractable text — one code, the user's remedy is identical); 400 `LAB_FORMAT_UNSUPPORTED`
+    (readable PDF, but no registered parser recognizes it and no valid `format` was forced).
+
+## Analytes
+
+The lab-analyte catalog (data-model.md → "Analyte catalog"): global like the medication catalog,
+not patient-scoped, populated by ingestion rather than a seed. Reference ranges are effective-dated
+standards; goals are per-patient targets.
+
+- `POST /api/analytes` — `{ name, displayName?, unit?, panel? }`. `displayName` defaults to Title
+  Case of `name`. 409 `ANALYTE_NAME_TAKEN` on a case-insensitive collision with an existing `name`.
+- `GET /api/analytes?q=` — case-insensitive substring over `name`, `displayName` **and `panel`**
+  (searching "iron" finds `% Saturation`, whose own name never mentions it).
+- `GET /api/analytes/:id` — 404 `ANALYTE_NOT_FOUND`.
+- `PATCH /api/analytes/:id` — `{ name?, displayName?, unit?, panel? }`; a rename re-checks
+  availability (renaming to its own current name is a no-op, not a conflict).
+- `DELETE /api/analytes/:id` — 409 `ANALYTE_IN_USE` with `{ dependents: { labResults: n } }` when
+  any `lab_result` entry references it. Otherwise deletes the analyte together with its own
+  reference ranges and goals (data-model.md explains the divergence from the medication catalog).
+- `POST /api/analytes/resolve` — `{ analytes: [{ name, unit?, panel? }] }` (≤ 200 entries) →
+  `[{ name, analyteId, displayName, created }]` **in input order**. Case-insensitive match on
+  `name`; missing analytes are created with a title-cased `displayName` and the submitted
+  `unit`/`panel`. Idempotent: calling it twice returns the same ids with `created: false` the
+  second time, and the second call's `unit`/`panel` are **ignored** — an import never rewrites
+  what the catalog already says. This is how a client turns printed names into `analyteId`s before
+  writing `lab_result` entries.
+- `POST /api/analytes/:id/reference-ranges` — `{ refLow?, refHigh?, refText?, effectiveFrom, source? }`.
+  At least one of `refLow`/`refHigh`/`refText` required (400 `ANALYTE_RANGE_EMPTY`);
+  `effectiveFrom` is an ISO datetime. **Retry-safe**: if the row already effective at that
+  `effectiveFrom` carries identical values, the existing row is returned and nothing is inserted.
+- `GET /api/analytes/:id/reference-ranges` — newest `effectiveFrom` first.
+- `PATCH /api/reference-ranges/:id`, `DELETE /api/reference-ranges/:id` — 404
+  `ANALYTE_RANGE_NOT_FOUND`.
+- `GET /api/patients/:patientId/analyte-goals` — this patient's goals, each with the analyte's
+  `displayName` for rendering.
+- `PUT /api/patients/:patientId/analyte-goals/:analyteId` — upsert `{ goalLow?, goalHigh?, note? }`;
+  one row per (patient, analyte). At least one bound required (400 `ANALYTE_GOAL_EMPTY`).
+- `DELETE /api/patients/:patientId/analyte-goals/:analyteId` — 404 `ANALYTE_GOAL_NOT_FOUND`.
+- `GET /api/patients/:patientId/analytes/:analyteId/history` — everything the history view needs in
+  one request: `{ analyte, ranges: AnalyteReferenceRange[] (ascending), goal, points: [{ observationId, observedAt, valueText, value, unit, flag }] (ascending) }`.
+  Points come from this patient's `lab_result` entries naming the analyte.
+- All goal/history routes are patient-scoped and answer 404 `PATIENT_NOT_FOUND` to a non-member;
+  the analyte routes themselves are household-global and need only authentication.
 
 ## Validation & errors
 - Error codes are returned as the message string so clients can branch on them.
@@ -834,7 +961,7 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-36 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
+47 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
 sentence silently falls back to that call site's generic message rather than reaching the user.
@@ -879,6 +1006,17 @@ sentence silently falls back to that call site's generic message rather than rea
 | `EMBODIMENT_IN_USE` | 409 | `DELETE /api/embodiments/:id` with dependent rows; body carries `dependents` |
 | `GUIDELINE_IN_USE` | 409 | `DELETE /api/guidelines/:id` with dependent rows; body carries `dependents` |
 | `REACTION_NOT_FOUND` | 404 | reaction delete — unknown id, or one belonging to another patient |
+| `DOCUMENT_FILE_NOT_FOUND` | 400 (array form) | a `document` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — same semantics as `PHOTO_FILE_NOT_FOUND` |
+| `LAB_FILE_NOT_FOUND` | 400 | `POST .../lab-imports` with a `fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
+| `LAB_PDF_UNPARSEABLE` | 400 | `POST .../lab-imports` on a file that is not a PDF, cannot be read as one, or contains no extractable text (image-only scan) |
+| `LAB_FORMAT_UNSUPPORTED` | 400 | `POST .../lab-imports` on a readable PDF no registered parser recognizes |
+| `ANALYTE_NAME_TAKEN` | 409 | analyte create/rename colliding case-insensitively with an existing `name` |
+| `ANALYTE_NOT_FOUND` | 404, or 400 (array form) | unknown analyte id on an analyte route; 400 from an observation write whose `lab_result` entry names an analyte that does not exist |
+| `ANALYTE_IN_USE` | 409 | `DELETE /api/analytes/:id` with `lab_result` entries referencing it; body carries `dependents` |
+| `ANALYTE_RANGE_NOT_FOUND` | 404 | reference-range patch/delete — unknown id |
+| `ANALYTE_RANGE_EMPTY` | 400 | a reference range with none of `refLow`, `refHigh`, `refText` |
+| `ANALYTE_GOAL_NOT_FOUND` | 404 | goal delete for a (patient, analyte) pair with no goal set |
+| `ANALYTE_GOAL_EMPTY` | 400 | a goal with neither `goalLow` nor `goalHigh` |
 
 ### Dosing warnings are not error codes
 `atypical_dose` is an advisory `type`, not an error — see "Dosing engine" above. A dose that exceeds

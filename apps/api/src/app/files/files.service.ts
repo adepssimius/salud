@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
+import { PatientFileSummary } from '@salud/shared/types';
 import { DatabaseService } from '../persistence/database.service';
 import { StorageService } from '../storage/storage.service';
+import { normalizeTs } from '../persistence/time';
 import { careTeamMemberships, fileAssets } from '../../db/schema';
 
 export interface UploadInput {
@@ -32,6 +34,15 @@ export class FilesService {
     }
   }
 
+  // Display-only (data-model.md → FileAsset.originalName): strip any path components and control
+  // characters, cap the length. The storage path stays a server-generated UUID regardless.
+  private sanitizeOriginalName(originalname: string | undefined): string | null {
+    if (!originalname) return null;
+    // eslint-disable-next-line no-control-regex
+    const cleaned = path.basename(originalname).replace(/[\x00-\x1f\x7f]/g, '').trim();
+    return cleaned ? cleaned.slice(0, 255) : null;
+  }
+
   async upload(userId: string, patientId: string, file: UploadInput): Promise<{ fileId: string; url: string }> {
     await this.ensurePatientAccess(patientId, userId);
     const db = this.db.db as any;
@@ -44,34 +55,71 @@ export class FilesService {
       path: relativePath,
       contentType: file.mimetype,
       sizeBytes: file.size,
+      originalName: this.sanitizeOriginalName(file.originalname),
       patientId,
       createdByUserId: userId,
     });
     return { fileId: id, url: `/api/files/${id}` };
   }
 
+  // Backs the "attach an existing document" picker (api.md → Files).
+  async listForPatient(patientId: string, userId: string): Promise<PatientFileSummary[]> {
+    await this.ensurePatientAccess(patientId, userId);
+    const db = this.db.db as any;
+    const rows = await db
+      .select()
+      .from(fileAssets)
+      .where(eq(fileAssets.patientId, patientId))
+      .orderBy(desc(fileAssets.createdAt));
+    return rows.map((row: any) => ({
+      id: row.id,
+      originalName: row.originalName ?? null,
+      contentType: row.contentType,
+      sizeBytes: row.sizeBytes,
+      createdAt: normalizeTs(row.createdAt),
+    }));
+  }
+
   /**
-   * Write-side check for a photo observation entry's `metadata.fileId`.
+   * Write-side check for a photo/document observation entry's `metadata.fileId` (and the
+   * lab-import parse endpoint's `fileId`, via getUsableForPatient below).
    *
-   * Same access shape as getForStream above, but it throws PHOTO_FILE_NOT_FOUND (400) rather than
-   * FILE_NOT_FOUND (404): this is a bad request body, not a missing resource. One code covers all
-   * four failure modes — no such file, another patient's file, someone else's unattached upload —
-   * for exactly the reason getForStream doesn't distinguish them either.
+   * Same access shape as getForStream above, but it throws the caller's 400 code (default
+   * PHOTO_FILE_NOT_FOUND) rather than FILE_NOT_FOUND (404): this is a bad request body, not a
+   * missing resource. One code covers all four failure modes — no such file, another patient's
+   * file, someone else's unattached upload — for exactly the reason getForStream doesn't
+   * distinguish them either.
    *
    * Catching this at write time rather than at read time is the point: a shape-valid UUID naming
    * nothing is a permanently broken image in the timeline and the ER Brief.
    */
-  async assertUsableForPatient(fileId: string, patientId: string, userId: string): Promise<void> {
+  async assertUsableForPatient(
+    fileId: string,
+    patientId: string,
+    userId: string,
+    code = 'PHOTO_FILE_NOT_FOUND',
+  ): Promise<void> {
+    await this.getUsableForPatient(fileId, patientId, userId, code);
+  }
+
+  /** assertUsableForPatient, but hands back the row for callers that need path/contentType. */
+  async getUsableForPatient(
+    fileId: string,
+    patientId: string,
+    userId: string,
+    code: string,
+  ): Promise<{ path: string; contentType: string }> {
     const db = this.db.db as any;
     const rows = await db.select().from(fileAssets).where(eq(fileAssets.id, fileId)).limit(1);
-    if (!rows.length) throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+    if (!rows.length) throw new BadRequestException(code);
     const row = rows[0];
     if (row.patientId) {
-      if (row.patientId !== patientId) throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+      if (row.patientId !== patientId) throw new BadRequestException(code);
       await this.ensurePatientAccess(row.patientId, userId);
     } else if (row.createdByUserId !== userId) {
-      throw new BadRequestException('PHOTO_FILE_NOT_FOUND');
+      throw new BadRequestException(code);
     }
+    return { path: row.path, contentType: row.contentType };
   }
 
   async getForStream(id: string, userId: string) {

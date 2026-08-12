@@ -6,9 +6,10 @@ import { EpisodesModule } from '../episodes/episodes.module';
 import { AdvisoriesModule } from '../advisories/advisories.module';
 import { RevisionsModule } from '../revisions/revisions.module';
 import { FilesModule } from '../files/files.module';
+import { AnalytesModule } from '../analytes/analytes.module';
 
 @Module({
-  imports: [PersistenceModule, EpisodesModule, AdvisoriesModule, RevisionsModule, FilesModule],
+  imports: [PersistenceModule, EpisodesModule, AdvisoriesModule, RevisionsModule, FilesModule, AnalytesModule],
   providers: [ObservationsService],
   controllers: [ObservationsController],
   exports: [ObservationsService],

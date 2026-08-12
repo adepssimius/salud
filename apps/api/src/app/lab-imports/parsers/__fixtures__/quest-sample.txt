@@ -1,0 +1,89 @@
+DOB: 01/15/1990
+Sex: F
+Phone: (555) 555-0100
+Patient ID: 1111111111111111111
+Age: 36
+Fasting: Y
+Specimen: AB123456C
+Requisition: 0009999
+Lab Reference ID: 99999999
+Report Status: FINAL / SEE REPORT
+Collected: 07/20/2026 09:10
+Received: 07/20/2026 09:10
+Reported: 07/21/2026 18:35
+Client #: 12345678
+SMITH,ALEX
+EXAMPLE HEALTH
+100 MAIN ST STE 1
+ANYTOWN, MI 48000-0000
+Phone: (555) 555-0200
+DOE,JANE
+FASTING:YES
+FERRITIN
+AnalyteValue
+FERRITIN37 L
+Reference Range: 38-380 ng/mL
+VITAMIN D,25-OH,TOTAL,IA
+AnalyteValue
+VITAMIN D,25-OH,TOTAL,IA75
+Reference Range: 30-100 ng/mL
+Vitamin D Status         25-OH Vitamin D:
+Deficiency:                    <20 ng/mL
+Insufficiency:             20 - 29 ng/mL
+Optimal:                 > or = 30 ng/mL
+COMMENT
+See Note 1
+TESTOSTERONE, FREE, BIOVAILABLE AND TOTAL, MALES (ADULT), IMMUNOASSAY
+AnalyteValue
+TESTOSTERONE, TOTAL, MALES (ADULT), IA504
+Reference Range: 250-827 ng/dL
+ALBUMIN4.6
+Reference Range: 3.6-5.1 g/dL
+SEX HORMONE BINDING GLOBULIN25
+Reference Range: 10-50 nmol/L
+TESTOSTERONE, FREE84.5
+Reference Range: 46.0-224.0 pg/mL
+IRON AND TOTAL IRON BINDING CAPACITY
+AnalyteValue
+IRON, TOTAL136
+Reference Range: 50-180 mcg/dL
+IRON BINDING CAPACITY404
+Reference Range: 250-425 mcg/dL (calc)
+% SATURATION34
+Reference Range: 20-48 % (calc)
+CBC (INCLUDES DIFF/PLT)
+AnalyteValue
+DOE,JANE (AB123456C)1 / 38/11/26
+WHITE BLOOD CELL COUNT5.8
+Reference Range: 3.8-10.8 Thousand/uL
+HEMOGLOBIN13.9
+Reference Range: 13.2-17.1 g/dL
+MPV12.1
+Reference Range: 7.5-12.5 fL
+ABSOLUTE NEUTROPHILS2558
+Reference Range: 1500-7800 cells/uL
+NEUTROPHILS44.1
+%
+BASOPHILS0.5
+%
+CORTISOL, TOTAL
+AnalyteValue
+CORTISOL, TOTAL16.0
+mcg/dL
+Reference Range: For 8 a.m.(7-9 a.m.) Specimen: 4.0-22.0
+Reference Range: For 4 p.m.(3-5 p.m.) Specimen: 3.0-17.0
+* Please interpret above results accordingly *
+APOLIPOPROTEIN B
+AnalyteValue
+APOLIPOPROTEIN B87
+mg/dL
+Reference Range    <90
+Risk Category:
+Optimal         <90
+DOE,JANE (AB123456C)2 / 38/11/26
+Quest, Quest Diagnostics, the associated logo, and all associated Quest Diagnostics marks are the registered trademarks of Quest Diagnostics.
+These results have been sent to the person who ordered the tests.
+Performing Sites
+NL1 Quest Diagnostics LLC-Quest Diagnostics LLC, 200 Forest St, Marlborough, MA 01752-3023 Laboratory Director: Example Person M.D.
+Key
+Priority Out of Range Out of Range

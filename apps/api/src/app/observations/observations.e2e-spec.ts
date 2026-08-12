@@ -449,6 +449,129 @@ describe('Observations (e2e)', () => {
     expect(JSON.stringify(crossed.body.message)).toContain('PHOTO_FILE_NOT_FOUND');
   });
 
+  it('round-trips lab_result metadata, hydrates labContext, and gates document entries on file ownership', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientRes = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Lab Patient', dateOfBirth: '1987-12-30', sexAtBirth: 'male' })
+      .expect(201);
+    const patientId = patientRes.body.id;
+
+    const analyte = (
+      await request(app.getHttpServer())
+        .post('/api/analytes')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'CORTISOL, TOTAL' })
+        .expect(201)
+    ).body;
+    await request(app.getHttpServer())
+      .post(`/api/analytes/${analyte.id}/reference-ranges`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ refText: 'For 8 a.m. Specimen: 4.0-22.0', effectiveFrom: '2020-01-01T00:00:00.000Z' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/api/patients/${patientId}/analyte-goals/${analyte.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ goalHigh: 18 })
+      .expect(200);
+
+    // Same write-time phantom-file check as photo entries, own code (api.md → error codes).
+    const phantom = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          { type: 'document', metadata: { fileId: '11111111-1111-4111-8111-111111111111' } },
+        ],
+      })
+      .expect(400);
+    expect(JSON.stringify(phantom.body.message)).toContain('DOCUMENT_FILE_NOT_FOUND');
+
+    const upload = await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', Buffer.from('%PDF-1.4 fake'), {
+        filename: 'quest-labs.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(201);
+
+    // Lab values are stored as reported. No reference-range fields: the standard lives in the
+    // catalog and is attached at read time.
+    const labMetadata = {
+      analyteId: analyte.id,
+      analyte: 'CORTISOL, TOTAL',
+      valueText: '16.0',
+      value: 16.0,
+      unit: 'mcg/dL',
+      flag: null,
+      panel: 'CORTISOL, TOTAL',
+    };
+    const createRes = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          { type: 'lab_result', metadata: labMetadata },
+          { type: 'document', metadata: { fileId: upload.body.fileId, label: 'Quest labs Jul 2026' } },
+        ],
+      })
+      .expect(201);
+
+    const fetched = await request(app.getHttpServer())
+      .get(`/api/observations/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const lab = fetched.body.entries.find((e: any) => e.type === 'lab_result');
+    expect(lab.metadata).toEqual(labMetadata); // stored exactly as written
+    // ...and the catalog's standard rides alongside it, never inside it.
+    expect(lab.labContext.displayName).toBe('Cortisol, Total');
+    expect(lab.labContext.referenceRange.refText).toBe('For 8 a.m. Specimen: 4.0-22.0');
+    expect(lab.labContext.goal).toEqual({ goalLow: null, goalHigh: 18, note: null });
+    const doc = fetched.body.entries.find((e: any) => e.type === 'document');
+    expect(doc.metadata).toEqual({ fileId: upload.body.fileId, label: 'Quest labs Jul 2026' });
+
+    // Reference-range fields on the entry are rejected outright — a range is not measurement data.
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          {
+            type: 'lab_result',
+            metadata: { analyteId: analyte.id, analyte: 'FERRITIN', valueText: '37', refLow: 38 },
+          },
+        ],
+      })
+      .expect(400)
+      .expect((res) => expect(JSON.stringify(res.body.message)).toContain('OBSERVATION_SCHEMA_INVALID'));
+
+    // A shape-valid analyteId naming nothing is caught at write time, like a phantom fileId.
+    const phantomAnalyte = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [
+          {
+            type: 'lab_result',
+            metadata: {
+              analyteId: '11111111-1111-4111-8111-111111111111',
+              analyte: 'FERRITIN',
+              valueText: '37',
+            },
+          },
+        ],
+      })
+      .expect(400);
+    expect(JSON.stringify(phantomAnalyte.body.message)).toContain('ANALYTE_NOT_FOUND');
+  });
+
   it('accepts a valid entry for every observation type', async () => {
     const { token } = await registerAndLogin(app);
     const patientRes = await request(app.getHttpServer())
@@ -468,6 +591,14 @@ describe('Observations (e2e)', () => {
       })
       .expect(201);
 
+    const everyTypeAnalyte = (
+      await request(app.getHttpServer())
+        .post('/api/analytes')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'FERRITIN EVERY TYPE' })
+        .expect(201)
+    ).body;
+
     const entries = [
       { type: 'temperature', metadata: { value: 38.0, unit: 'C', method: 'oral' } },
       { type: 'heart_rate', metadata: { bpm: 110 } },
@@ -486,6 +617,22 @@ describe('Observations (e2e)', () => {
       {
         type: 'photo',
         metadata: { fileId: upload.body.fileId, bodyLocation: 'Chest', side: 'n/a' },
+      },
+      {
+        type: 'lab_result',
+        metadata: {
+          analyteId: everyTypeAnalyte.id,
+          analyte: 'FERRITIN',
+          valueText: '37',
+          value: 37,
+          unit: 'ng/mL',
+          flag: 'L',
+          panel: 'FERRITIN',
+        },
+      },
+      {
+        type: 'document',
+        metadata: { fileId: upload.body.fileId, label: 'After-visit summary' },
       },
     ];
 

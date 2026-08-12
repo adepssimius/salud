@@ -43,6 +43,7 @@ interface UserSearchResult {
             <button class="secondary" type="button" (click)="backToProfile()">Back</button>
             <button class="secondary" type="button" (click)="goToTimeline()">Timeline</button>
             <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
+            <button class="secondary" type="button" (click)="goToLabImport()">Import lab report</button>
             <button
               *ngIf="isOwner()"
               class="danger"
@@ -784,6 +785,10 @@ export class PatientDetailPage implements OnInit {
 
   goToErBrief() {
     this.router.navigate(['/patients', this.patientId, 'er-brief']);
+  }
+
+  goToLabImport() {
+    this.router.navigate(['/patients', this.patientId, 'lab-import']);
   }
 
   startEditCodeStatus() {

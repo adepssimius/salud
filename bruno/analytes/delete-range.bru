@@ -1,0 +1,21 @@
+meta {
+  name: Delete Reference Range
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}reference-ranges/{{referenceRangeId}}
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  404 ANALYTE_RANGE_NOT_FOUND for an unknown id. Deleting the row in effect makes the previous
+  one current again.
+}

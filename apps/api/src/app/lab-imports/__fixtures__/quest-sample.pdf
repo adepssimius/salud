@@ -1,0 +1,182 @@
+%PDF-1.3
+%“Œ‹ž ReportLab Generated PDF document (opensource)
+1 0 obj
+<<
+/F1 2 0 R
+>>
+endobj
+2 0 obj
+<<
+/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
+>>
+endobj
+3 0 obj
+<<
+/Contents 8 0 R /MediaBox [ 0 0 612 792 ] /Parent 7 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
+endobj
+4 0 obj
+<<
+/Contents 9 0 R /MediaBox [ 0 0 612 792 ] /Parent 7 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
+endobj
+5 0 obj
+<<
+/PageMode /UseNone /Pages 7 0 R /Type /Catalog
+>>
+endobj
+6 0 obj
+<<
+/Author (anonymous) /CreationDate (D:20260811155034-04'00') /Creator (anonymous) /Keywords () /ModDate (D:20260811155034-04'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+  /Subject (unspecified) /Title (untitled) /Trapped /False
+>>
+endobj
+7 0 obj
+<<
+/Count 2 /Kids [ 3 0 R 4 0 R ] /Type /Pages
+>>
+endobj
+8 0 obj
+<<
+/Length 4203
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 8 Tf 9.6 TL ET
+BT 1 0 0 1 40 770 Tm (DOB: 01/15/1990) Tj T* ET
+BT 1 0 0 1 40 760 Tm (Sex: F) Tj T* ET
+BT 1 0 0 1 40 750 Tm (Phone: \(555\) 555-0100) Tj T* ET
+BT 1 0 0 1 40 740 Tm (Patient ID: 1111111111111111111) Tj T* ET
+BT 1 0 0 1 40 730 Tm (Age: 36) Tj T* ET
+BT 1 0 0 1 40 720 Tm (Fasting: Y) Tj T* ET
+BT 1 0 0 1 40 710 Tm (Specimen: AB123456C) Tj T* ET
+BT 1 0 0 1 40 700 Tm (Requisition: 0009999) Tj T* ET
+BT 1 0 0 1 40 690 Tm (Lab Reference ID: 99999999) Tj T* ET
+BT 1 0 0 1 40 680 Tm (Report Status: FINAL / SEE REPORT) Tj T* ET
+BT 1 0 0 1 40 670 Tm (Collected: 07/20/2026 09:10) Tj T* ET
+BT 1 0 0 1 40 660 Tm (Received: 07/20/2026 09:10) Tj T* ET
+BT 1 0 0 1 40 650 Tm (Reported: 07/21/2026 18:35) Tj T* ET
+BT 1 0 0 1 40 640 Tm (Client #: 12345678) Tj T* ET
+BT 1 0 0 1 40 630 Tm (SMITH,ALEX) Tj T* ET
+BT 1 0 0 1 40 620 Tm (EXAMPLE HEALTH) Tj T* ET
+BT 1 0 0 1 40 610 Tm (100 MAIN ST STE 1) Tj T* ET
+BT 1 0 0 1 40 600 Tm (ANYTOWN, MI 48000-0000) Tj T* ET
+BT 1 0 0 1 40 590 Tm (Phone: \(555\) 555-0200) Tj T* ET
+BT 1 0 0 1 40 580 Tm (DOE,JANE) Tj T* ET
+BT 1 0 0 1 40 570 Tm (FASTING:YES) Tj T* ET
+BT 1 0 0 1 40 560 Tm (FERRITIN) Tj T* ET
+BT 1 0 0 1 40 550 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 540 Tm (FERRITIN37 L) Tj T* ET
+BT 1 0 0 1 40 530 Tm (Reference Range: 38-380 ng/mL) Tj T* ET
+BT 1 0 0 1 40 520 Tm (VITAMIN D,25-OH,TOTAL,IA) Tj T* ET
+BT 1 0 0 1 40 510 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 500 Tm (VITAMIN D,25-OH,TOTAL,IA75) Tj T* ET
+BT 1 0 0 1 40 490 Tm (Reference Range: 30-100 ng/mL) Tj T* ET
+BT 1 0 0 1 40 480 Tm (Vitamin D Status         25-OH Vitamin D:) Tj T* ET
+BT 1 0 0 1 40 470 Tm (Deficiency:                    <20 ng/mL) Tj T* ET
+BT 1 0 0 1 40 460 Tm (Insufficiency:             20 - 29 ng/mL) Tj T* ET
+BT 1 0 0 1 40 450 Tm (Optimal:                 > or = 30 ng/mL) Tj T* ET
+BT 1 0 0 1 40 440 Tm (COMMENT) Tj T* ET
+BT 1 0 0 1 40 430 Tm (See Note 1) Tj T* ET
+BT 1 0 0 1 40 420 Tm (TESTOSTERONE, FREE, BIOVAILABLE AND TOTAL, MALES \(ADULT\), IMMUNOASSAY) Tj T* ET
+BT 1 0 0 1 40 410 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 400 Tm (TESTOSTERONE, TOTAL, MALES \(ADULT\), IA504) Tj T* ET
+BT 1 0 0 1 40 390 Tm (Reference Range: 250-827 ng/dL) Tj T* ET
+BT 1 0 0 1 40 380 Tm (ALBUMIN4.6) Tj T* ET
+BT 1 0 0 1 40 370 Tm (Reference Range: 3.6-5.1 g/dL) Tj T* ET
+BT 1 0 0 1 40 360 Tm (SEX HORMONE BINDING GLOBULIN25) Tj T* ET
+BT 1 0 0 1 40 350 Tm (Reference Range: 10-50 nmol/L) Tj T* ET
+BT 1 0 0 1 40 340 Tm (TESTOSTERONE, FREE84.5) Tj T* ET
+BT 1 0 0 1 40 330 Tm (Reference Range: 46.0-224.0 pg/mL) Tj T* ET
+BT 1 0 0 1 40 320 Tm (IRON AND TOTAL IRON BINDING CAPACITY) Tj T* ET
+BT 1 0 0 1 40 310 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 300 Tm (IRON, TOTAL136) Tj T* ET
+BT 1 0 0 1 40 290 Tm (Reference Range: 50-180 mcg/dL) Tj T* ET
+BT 1 0 0 1 40 280 Tm (IRON BINDING CAPACITY404) Tj T* ET
+BT 1 0 0 1 40 270 Tm (Reference Range: 250-425 mcg/dL \(calc\)) Tj T* ET
+BT 1 0 0 1 40 260 Tm (% SATURATION34) Tj T* ET
+BT 1 0 0 1 40 250 Tm (Reference Range: 20-48 % \(calc\)) Tj T* ET
+BT 1 0 0 1 40 240 Tm (CBC \(INCLUDES DIFF/PLT\)) Tj T* ET
+BT 1 0 0 1 40 230 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 220 Tm (DOE,JANE \(AB123456C\)1 / 38/11/26) Tj T* ET
+BT 1 0 0 1 40 210 Tm (WHITE BLOOD CELL COUNT5.8) Tj T* ET
+BT 1 0 0 1 40 200 Tm (Reference Range: 3.8-10.8 Thousand/uL) Tj T* ET
+BT 1 0 0 1 40 190 Tm (HEMOGLOBIN13.9) Tj T* ET
+BT 1 0 0 1 40 180 Tm (Reference Range: 13.2-17.1 g/dL) Tj T* ET
+BT 1 0 0 1 40 170 Tm (MPV12.1) Tj T* ET
+BT 1 0 0 1 40 160 Tm (Reference Range: 7.5-12.5 fL) Tj T* ET
+BT 1 0 0 1 40 150 Tm (ABSOLUTE NEUTROPHILS2558) Tj T* ET
+BT 1 0 0 1 40 140 Tm (Reference Range: 1500-7800 cells/uL) Tj T* ET
+BT 1 0 0 1 40 130 Tm (NEUTROPHILS44.1) Tj T* ET
+BT 1 0 0 1 40 120 Tm (%) Tj T* ET
+BT 1 0 0 1 40 110 Tm (BASOPHILS0.5) Tj T* ET
+BT 1 0 0 1 40 100 Tm (%) Tj T* ET
+BT 1 0 0 1 40 90 Tm (CORTISOL, TOTAL) Tj T* ET
+BT 1 0 0 1 40 80 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 70 Tm (CORTISOL, TOTAL16.0) Tj T* ET
+BT 1 0 0 1 40 60 Tm (mcg/dL) Tj T* ET
+BT 1 0 0 1 40 50 Tm (Reference Range: For 8 a.m.\(7-9 a.m.\) Specimen: 4.0-22.0) Tj T* ET
+BT 1 0 0 1 40 40 Tm (Reference Range: For 4 p.m.\(3-5 p.m.\) Specimen: 3.0-17.0) Tj T* ET
+ 
+endstream
+endobj
+9 0 obj
+<<
+/Length 1135
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+BT /F1 8 Tf 9.6 TL ET
+BT 1 0 0 1 40 770 Tm (* Please interpret above results accordingly *) Tj T* ET
+BT 1 0 0 1 40 760 Tm (APOLIPOPROTEIN B) Tj T* ET
+BT 1 0 0 1 40 750 Tm (AnalyteValue) Tj T* ET
+BT 1 0 0 1 40 740 Tm (APOLIPOPROTEIN B87) Tj T* ET
+BT 1 0 0 1 40 730 Tm (mg/dL) Tj T* ET
+BT 1 0 0 1 40 720 Tm (Reference Range    <90) Tj T* ET
+BT 1 0 0 1 40 710 Tm (Risk Category:) Tj T* ET
+BT 1 0 0 1 40 700 Tm (Optimal         <90) Tj T* ET
+BT 1 0 0 1 40 690 Tm (DOE,JANE \(AB123456C\)2 / 38/11/26) Tj T* ET
+BT 1 0 0 1 40 680 Tm (Quest, Quest Diagnostics, the associated logo, and all associated Quest Diagnostics marks are the registered trademarks of Quest Diagnostics.) Tj T* ET
+BT 1 0 0 1 40 670 Tm (These results have been sent to the person who ordered the tests.) Tj T* ET
+BT 1 0 0 1 40 660 Tm (Performing Sites) Tj T* ET
+BT 1 0 0 1 40 650 Tm (NL1 Quest Diagnostics LLC-Quest Diagnostics LLC, 200 Forest St, Marlborough, MA 01752-3023 Laboratory Director: Example Person M.D.) Tj T* ET
+BT 1 0 0 1 40 640 Tm (Key) Tj T* ET
+BT 1 0 0 1 40 630 Tm (Priority Out of Range Out of Range) Tj T* ET
+ 
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000061 00000 n 
+0000000092 00000 n 
+0000000199 00000 n 
+0000000392 00000 n 
+0000000585 00000 n 
+0000000653 00000 n 
+0000000914 00000 n 
+0000000979 00000 n 
+0000005233 00000 n 
+trailer
+<<
+/ID 
+[<39c67ceaa17236711cf314e28a5bdd39><39c67ceaa17236711cf314e28a5bdd39>]
+% ReportLab generated PDF document -- digest (opensource)
+
+/Info 6 0 R
+/Root 5 0 R
+/Size 10
+>>
+startxref
+6419
+%%EOF

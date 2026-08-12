@@ -1,0 +1,35 @@
+meta {
+  name: Create Analyte
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "FERRITIN",
+    "unit": "ng/mL"
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar('analyteId', res.body.id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  `name` is the lab's printed name, stored verbatim. `displayName` defaults to a title-cased
+  version that leaves medical abbreviations alone ("MCV" stays "MCV"). A case-insensitive
+  collision with an existing name is 409 ANALYTE_NAME_TAKEN.
+}

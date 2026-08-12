@@ -78,6 +78,37 @@ describe('Files (e2e)', () => {
     expect(Buffer.compare(download.body, bytes)).toBe(0);
   });
 
+  it('lists a patient\'s files with originalName, newest first, and 404s for non-members', async () => {
+    const upload = await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', Buffer.from('%PDF-1.4 fake-lab-report'), {
+        filename: 'Quest_Labs_Jul2026.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(201);
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/files`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(list.body)).toBe(true);
+    const row = list.body.find((f: any) => f.id === upload.body.fileId);
+    expect(row).toBeDefined();
+    expect(row.originalName).toBe('Quest_Labs_Jul2026.pdf');
+    expect(row.contentType).toBe('application/pdf');
+    expect(typeof row.sizeBytes).toBe('number');
+    expect(typeof row.createdAt).toBe('number'); // epoch seconds, per Conventions
+
+    // Non-member: 404 PATIENT_NOT_FOUND, same non-leak shape as every patient-scoped read.
+    const outsider = await registerAndLogin(app);
+    await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/files`)
+      .set('Authorization', `Bearer ${outsider.token}`)
+      .expect(404);
+  });
+
   it('rejects an upload with no patientId', async () => {
     await request(app.getHttpServer())
       .post('/api/files')

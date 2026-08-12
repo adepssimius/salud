@@ -5,7 +5,14 @@ import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { errorText } from '../core/error-display';
-import { LengthUnit, ObservationType, TempUnit, UploadFileResponse, WeightUnit } from '@salud/shared/types';
+import {
+  LengthUnit,
+  ObservationType,
+  PatientFileSummary,
+  TempUnit,
+  UploadFileResponse,
+  WeightUnit,
+} from '@salud/shared/types';
 
 export interface EntryDraft {
   type: ObservationType;
@@ -227,6 +234,49 @@ export function toCm(value: number, unit: LengthUnit): number {
         </label>
       </ng-container>
 
+      <!-- document: attach a PDF or image — upload new, or pick one already uploaded
+           (a lab import's PDF, an earlier observation's attachment). frontend.md → Documents. -->
+      <ng-container *ngIf="entryType === 'document'">
+        <div class="field">
+          <span>Document</span>
+          <div class="segmented">
+            <button type="button" [class.active]="documentMode() === 'upload'" (click)="setDocumentMode('upload')">
+              Upload new
+            </button>
+            <button type="button" [class.active]="documentMode() === 'existing'" (click)="setDocumentMode('existing')">
+              Choose existing
+            </button>
+          </div>
+        </div>
+        <ng-container *ngIf="documentMode() === 'upload'">
+          <label class="field">
+            <span>File (PDF or image)</span>
+            <input type="file" accept="application/pdf,image/*" (change)="onDocumentFileSelected($event)" />
+          </label>
+          <div class="muted small" *ngIf="documentUploading()">Uploading…</div>
+          <div class="muted small" *ngIf="documentUploadedFileId()">Uploaded ✓</div>
+        </ng-container>
+        <ng-container *ngIf="documentMode() === 'existing'">
+          <label class="field">
+            <span>Patient's uploaded files</span>
+            <select [(ngModel)]="documentExistingFileId" name="documentExistingFileId">
+              <option [ngValue]="null">—</option>
+              <option *ngFor="let f of patientFiles()" [ngValue]="f.id">
+                {{ f.originalName || f.id }} · {{ f.contentType }} · {{ f.createdAt * 1000 | date: 'mediumDate' }}
+              </option>
+            </select>
+          </label>
+          <div class="muted small" *ngIf="patientFilesLoaded() && !patientFiles().length">
+            No files uploaded for this patient yet.
+          </div>
+        </ng-container>
+        <div class="error small" *ngIf="documentError()">{{ documentError() }}</div>
+        <label class="field">
+          <span>Label (optional)</span>
+          <input type="text" [(ngModel)]="documentLabel" name="documentLabel" placeholder="e.g. After-visit summary" />
+        </label>
+      </ng-container>
+
       <label class="field" *ngIf="supportsNote()">
         <span>Note (optional)</span>
         <input type="text" [(ngModel)]="entryNote" name="entryNote" />
@@ -334,6 +384,9 @@ export class EntryMetadataFormComponent {
     'note',
     'tag',
     'photo',
+    // 'lab_result' is deliberately absent: hand-typing lab rows is the transcription risk the
+    // import flow exists to avoid (frontend.md → Documents). The API still accepts the type.
+    'document',
   ];
   temperatureMethods: TemperatureMethod[] = ['oral', 'tympanic', 'axillary', 'rectal', 'temporal', 'unknown'];
   sides: Side[] = ['left', 'right', 'bilateral', 'n/a'];
@@ -384,6 +437,15 @@ export class EntryMetadataFormComponent {
   photoUploading = signal(false);
   photoUploadedFileId = signal<string | null>(null);
   photoUploadError = signal<string | null>(null);
+
+  documentMode = signal<'upload' | 'existing'>('upload');
+  documentUploading = signal(false);
+  documentUploadedFileId = signal<string | null>(null);
+  documentError = signal<string | null>(null);
+  documentExistingFileId: string | null = null;
+  documentLabel = '';
+  patientFiles = signal<PatientFileSummary[]>([]);
+  patientFilesLoaded = signal(false);
 
   numberConfig(): NumberEntryConfig | null {
     return NUMBER_ENTRIES[this.entryType] ?? null;
@@ -456,6 +518,50 @@ export class EntryMetadataFormComponent {
       error: (err) => {
         this.photoUploading.set(false);
         this.photoUploadError.set(errorText(err, 'Could not upload photo.'));
+      },
+    });
+  }
+
+  setDocumentMode(mode: 'upload' | 'existing') {
+    this.documentMode.set(mode);
+    this.documentError.set(null);
+    if (mode === 'existing' && !this.patientFilesLoaded() && this.patientId) {
+      this.api.get<PatientFileSummary[]>(`/patients/${this.patientId}/files`).subscribe({
+        next: (files) => {
+          this.patientFiles.set(files);
+          this.patientFilesLoaded.set(true);
+        },
+        error: (err) => this.documentError.set(errorText(err, 'Could not load this patient’s files.')),
+      });
+    }
+  }
+
+  onDocumentFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!this.patientId) {
+      this.error.set('Select a patient before attaching a document.');
+      input.value = '';
+      return;
+    }
+    // Eager upload, same as photos: the observation POST only ever carries a fileId.
+    this.documentUploading.set(true);
+    this.documentError.set(null);
+    this.documentUploadedFileId.set(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patientId', this.patientId);
+    if (!this.documentLabel.trim()) this.documentLabel = file.name;
+    this.api.post<UploadFileResponse>('/files', formData).subscribe({
+      next: (res) => {
+        this.documentUploading.set(false);
+        this.documentUploadedFileId.set(res.fileId);
+        this.patientFilesLoaded.set(false); // picker list is stale now
+      },
+      error: (err) => {
+        this.documentUploading.set(false);
+        this.documentError.set(errorText(err, 'Could not upload the document.'));
       },
     });
   }
@@ -566,6 +672,18 @@ export class EntryMetadataFormComponent {
           note,
         };
       }
+      case 'document': {
+        const fileId = this.documentMode() === 'upload' ? this.documentUploadedFileId() : this.documentExistingFileId;
+        if (!fileId) {
+          this.error.set(
+            this.documentMode() === 'upload'
+              ? 'Upload a document before adding the entry.'
+              : 'Choose a file before adding the entry.',
+          );
+          return null;
+        }
+        return { fileId, label: this.documentLabel.trim() || undefined, note };
+      }
       default:
         this.error.set('Unsupported entry type.');
         return null;
@@ -591,5 +709,9 @@ export class EntryMetadataFormComponent {
     this.photoSize = null;
     this.photoUploadedFileId.set(null);
     this.photoUploadError.set(null);
+    this.documentUploadedFileId.set(null);
+    this.documentError.set(null);
+    this.documentExistingFileId = null;
+    this.documentLabel = '';
   }
 }

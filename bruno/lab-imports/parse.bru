@@ -1,0 +1,59 @@
+meta {
+  name: Parse Lab Report
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/lab-imports
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "fileId": "{{fileId}}"
+  }
+}
+
+script:pre-request {
+  if (!bru.getVar('fileId')) {
+    console.log('No fileId set. Run files/"Upload File" with a lab PDF first.');
+  }
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients && patients.length) {
+      bru.setVar('patientId', patients[0].id);
+    } else {
+      console.log('No patients found. Create one first.');
+    }
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Stateless parse of an already-uploaded lab-report PDF (api.md → "Lab imports"): extracts the
+  text, sniffs the format (or honors an optional "format": "quest"), and returns
+  { fileId, parsed: ParsedLabReport, resolutions } without persisting anything — not even a
+  catalog row.
+
+  `resolutions` is index-aligned with parsed.analytes and lines each one up with the analyte
+  catalog, comparing the report's printed range against the range in effect at the specimen's
+  COLLECTION time: `new` (unknown analyte), `match`, `conflict` (the report and the catalog
+  disagree — the caregiver decides), `new_range` (known analyte, nothing in effect then), or
+  `no_printed_range`. Each also carries this patient's goal, for display.
+
+  Confirm is three requests: POST /analytes/resolve for the selected names, a reference-range
+  POST per additive-or-accepted row, then the normal POST .../observations with lab_result
+  entries (each carrying its analyteId) plus a document entry for the source PDF.
+
+  Errors: 404 PATIENT_NOT_FOUND (non-member), 400 LAB_FILE_NOT_FOUND (unknown or other-patient
+  fileId), 400 LAB_PDF_UNPARSEABLE (not a readable text PDF), 400 LAB_FORMAT_UNSUPPORTED (no
+  parser recognizes it). The uploaded PDF is retained in storage on every failure path.
+}
