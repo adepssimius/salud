@@ -7,6 +7,9 @@ name: CI
 # "Expected"). Note GitHub does not evaluate path filters for tag pushes, so `20*` release tags
 # always publish regardless of what the tagged commit touched.
 on:
+  # Manual runs, for exercising the pipeline itself on a branch. Nothing is published: the
+  # `push:` input on the image build below is keyed to the push event specifically.
+  workflow_dispatch:
   pull_request:
     paths-ignore:
       - '**/*.md'
