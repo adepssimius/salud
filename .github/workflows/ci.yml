@@ -23,6 +23,17 @@ jobs:
 
       - run: yarn nx run-many -t lint,test,build
 
+      # SQLite is a fully supported deployment target (self-hosting), not just a dev fallback —
+      # app-spec/persistence.md. The `test` target above already ran the api suite once, but on
+      # Postgres (TEST_DB defaults to pglite — real Postgres in WASM, see
+      # apps/api/src/testing/create-test-app.ts); a green run there says nothing about the SQLite
+      # build a self-hoster actually gets, so run the same suite again on that leg. Scoped to the
+      # api project alone — lint/build/web don't vary by TEST_DB, so there's nothing to re-run.
+      - name: Test api (SQLite)
+        run: yarn test:api --skip-nx-cache
+        env:
+          TEST_DB: sqlite
+
   publish:
     needs: test
     # Every push to main publishes, not just tags — Flux's image automation watches these and

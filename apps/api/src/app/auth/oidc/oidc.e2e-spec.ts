@@ -1,12 +1,6 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import request from 'supertest';
-import { AppModule } from '../../app.module';
-import { DatabaseService } from '../../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { createTestApp } from '../../../testing/create-test-app';
 import { applyAppSecurity } from '../../app.security';
 import { OidcService } from './oidc.service';
 // Jest resolves this to auth/oidc/__mocks__/openid-client.ts (jest.config.ts →
@@ -26,35 +20,24 @@ import { __resetMockClaims, __setMockClaims } from 'openid-client';
  */
 describe('OIDC routes (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-oidc-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-    process.env.AUTHELIA_ISSUER_URL = 'https://auth.example.com/';
-    process.env.OIDC_CLIENT_ID = 'salud';
-    process.env.OIDC_CLIENT_SECRET = 'test-oidc-secret';
-
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    applyAppSecurity(app as any);
-    await app.init();
-    await app.listen(0);
+    ({ app, close } = await createTestApp('oidc', {
+      env: {
+        AUTHELIA_ISSUER_URL: 'https://auth.example.com/',
+        OIDC_CLIENT_ID: 'salud',
+        OIDC_CLIENT_SECRET: 'test-oidc-secret',
+      },
+      configureApp: (app) => applyAppSecurity(app as any),
+    }));
   });
 
   afterAll(async () => {
-    await app.close();
+    await close();
     delete process.env.AUTHELIA_ISSUER_URL;
     delete process.env.OIDC_CLIENT_ID;
     delete process.env.OIDC_CLIENT_SECRET;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   afterEach(() => {

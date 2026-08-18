@@ -1,40 +1,18 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import request from 'supertest';
-import { AppModule } from '../app.module';
+import { createTestApp } from '../../testing/create-test-app';
 import { DatabaseService } from '../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 describe('Health (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-health-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    await app.init();
-    await app.listen(0);
+    ({ app, close } = await createTestApp('health'));
   });
 
   afterAll(async () => {
-    await app.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await close();
   });
 
   // Both routes have to work without an Authorization header — kubelet doesn't have one, and a
@@ -48,7 +26,10 @@ describe('Health (e2e)', () => {
     const res = await request(app.getHttpServer())
       .get('/api/health/ready')
       .expect(200);
-    expect(res.body).toEqual({ status: 'ready', db: 'sqlite' });
+    // Dialect-aware: create-test-app.ts sets DB_CLIENT from TEST_DB (default 'pglite' — real
+    // Postgres in WASM; 'sqlite' is the other supported leg, see app-spec/persistence.md), and
+    // readiness reports back whichever one is actually live.
+    expect(res.body).toEqual({ status: 'ready', db: process.env.DB_CLIENT ?? 'sqlite' });
   });
 
   it('GET /api/health/ready returns 503 when the database is unreachable', async () => {

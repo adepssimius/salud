@@ -1,12 +1,7 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
-import { DatabaseService } from '../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { createTestApp } from '../../testing/create-test-app';
 import { titleCaseAnalyte } from './analytes.service';
 
 async function registerAndLogin(app: INestApplication) {
@@ -19,27 +14,14 @@ async function registerAndLogin(app: INestApplication) {
 
 describe('Analytes (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
   let token: string;
   let patientId: string;
 
   const auth = () => ({ Authorization: `Bearer ${token}` });
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-analytes-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    await app.init();
-    await app.listen(0); // explicit bind (ISSUES #25), same as every other e2e suite
+    ({ app, close } = await createTestApp('analytes'));
 
     const user = await registerAndLogin(app);
     token = user.token;
@@ -52,8 +34,7 @@ describe('Analytes (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await close();
   });
 
   describe('titleCaseAnalyte', () => {

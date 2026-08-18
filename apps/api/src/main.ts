@@ -25,8 +25,13 @@ async function bootstrap() {
 
   // Before listening, not after: a pod that is serving requests against a schema-less database
   // would pass its readiness probe and then 500 on everything. Deploys run one replica with
-  // strategy: Recreate (see k8s-infra apps/salud/prod), so there is never a second writer racing
-  // this. Set RUN_MIGRATIONS=false to opt out.
+  // strategy: Recreate (see k8s-infra apps/salud/prod) — originally because SQLite is a
+  // single-writer file, and now because the attachments volume is still ReadWriteOnce even though
+  // the database itself moved to Postgres (app-spec/deployment.md) — so there is still never a
+  // second *pod* racing this. On Postgres specifically, drizzle's migrator also takes its own
+  // advisory lock, so even a future multi-replica rollout wouldn't race two pods' migrations
+  // against each other; it's only the SQLite lineage that depends on the single-writer premise
+  // above. Set RUN_MIGRATIONS=false to opt out.
   if (process.env.RUN_MIGRATIONS !== 'false') {
     await app.get(DatabaseService).runMigrations();
   }

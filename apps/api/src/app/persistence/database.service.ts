@@ -28,12 +28,18 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   // Cheap liveness check for the readiness probe. Deliberately dialect-specific: the sqlite
-  // driver is synchronous and has no `query`, so there is no one call that covers all three.
+  // driver is synchronous and has no `query`, so there is no one call that covers all four. pg,
+  // mysql2 and pglite all expose an async `.query(sql)` on their raw handle, so they share the
+  // `else` branch.
   async ping(): Promise<void> {
     if (this.connection.client === 'sqlite') {
       this.connection.raw.prepare('select 1').get();
     } else {
-      await this.connection.raw.query('select 1');
+      // pg.Pool, mysql2.Pool and PGlite each overload `.query` differently enough that TS can't
+      // call it across the narrowed union — same `as any` escape hatch as everywhere else in the
+      // service layer (CLAUDE.md → Conventions), just at the connection-raw layer instead of the
+      // query-builder layer.
+      await (this.connection.raw as any).query('select 1');
     }
   }
 
@@ -67,12 +73,13 @@ export class DatabaseService implements OnModuleDestroy {
 
   // Nest calls this on app.close() unconditionally; main.ts additionally calls
   // enableShutdownHooks() so it also fires on SIGTERM/SIGINT. Without it the underlying driver
-  // handle (better-sqlite3's fd, pg/mysql's socket) outlives the container — harmless on POSIX,
-  // where a test's afterAll can still unlink an open sqlite file, but wrong for graceful shutdown
-  // and for the pg/mysql pool's own connection bookkeeping.
+  // handle (better-sqlite3's fd, pg/mysql's socket, pglite's WASM instance) outlives the
+  // container — harmless on POSIX, where a test's afterAll can still unlink an open sqlite file,
+  // but wrong for graceful shutdown and for the pg/mysql pool's own connection bookkeeping.
+  // pglite's handle is closed, not ended — it isn't a pool of anything.
   async onModuleDestroy() {
-    if (this.connection.client === 'sqlite') {
-      this.connection.raw.close();
+    if (this.connection.client === 'sqlite' || this.connection.client === 'pglite') {
+      await this.connection.raw.close();
     } else {
       await this.connection.raw.end();
     }

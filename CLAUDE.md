@@ -13,7 +13,7 @@ give Tylenol?"), logging from a phone in real time. Mobile-first entry, desktop-
 | --- | --- |
 | Monorepo | Nx 22, Yarn 1 (`yarn <bin>`, never `npx`), Node 22.13.0 pinned via `.tool-versions` (asdf) |
 | API | NestJS 11, `apps/api`, global prefix `/api`, JWT (passport-jwt) + Argon2id |
-| DB | Drizzle ORM. SQLite default (better-sqlite3); Postgres/MySQL selectable by env only |
+| DB | Drizzle ORM. SQLite (default, `better-sqlite3`) and Postgres (`pg`) are both fully supported, switched by `DB_CLIENT`/`DATABASE_URL` — see `app-spec/persistence.md`. Two hand-maintained schema modules (`schema.sqlite.ts`/`schema.pg.ts`) kept in lockstep by `schema-parity.spec.ts`. MySQL is dial-only, no schema ever ported |
 | Web | Angular 20, `apps/web`, standalone components, signals, lazy routes, inline templates + a global style vocabulary in `src/styles.css` |
 | Shared | `libs/shared/types` → import as `@salud/shared/types` (plain types, zero decorators) |
 | Tests | Jest + supertest (API, incl. `*.e2e-spec.ts`), jest-preset-angular (web), Cypress (`apps/web-e2e`) |
@@ -25,12 +25,18 @@ give Tylenol?"), logging from a phone in real time. Mobile-first entry, desktop-
 yarn start:api && yarn start:web    # api on :3000, web on :4200 (proxies /api via proxy.conf.json)
 ```
 
-- `yarn test:api` / `yarn test:web` — both green today.
+- `yarn test:api` / `yarn test:web` — both green today. `test:api` runs against `@electric-sql/pglite`
+  (real Postgres in WASM, no Docker) by default; `TEST_DB=sqlite yarn test:api` runs the identical
+  suite against SQLite. CI runs both legs — see "Migrations" below for why that matters.
 - `yarn lint:api` / `yarn lint:web`, `yarn build:api` / `yarn build:web`, `yarn e2e:api` / `yarn e2e:web`
 - `yarn seed:test-user` — creates `test@example.com` / password `test`
 - `yarn seed:catalog` — acetaminophen + ibuprofen with embodiments and both guideline types
   (`tools/seed-catalog.ts`, idempotent by medication name). Dose guidance does nothing without it.
 - `yarn drizzle-kit generate --config=drizzle.config.ts` then `yarn drizzle-kit migrate --config=drizzle.config.ts`
+  — generate/apply **once per dialect** (`DB_CLIENT=sqlite`/`DB_CLIENT=postgres`); see "Migrations".
+- `yarn migrate:sqlite-to-postgres` — one-time copy of an existing SQLite instance's data into a
+  (migrated, empty) Postgres target, with an orphan pre-flight and a row-count verification
+  (`tools/sqlite-to-postgres.ts`).
 
 ## Layout
 
@@ -39,8 +45,9 @@ app-spec/            # ← the spec. Read before coding.
 apps/api/src/
   app/<feature>/     # auth, patients, observations, interventions, episodes, persistence, storage
                      #   <feature>.{controller,service,module}.ts + dto/ + <feature>.e2e-spec.ts
-  db/schema.ts       # Drizzle schema (single file, all tables)
-  db/migrations/sqlite/
+  db/schema.ts       # dialect resolver — re-exports schema.sqlite.ts or schema.pg.ts by DB_CLIENT
+  db/schema.sqlite.ts / db/schema.pg.ts   # the two schema modules; keep in lockstep (schema-parity.spec.ts)
+  db/migrations/sqlite/ , db/migrations/postgres/   # independent lineages, see CLAUDE.md → Migrations
 apps/web/src/app/
   core/              # api-client.service, auth.service, auth.interceptor, api.config
   auth/ dashboard/ profile/ patients/ observations/ interventions/    # *.page.ts + *.page.spec.ts
@@ -140,14 +147,23 @@ Episodes are manual frames over the timeline, e.g. "Fever Jan 2025".
 **Migrations accumulate. Do not flatten them.** The old proof-of-concept policy (regenerate a
 single `0000_*.sql`, `rm data/salud.db`, re-migrate) ended when salud.bpd.sh went live — Drizzle
 keys `__drizzle_migrations` on each file's hash, so an edited `0000` is a different migration to
-a database that already ran the old one. On a schema change: update `apps/api/src/db/schema.ts`,
-`yarn drizzle-kit generate` a **new** file, `yarn drizzle-kit migrate`. Never edit an applied one.
+a database that already ran the old one.
 
-The generated SQL ships in the API image through the `assets` entry in `apps/api/webpack.config.js`,
-and `main.ts` applies pending migrations at boot before it listens. Both halves matter: drop the
-asset copy and the container starts against an empty database with no schema and no error until
-the first query. The e2e specs run `migrate()` themselves against a temp SQLite dir, so a
-stale/missing migration file breaks every API e2e suite at once.
+**SQLite and Postgres are two independent lineages** (`apps/api/src/db/migrations/sqlite/`,
+`.../postgres/`) — both are fully supported deployment targets, not one production dialect and one
+legacy fallback (`app-spec/persistence.md`). A schema change is not done until **both** have a new
+migration: update `schema.sqlite.ts` **and** `schema.pg.ts` (structurally identical column sets,
+different builders — `schema-parity.spec.ts` fails the build if they drift), then
+`yarn drizzle-kit generate` once per `DB_CLIENT`, then `yarn drizzle-kit migrate` the same way.
+Never edit an applied migration in either lineage.
+
+The generated SQL for **both** lineages ships in the API image through the `assets` entry in
+`apps/api/webpack.config.js`, and `main.ts` applies pending migrations at boot before it listens,
+for whichever dialect `DB_CLIENT` selects. Both halves matter: drop the asset copy and the
+container starts against an empty database with no schema and no error until the first query. The
+e2e specs run migrations themselves via `apps/api/src/testing/create-test-app.ts` against a fresh
+per-suite database (SQLite or `@electric-sql/pglite`, per `TEST_DB`), so a stale/missing migration
+file in either lineage breaks every API e2e suite on that leg at once.
 
 ## Deployment
 

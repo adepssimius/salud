@@ -54,16 +54,35 @@ on this origin would otherwise be stored XSS.
 
 ## State
 
-SQLite on a 10Gi ReadWriteOnce Ceph volume mounted at `/data` — `/data/salud.db` plus
-`/data/attachments`. This is why the api Deployment is pinned to one replica with
-`strategy: Recreate`: a rolling update would put a second writer on the same database file.
-Every deploy is therefore a few seconds of downtime.
+The database is **Postgres**, on the cluster's shared CloudNativePG instance (`postgres-main`, ns
+`databases` in `k8s-infra`) — `DB_CLIENT=postgres`, credentials from the `salud-secrets` 1Password
+item, database/role provisioned by `apps/databases/cnpg/init-jobs/salud-job.yaml`. That gets this
+deployment continuous WAL archiving and weekly base backups with 30-day retention for free — real
+point-in-time recovery, which the previous SQLite-on-a-PVC setup had none of.
 
-Postgres remains specced (`persistence.md`) but unexercised: `apps/api/src/db/schema.ts` is
-written against Drizzle's `sqlite-core` throughout and there are no postgres migrations. A
-`salud` role and database are already provisioned on the shared CNPG cluster
-(`k8s-infra` → `apps/databases/cnpg/init-jobs/salud-job.yaml`), so the port is a code change with
-no infrastructure work in front of it.
+Attachments (`persistence.md`) are unaffected by that move and still live on a 10Gi ReadWriteOnce
+Ceph volume mounted at `/data/attachments` — only the database file left that volume. **The api
+Deployment is still pinned to one replica with `strategy: Recreate`** because of that volume, same
+as before; the reason is now "the attachments volume is RWO," not "SQLite is a single-writer file."
+A rolling update would still put two pods on the same PVC.
+
+See "Self-hosting" below for the other supported configuration — SQLite, zero extra infrastructure
+— which is what this same image runs with no environment configuration at all.
+
+### Self-hosting
+
+This deployment (Postgres, above) is one configuration of a generally self-hostable app —
+`persistence.md` documents both `DB_CLIENT` values as equally real, not one "production" and one
+"fallback." A self-hoster with no interest in running a Postgres cluster gets a working instance
+from the SQLite default with zero database configuration: point `DATA_DIR` at a persistent volume
+and go — `/data/salud.db` plus `/data/attachments`, one process, no separate database service to
+run or back up. The `replicas: 1` / `strategy: Recreate` posture applies for the same reason it
+does here, just with the database file itself also on that volume.
+
+Moving from that starting point to Postgres later — outgrowing a single-file database, wanting
+managed backups — is supported, not a one-way door requiring a fresh install:
+`yarn migrate:sqlite-to-postgres` (`persistence.md`) copies an existing SQLite instance's data
+across intact, with a pre-flight check and a row-count verification.
 
 ## Access control
 
@@ -111,8 +130,9 @@ the 1Password Connect operator, everything else is a literal.
 | --- | --- |
 | `NODE_ENV` | `production` — also switches on the fail-fast checks below |
 | `PORT` | `3000` |
-| `DATA_DIR` | `/data` |
-| `DB_CLIENT` | `sqlite` |
+| `DATA_DIR` | `/data` — attachments only now; the database itself is Postgres, see "State" |
+| `DB_CLIENT` | `postgres` |
+| `DATABASE_URL` | assembled in the container command from `salud-secrets`' `dbUsername`/`dbPassword`/`dbDatabase` against `postgresql.databases.svc.cluster.local:5432`, percent-encoding the password so it's never stored as a second, fully-formed connection string |
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |
 | `ACCESS_LOG` | unset (on). `false` disables the HTTP access log — see Logging |
 | `SLOW_REQUEST_MS` | unset (1000). Requests at or over this are logged at warn and tagged `SLOW` |
