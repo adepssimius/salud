@@ -41,9 +41,10 @@ Concurrent illness is the design case, not the edge case: **more than one patien
 at the same time**, frequently on the same medications at different weight-based amounts. Two
 rules follow:
 
-- **Every patient has a stable accent color**, assigned at creation, used everywhere the patient
-  appears: patient chips, sick cards, journal headers, night-board rows, dose confirmation. Color
-  encodes identity and nothing else.
+- **Every patient has a stable accent color** — `patients.accentColor`, a palette token assigned
+  server-side at creation and editable in the hub's Settings tab (data-model.md → Patient) — used
+  everywhere the patient appears: patient chips, sick cards, journal headers, night-board rows,
+  dose confirmation. Color encodes identity and nothing else.
 - **Every write names its patient at the point of commitment.** The quick-log save button reads
   "Save for ⟨name⟩" (name + color), never a bare "Save". Recents, dose guidance, and next-allowed
   arithmetic are always computed per patient; a "same as last time" affordance must never surface
@@ -107,7 +108,9 @@ dark room — and a repeat dose in at most four taps.** The `+` opens a sheet, n
   + amount ("same as last time"); dose-checks still run, guidance cards, advisory banners, and
   the danger interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩".
   The typeahead search remains below for anything new. This inverts v1, where every repeat dose
-  pays the general-case search cost.
+  pays the general-case search cost. Backed by `GET /api/patients/:id/recent-medications`
+  (api.md → Timeline & dashboard), which carries the last amount/embodiment for the prefill and is
+  per-patient by construction.
 - **Episode attachment is a visible default, never a silent inference (P5).** When the patient
   has exactly one active episode, the form shows it pre-attached as a removable chip ("Adding to
   *Fever – Aug 2026* ✕") — zero taps in the common case, and the attachment sits on screen for
@@ -126,8 +129,9 @@ follows the household's state instead of rendering one fixed stack of sections:
 - **One sick card per sick patient**, stacked, each carrying the patient's accent color: episode
   name and day count, last dose per active medication with the **next-allowed countdown as the
   visually dominant element** (it answers the founding question; it is the hero of the card, not
-  a muted suffix), a 48-hour temperature sparkline, atypical-dose flags, and inline Temp/Dose
-  quick actions scoped to that patient.
+  a muted suffix), a 48-hour temperature sparkline (from the dashboard payload's
+  `recentTemperatures` — Home stays a single request, as in v1), atypical-dose flags, and inline
+  Temp/Dose quick actions scoped to that patient.
 - **Night board — the concurrent-illness centerpiece.** When **two or more** patients are sick, a
   condensed grid renders *above* the cards: one row per sick patient (name + color), one line per
   active medication, each cell just the countdown ("can give now" / "in 1h 40m") plus any
@@ -159,7 +163,10 @@ narrative artifact is a feed, and the chart is its instrument panel:
 - **A chronological feed**, grouped by day: observations (existing entry-summary treatment),
   doses, notes, photo thumbnails, document links, and advisory firings — **every row attributed
   by name and time (P3)**: "Dana — 240 mg ibuprofen · 2:15 AM". Attribution is the entire point
-  of a multi-caregiver log, and in v1 it is invisible outside revision history.
+  of a multi-caregiver log, and in v1 it is invisible outside revision history. Names arrive with
+  the payload — timeline entries carry `recordedBy { id, displayName }` resolved server-side
+  (api.md → Timeline & dashboard) — so the feed never fans out to map user ids, and rows keep
+  their author even after that caregiver leaves the care team.
 - **The chart is a collapsible header** above the feed — same hand-drawn SVG, same no-annotation
   rule (P6), same medication/tag filter chips, with filters applying to chart and feed together.
   On desktop the chart and feed render side by side (P7).
@@ -174,6 +181,20 @@ narrative artifact is a feed, and the chart is its instrument panel:
   row per patient with unseen changes.
 - The lab aggregate-line, photo-thumbnail, and document-link render rules carry over unchanged
   from the v1 Timeline / Photos / Documents sections.
+
+### API additions v2 depends on
+
+Four additions, specced in api.md / data-model.md alongside this section; everything else in v2
+derives from existing payloads:
+
+- `patients.accentColor` — palette token, server-assigned at creation, editable via patient PATCH
+  (data-model.md → Patient).
+- `recordedBy { id, displayName }` on timeline entries — server-resolved attribution for the
+  journal feed (P3).
+- `recentTemperatures` on `GET /api/dashboard` — 48h temperature points per sick patient, keeping
+  Home a single request.
+- `GET /api/patients/:id/recent-medications` — the quick-log recents source, carrying last
+  amount/embodiment for the "same as last time" prefill.
 
 ### What v2 supersedes
 

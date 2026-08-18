@@ -91,8 +91,11 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
 
 ## Patients
 - `POST /api/patients`
-  - Body: `{ fullName, dateOfBirth, sexAtBirth, notes?, myRole? }` where `sexAtBirth` ∈ `['female','male']`
+  - Body: `{ fullName, dateOfBirth, sexAtBirth, notes?, myRole?, accentColor? }` where `sexAtBirth` ∈ `['female','male']`
     and `myRole` ∈ `['self','parent','co-parent','nanny','grandparent','babysitter','other']`.
+  - `accentColor` is a palette token (data-model.md → Patient); when omitted the server assigns the
+    least-used token across the requester's accessible patients. An unknown token is a standard
+    validation 400. Included on every `PatientDto` response.
   - Creator is added to the care team with `myRole` (defaults to `parent`; choose `self` to mark self-care)
     and is recorded as `ownedById`.
   - Response: `PatientDto` (201).
@@ -108,7 +111,7 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
   - Returns patient details including `myRole` for the requester and latest weight metadata.
   - `patientId` must be a v4 UUID.
 - `PATCH /api/patients/:patientId`
-  - Body: `{ fullName?, dateOfBirth?, sexAtBirth?, notes?, ownedById? }`.
+  - Body: `{ fullName?, dateOfBirth?, sexAtBirth?, notes?, ownedById?, accentColor? }`.
   - `ownedById` transfers ownership. The target must be an existing user (404 `USER_NOT_FOUND` otherwise)
     and is added to the care team with role `parent` if not already a member.
 - `DELETE /api/patients/:patientId`
@@ -567,6 +570,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
           "kind": "observation|intervention|advisory",
           "type": "...",
           "timestamp": "...",
+          "recordedBy": { "id": "...", "displayName": "..." },
           "display": { ...the full observation/intervention/advisory object... }
         }
       ],
@@ -576,6 +580,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     `display` is the same object `GET .../observations/:id` / `.../interventions/:id` / the
     advisories list already return — no separate summarization shape to keep in sync (P6: the
     timeline presents raw data, never a derived summary).
+  - `recordedBy` is resolved server-side from the recording user (`recordedByUserId` on
+    observations/interventions, `createdByUserId` on advisories) so the journal can render the
+    attributed feed ("Dana — 240 mg ibuprofen · 2:15 AM", P3) without fanning out to map user ids.
+    It resolves even for a user who has since left the care team — attribution outlives membership
+    (P3); a row must never degrade to a bare id because its author was removed.
 - `GET /api/dashboard`
   - Aggregates **every patient the caller is on the care team for** — not only patients with an
     active episode. Episodes are an optional frame over the timeline (data-model.md → "Episode
@@ -630,6 +639,31 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       M2's producers self-acknowledge at creation, so this is empty until the "seen but backed out"
       case arrives with Conditions/reactions; the field exists now so the dashboard doesn't need a
       later reshape.
+    - `recentTemperatures`: `[ { patientId, points: [ { timestamp, valueC } ] } ]` — the last 48
+      hours of temperature entries, one row **only for patients with at least one active episode**
+      (quiet patients render no sparkline, so their rows would be dead weight). Values are
+      canonical °C; the client converts to the viewer's preferred unit at read time like every
+      other consumer. Exists so the bimodal Home's sick cards (frontend.md → "Information
+      architecture (v2)" → Home) render from the one dashboard request instead of fanning out a
+      timeline query per sick patient.
+- `GET /api/patients/:patientId/recent-medications`
+  - The quick-log "recents first, search second" source (frontend.md → "Information architecture
+    (v2)" → Quick Log): the union of medications given to this patient **in the last 14 days** and
+    medications on this patient's **active schedules**, one entry per distinct medication:
+    ```json
+    [ { "medicationId": "...", "medicationName": "...", "lastDoseAt": 0, "lastAmountMg": 0,
+        "lastAmountMl": 0, "lastEmbodimentId": "...", "lastEmbodimentLabel": "...",
+        "nextAllowedAt": 0, "isAtypicalLastDose": false, "onActiveSchedule": false } ]
+    ```
+  - `last*` fields and `nextAllowedAt` come from this patient's most recent dose of that medication
+    (`nextAllowedAt` frozen at log time, same as the dashboard's — `null` means no guideline
+    supplied an interval); all of them are `null` for a scheduled medication never yet given.
+    Ordered most-recent-dose-first, never-given schedule entries last.
+  - **Per-patient by construction, never merged across patients.** Two children on the same
+    medication at different weight-based amounts is the normal concurrent-illness case; a prefill
+    sourced from a sibling's dose is the exact wrong-chart hazard the v2 IA exists to prevent
+    (frontend.md → "Patient identity"). Standard access control: care-team membership or 404
+    `PATIENT_NOT_FOUND`.
 - `POST /api/embodiments/:embodimentId/restock`
   - One-tap equivalent of `PATCH /api/embodiments/:embodimentId` with `{ runningLow: false }` — the
     dashboard shopping-list action (F-9.3). No body.

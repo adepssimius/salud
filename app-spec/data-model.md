@@ -21,6 +21,12 @@ seconds — see `api.md` → Conventions.
 - `dateOfBirth: date`
 - `sexAtBirth: enum('female','male')`
 - `notes: text`
+- `accentColor: string` — a token from a fixed app palette (`'teal'`, `'amber'`, …; stored as the
+  token, not a hex value, so the palette can be tuned without a migration). Assigned server-side at
+  creation — least-used token across the requester's accessible patients first — and editable via
+  the general patient PATCH. Encodes identity only (frontend.md → "Patient identity"): with several
+  patients sick at once, the color is the always-on guard against logging onto the wrong child's
+  record.
 - `latestWeightKg: decimal(5,2)` (denormalized helper)
 - `latestWeightRecordedAt: datetime`
   - Updated whenever a `weight` observation entry is created **or edited**, on this patient, anywhere on
