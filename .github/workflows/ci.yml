@@ -1,14 +1,14 @@
 name: CI
 
 # Docs-only changes (markdown anywhere, anything under app-spec/) skip the pipeline: they can't
-# change test results, and skipping the publish job on a docs-only push to main means no new image
-# and no Flux-triggered redeploy for a change that is invisible to the running app. Safe because
-# `main` has no required status checks (a path-ignored required check would strand PRs on
+# change test results, and skipping the publish steps on a docs-only push to main means no new
+# image and no Flux-triggered redeploy for a change that is invisible to the running app. Safe
+# because `main` has no required status checks (a path-ignored required check would strand PRs on
 # "Expected"). Note GitHub does not evaluate path filters for tag pushes, so `20*` release tags
 # always publish regardless of what the tagged commit touched.
 on:
   # Manual runs, for exercising the pipeline itself on a branch. Nothing is published: the
-  # `push:` input on the image build below is keyed to the push event specifically.
+  # publish steps below are keyed to the push event specifically.
   workflow_dispatch:
   pull_request:
     paths-ignore:
@@ -23,128 +23,95 @@ on:
       - '**/*.md'
       - 'app-spec/**'
 
-# Superseded PR runs are pointless work — a new push has already invalidated them. Pushes to main
-# and release tags are deliberately excluded from the cancellation: each one publishes the image
-# Flux deploys from, so cancelling a mid-flight `main` run when two merges land together would
-# leave the newer commit with no image to roll out.
+# Superseded pull request runs are pointless spend — a new push has already invalidated them.
+# Pushes to main and release tags are deliberately excluded: each one publishes the image Flux
+# deploys from, so cancelling a mid-flight `main` run when two merges land together would leave
+# the newer commit with no image to roll out.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Everything runs in ONE job, deliberately. Billing rounds each job up to the whole minute and
+# every job re-pays checkout and a dependency restore, so splitting this into a job per suite
+# costs several minutes to save wall clock. An earlier version of this file did exactly that:
+# six jobs, 7 billed minutes warm and 13 cold, against 4 for the single pre-existing test job.
+# The pipeline is still far quicker than it was, because the win came from deleting duplicated
+# work (see the publish steps) rather than from running the same work in more places.
 jobs:
-  # Lint and build share a job rather than splitting further: all four tasks together take ~25s,
-  # less than the ~35s of checkout + install a second job would pay to run them apart.
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-
-      - run: yarn nx run-many -t lint,build
-
-      # Handed to the publish job below, which builds the images straight from these instead of
-      # recompiling the workspace inside Docker. Two artifacts rather than one so each publish
-      # matrix leg downloads only its own.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-api
-          path: dist/api
-          retention-days: 1
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-web
-          path: dist/apps/web/browser
-          retention-days: 1
-
-  # One job per suite, in parallel. Run 36 ran all three back to back inside the build job, so the
-  # 16s web suite and the 22s SQLite leg sat on the critical path behind the 59s Postgres one for
-  # no reason; now the job is as long as its slowest single suite.
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      # Both api legs are worth seeing on a red run — don't cancel the SQLite leg because Postgres
-      # failed first.
-      fail-fast: false
-      matrix:
-        include:
-          - name: web
-            command: yarn test:web
-            # Deliberately blank. The web suite never reads it, but TEST_DB is a declared input of
-            # the jest target now (see below), so the value has to be pinned for its hash to be
-            # stable across runs.
-            test_db: ''
-
-          # SQLite is a fully supported deployment target (self-hosting), not just a dev fallback —
-          # app-spec/persistence.md. A green Postgres run says nothing about the SQLite build a
-          # self-hoster actually gets, so the same suite runs against both dialects.
-          #
-          # TEST_DB is a declared input of the jest target (nx.json), which is what lets these two
-          # legs cache independently instead of the second colliding with the first's hash and
-          # being served its result. That is the whole reason both used to run --skip-nx-cache.
-          - name: api-postgres
-            command: yarn test:api
-            test_db: pglite
-          - name: api-sqlite
-            command: yarn test:api
-            test_db: sqlite
-    name: test (${{ matrix.name }})
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-        with:
-          cache-key-suffix: -${{ matrix.name }}
-
-      # NODE_OPTIONS=--experimental-vm-modules, which the Postgres leg needs (@electric-sql/pglite
-      # loads part of itself through a dynamic import() that Jest's worker processes otherwise
-      # refuse with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG), lives in the `test:api` script in
-      # package.json. It must not reach the web suite: applied there it changes the module-loading
-      # path for jest-preset-angular's .mjs setup file and breaks every web test with "Must use
-      # import to load ES Module". Keeping it on the script rather than the job is what holds that
-      # line now that these run as one matrix — found by CI actually going red on it, not review.
-      - run: ${{ matrix.command }}
-        env:
-          TEST_DB: ${{ matrix.test_db }}
-
-  # Runs on pull requests too, but only pushes on a push event — see the `push:` input below.
-  # Building the images was previously main-only, which was tolerable while the Dockerfiles were
-  # self-contained; now that they consume the `build` job's artifacts, a PR that breaks the image
-  # would otherwise stay green and only fail once it was already merged and deploying. Verifying
-  # here costs what it used to cost to compile — nothing, because that compile is gone.
-  publish:
-    needs: [build, test]
+  ci:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      matrix:
-        include:
-          # Only the api still has a build step left to cache: the apt toolchain plus the
-          # native-module `yarn install --production`, which now misses only when the generated
-          # dist/api/yarn.lock changes. The web image is two COPYs onto nginx, so exporting a
-          # layer cache for it costs more than it ever saves.
-          - image: api
-            artifact: dist-api
-            cache_from: type=gha,scope=api
-            cache_to: type=gha,mode=max,scope=api
-          - image: web
-            artifact: dist-web
-            cache_from: ''
-            cache_to: ''
-    # Without this the cache_from/cache_to values land in the job name on the checks list.
-    name: publish (${{ matrix.image }})
     steps:
-      # Still needed for the Dockerfiles themselves and, for web, nginx.conf — just not for a
-      # compile any more.
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
 
-      # Only needed to push. Skipping it on pull requests also keeps the job working for a fork
-      # PR, whose GITHUB_TOKEN is read-only and cannot log in to ghcr at all; nothing else here
-      # needs the registry, since the base images come from Docker Hub and the layer cache from
-      # the Actions cache.
+      # node_modules directly, rather than setup-node's `cache: yarn`. That only caches yarn's
+      # global download cache, so the job still paid a full `yarn install` on top of the restore
+      # — 32s + 36s, against 12-17s to restore the tree itself. Keyed on the lockfile plus the
+      # runner OS and Node version, because better-sqlite3 and argon2 leave compiled .node
+      # binaries in the tree that are not portable across either.
+      - id: modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node22.13.0-${{ hashFiles('yarn.lock') }}
+
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile
+
+      # Nx's local cache, carried between runs. The payoff is the merge to `main`: that commit
+      # has the same tree as the PR head CI just went green on, so every lint/build/test task is
+      # a hash hit and the deploy run skips straight to publishing.
+      - uses: actions/cache@v4
+        with:
+          path: .nx/cache
+          key: nx-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            nx-${{ runner.os }}-
+
+      - run: yarn nx run-many -t lint,build
+
+      # Cheapest first. A failure stops the job, so the 60s Postgres leg is only paid for once
+      # everything quicker has passed.
+      - name: Test web
+        run: yarn test:web
+
+      # SQLite is a fully supported deployment target (self-hosting), not just a dev fallback —
+      # app-spec/persistence.md. A green Postgres run says nothing about the SQLite build a
+      # self-hoster actually gets, so the same suite runs against both dialects.
+      #
+      # TEST_DB is a declared input of the jest target (nx.json), which is what lets these two
+      # legs cache independently instead of the second colliding with the first's hash and being
+      # served its result. That is the whole reason both used to run --skip-nx-cache.
+      - name: Test api (SQLite)
+        run: yarn test:api
+        env:
+          TEST_DB: sqlite
+
+      # NODE_OPTIONS=--experimental-vm-modules, which this leg needs (@electric-sql/pglite loads
+      # part of itself through a dynamic import() that Jest's worker processes otherwise refuse
+      # with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG), lives in the `test:api` script in
+      # package.json. It must not reach the web suite: applied there it changes the module-loading
+      # path for jest-preset-angular's .mjs setup file and breaks every web test with "Must use
+      # import to load ES Module" — found by CI actually going red on it, not in review.
+      - name: Test api (Postgres)
+        run: yarn test:api
+        env:
+          TEST_DB: pglite
+
+      # Everything below is skipped on a pull request, which is what keeps a PR down to one
+      # billed minute of image work it does not need. A manual run still builds both images
+      # (without pushing) so the image graph can be exercised on a branch; only a real push
+      # publishes. Every push to main publishes, not just tags — Flux's image automation watches
+      # these and commits the bump to k8s-infra, so merging to main is the deploy.
+      - if: github.event_name != 'pull_request'
+        uses: docker/setup-buildx-action@v3
+
       - if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
@@ -152,20 +119,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist-input
-
       # Main builds get `main-<run number>-<short sha>`; explicit tags keep publishing under the
       # tag verbatim.
       #
-      # The run number rather than a timestamp is deliberate on both counts: it is identical
-      # across every job in this matrix, so api and web can never drift onto different tags the
-      # way two independently-computed timestamps could; and it is monotonic, so Flux's
-      # ImagePolicy can sort it numerically without depending on fixed-width formatting. Flux
-      # only matches the `main-` form, so cutting a tag pins a release without deploying it.
+      # The run number rather than a timestamp is deliberate on both counts: it is identical for
+      # both images, so api and web can never drift onto different tags the way two
+      # independently-computed timestamps could; and it is monotonic, so Flux's ImagePolicy can
+      # sort it numerically without depending on fixed-width formatting. Flux only matches the
+      # `main-` form, so cutting a tag pins a release without deploying it.
       - name: Compute image tag
+        if: github.event_name != 'pull_request'
         id: tag
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -174,19 +137,38 @@ jobs:
             echo "value=main-${{ github.run_number }}-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: docker/build-push-action@v6
+      # Both images are built from the `yarn nx run-many -t build` output above. Each Dockerfile
+      # ends its from-source path in a flat `dist` stage that `build-contexts` substitutes with
+      # that output, which prunes the compile out of the image graph — it used to re-run
+      # `yarn install` + `nx build` inside Docker for work this job had already done, 4m27s and
+      # 3m14s of an 8m08s pipeline. Running `docker build` on either Dockerfile with no extra
+      # flags still builds from source. This is where the saving actually came from.
+      - name: Publish api
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/${{ matrix.image }}/Dockerfile
+          file: apps/api/Dockerfile
           platforms: linux/amd64
-          # Every push to main publishes, not just tags — Flux's image automation watches these
-          # and commits the bump to k8s-infra, so merging to main is the deploy. Pull requests
-          # build the image and throw it away.
           push: ${{ github.event_name == 'push' }}
-          tags: ghcr.io/adepssimius/salud-${{ matrix.image }}:${{ steps.tag.outputs.value }}
-          # Substitutes the Dockerfile's `dist` stage with the artifact the build job produced,
-          # pruning its from-source build stage out of the graph. See the Dockerfile header.
+          tags: ghcr.io/adepssimius/salud-api:${{ steps.tag.outputs.value }}
           build-contexts: |
-            dist=dist-input
-          cache-from: ${{ matrix.cache_from }}
-          cache-to: ${{ matrix.cache_to }}
+            dist=dist/api
+          # All that is left to cache is the native-module install in `prod-deps`, which now
+          # misses only when the generated dist/api/yarn.lock changes.
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # No layer cache for web: the image is two COPYs onto nginx, so exporting one costs more
+      # than it ever saves.
+      - name: Publish web
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/adepssimius/salud-web:${{ steps.tag.outputs.value }}
+          build-contexts: |
+            dist=dist/apps/web/browser
