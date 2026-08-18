@@ -5,12 +5,14 @@ import { AppModule } from './app/app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DatabaseService } from './app/persistence/database.service';
 import { applyAppSecurity } from './app/app.security';
+import { applyAppObservability } from './app/app.observability';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
   applyAppSecurity(app);
+  applyAppObservability(app);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

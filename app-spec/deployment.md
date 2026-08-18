@@ -89,6 +89,8 @@ the 1Password Connect operator, everything else is a literal.
 | `DATA_DIR` | `/data` |
 | `DB_CLIENT` | `sqlite` |
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |
+| `ACCESS_LOG` | unset (on). `false` disables the HTTP access log — see Logging |
+| `SLOW_REQUEST_MS` | unset (1000). Requests at or over this are logged at warn and tagged `SLOW` |
 
 In production the API refuses to start rather than degrade quietly: an unset, too-short, or
 well-known `JWT_SECRET` is fatal, and an unwritable `/data` is fatal instead of silently falling
@@ -113,6 +115,51 @@ avoid.
 
 Both are unauthenticated by necessity; kubelet carries no bearer token. Liveness deliberately
 does not touch the database — restarting a pod does not repair a sick database.
+
+## Logging
+
+The API writes **one line per request** to stdout, plus a stack trace for any 5xx. There is no log
+aggregator: `kubectl logs` is the reader, so the format is greppable key=value rather than JSON.
+
+```
+GET /api/patients/<id>/timeline 200 847ms user=<uuid> SLOW
+GET /api/patients/<id>/timeline 404 3ms user=<uuid> code=PATIENT_NOT_FOUND
+POST /api/patients/<id>/observations 400 9ms user=<uuid> code=AT_LEAST_ONE_ENTRY_REQUIRED
+```
+
+Levels are chosen so that `grep WARN` is a useful triage pass: 5xx is `error`, 4xx is `warn`, a
+successful request slower than `SLOW_REQUEST_MS` is `warn`, everything else is `log`.
+
+**Why this exists.** Nest's `BaseExceptionFilter` returns early for anything that is an
+`HttpException` and logs only in its unknown-error branch. Because every domain failure in this
+codebase is signalled by throwing one (`NotFoundException('PATIENT_NOT_FOUND')` and friends), the
+API used to log *nothing at all* for a 400, 401 or 404 — the web app rendered a sentence at the
+caregiver and the server kept no record the request had happened. `AllExceptionsFilter` restores
+the record; it deliberately changes no status code and no response body, because
+`apps/web/src/app/core/error-display.ts` parses those bodies and `api.md` → "Error codes" is the
+contract.
+
+### What is never logged
+
+Request bodies, header values, and query **values** never reach the log. Only query parameter
+*names* are kept (`?from,to`), which is enough to read a slow-request line without recording a
+child's temperature, a caregiver's search term, or the password on `POST /api/auth/login`.
+
+The ER Brief share token is redacted to `/api/er-brief/shared/[redacted]`. `security.md` defines
+that token as the capability itself, so a token sitting in a pod log is a leaked brief that
+outlives the request.
+
+Patient and observation UUIDs in the path **are** kept: they are opaque internal identifiers, and
+they are what makes a line actionable when a caregiver reports a failure on a specific patient.
+
+### Known limit: abandoned requests
+
+A request whose connection dies before the response is written out is tagged `ABORTED`. This does
+not catch every abandoned request. Once the kernel has buffered the whole response, Node reports
+the write as successful even if the client is already gone, so a caregiver's phone dropping the
+connection — or an ingress that stopped waiting — still logs as a normal 200. A client-side error
+with no matching server-side line is therefore still possible, and the duration on that line is
+the thing to read.
 
 ## Release flow
 
