@@ -1,0 +1,20 @@
+meta {
+  name: Auth Config
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}auth/config
+  body: none
+  auth: none
+}
+
+assert {
+  mode: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

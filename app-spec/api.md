@@ -38,14 +38,32 @@ that copies a row's timestamp field through unconverted ships a `Date`, which se
 string and silently violates this rule.
 
 ## Auth
+- `GET /api/auth/config`
+  - Unguarded. Response: `{ mode: 'oidc' | 'password' }` — which login path is active
+    (`authMode()`, `apps/api/src/app/config/env.ts`). The web login page renders its form based on
+    this rather than a build-time environment file, since one web bundle serves both modes.
 - `POST /api/auth/login`
   - Body: `{ email, password }`
   - Response: `{ token, user: UserDto }`
+  - Answers `403 PASSWORD_AUTH_DISABLED` when `mode` is `'oidc'` — see security.md → "OIDC login".
 - `POST /api/auth/register`
   - Body: `{ email, password, displayName, preferredTempUnit?, preferredLengthUnit?, preferredWeightUnit? }` where `preferredWeightUnit` ∈ `['kg','lb','st']`.
   - Response: `{ token, user }`
+  - Answers `403 PASSWORD_AUTH_DISABLED` when `mode` is `'oidc'`, same as login above.
 - `GET /api/auth/me`
   - Returns current user profile.
+- `GET /api/auth/oidc/login`
+  - Unguarded, a real browser navigation (not a JSON endpoint). Redirects to Authelia and sets a
+    short-lived signed transaction cookie. See security.md → "OIDC login".
+- `GET /api/auth/oidc/callback`
+  - Unguarded, the redirect target Authelia sends the browser back to. On success, redirects to
+    `/oidc-complete?code=<handoff>` — never to a URL carrying the session JWT itself. On failure
+    (bad/missing state, or a login that lacks the required Authelia group) redirects to
+    `/login?error=oidc_state` or `/login?error=oidc_forbidden`.
+- `POST /api/auth/oidc/exchange`
+  - Unguarded. Body: `{ code }` — the one-time handoff code from the callback redirect above.
+    Response: `{ token, user }`, identical shape to login/register. Answers `404
+    OIDC_HANDOFF_NOT_FOUND` for an unknown, expired (~60s), or already-used code.
 
 ## Resource shape and access control
 
@@ -973,7 +991,7 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-47 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
+49 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
 sentence silently falls back to that call site's generic message rather than reaching the user.
@@ -996,6 +1014,8 @@ sentence silently falls back to that call site's generic message rather than rea
 | `SNAPSHOT_NOT_FOUND` | 404 | ER Brief snapshot lookup — missing and expired alike, no distinction |
 | `EMAIL_TAKEN` | 409 | registration with an email already in use |
 | `INVALID_CREDENTIALS` | 401 | login with a wrong email/password pair |
+| `PASSWORD_AUTH_DISABLED` | 403 | `POST /api/auth/register`\|`login` once OIDC is the active login path |
+| `OIDC_HANDOFF_NOT_FOUND` | 404 | `POST /api/auth/oidc/exchange` with an unknown, expired, or already-used handoff code |
 | `SELF_RELATIONSHIP_ALREADY_EXISTS` | 400 | care team: adding a second "self" relationship |
 | `CANNOT_REMOVE_OWNER` | 400 | care team: removing the patient's owner |
 | `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation create with an empty `entries` array (interventions have no `entries` field) |

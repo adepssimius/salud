@@ -10,6 +10,22 @@ export function isProduction(): boolean {
 }
 
 /**
+ * Which login path is active: `'oidc'` (Authelia only; `POST /auth/register|login` refuse with
+ * `PASSWORD_AUTH_DISABLED`) or `'password'` (today's email/password flow).
+ *
+ * Local dev and the e2e suites can't reach a real Authelia server, so they always report
+ * `'password'`. In production this is gated behind `OIDC_ENABLED` rather than being a bare
+ * `isProduction()` check — a rollout safety valve (deployment.md → "Access control"): it lets the
+ * OIDC code path, the schema migration, and the web UI's mode-branching all ship and run in
+ * production while password login keeps working, so the actual cutover is a one-variable flip
+ * verified separately, not bundled into the same deploy as the code. Once that cutover has
+ * happened this collapses to `isProduction()` and the variable goes away.
+ */
+export function authMode(): 'oidc' | 'password' {
+  return isProduction() && process.env.OIDC_ENABLED === 'true' ? 'oidc' : 'password';
+}
+
+/**
  * The single place `JWT_SECRET` is read. It used to be read in two — auth.module.ts and
  * jwt.strategy.ts — each with its own `?? 'dev-secret'`, which meant an unset secret in a
  * deployed environment silently signed every token with a value published in this repo, and

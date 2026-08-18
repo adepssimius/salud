@@ -69,6 +69,19 @@ export interface AuthResponse {
   user: UserProfile;
 }
 
+// Which login path is active — see apps/api/src/app/config/env.ts → authMode(). The web login
+// page branches its whole UI on this rather than a build-time environment file, since one web
+// bundle is deployed to both dev and prod backends.
+export interface AuthConfigResponse {
+  mode: 'oidc' | 'password';
+}
+
+// The one-time handoff code from GET /auth/oidc/callback, exchanged for the real AuthResponse.
+// Never the JWT itself — see security.md → "OIDC login".
+export interface ExchangeOidcCodeDto {
+  code: string;
+}
+
 export interface UpdateUserDto {
   displayName?: string;
   preferredTempUnit?: TempUnit;

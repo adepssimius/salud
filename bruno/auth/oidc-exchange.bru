@@ -1,0 +1,39 @@
+meta {
+  name: OIDC Exchange
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}auth/oidc/exchange
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "paste-the-code-from-the-oidc-complete-redirect-here"
+  }
+}
+
+script:post-response {
+  const body = res.getBody();
+
+  const token = body.token;
+  if (token) {
+    bru.setVar("token", token);
+  }
+}
+
+docs {
+  Exchanges the one-time handoff code from GET auth/oidc/callback's redirect
+  (/oidc-complete?code=...) for the real session -- the JWT itself never appears in that redirect
+  (security.md → "OIDC login"). The code is single-use and expires in about a minute, so this only
+  works run manually right after walking the login flow in a browser and copying the code out of
+  the final redirect's query string.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
