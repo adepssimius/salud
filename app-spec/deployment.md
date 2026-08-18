@@ -223,3 +223,9 @@ depending on fixed-width formatting.
 
 `scripts/release.sh` cuts a `YYYYMMDD-HHMMSS` tag. That publishes an image but does **not**
 deploy — Flux matches only the `main-` form. It exists to pin a release you want to point at.
+
+**Docs-only changes skip the pipeline entirely** (`paths-ignore` on markdown and `app-spec/` in
+`ci.yml`): a docs-only PR runs no checks, and a docs-only merge to `main` publishes no image and
+therefore deploys nothing — the images don't contain the docs, so there is nothing to roll out.
+Tag pushes are exempt (GitHub doesn't evaluate path filters for tags), so cutting a release tag
+always publishes.
