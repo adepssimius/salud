@@ -1,12 +1,6 @@
 import { INestApplication, Logger } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import request from 'supertest';
-import { AppModule } from '../../app.module';
-import { DatabaseService } from '../../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { createTestApp } from '../../../testing/create-test-app';
 import { applyAppObservability } from '../../app.observability';
 import { ValidationPipe } from '@nestjs/common';
 
@@ -18,7 +12,7 @@ import { ValidationPipe } from '@nestjs/common';
  */
 describe('Observability (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
   let token: string;
   let patientId: string;
   let lines: Array<{ level: string; message: string }>;
@@ -37,23 +31,12 @@ describe('Observability (e2e)', () => {
   const lineFor = (fragment: string) => lines.find((l) => l.message.includes(fragment));
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-observability-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    applyAppObservability(app as any);
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    await app.init();
-    await app.listen(0);
+    ({ app, close } = await createTestApp('observability', {
+      configureApp: (app) => {
+        applyAppObservability(app as any);
+        app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+      },
+    }));
 
     const register = await request(app.getHttpServer())
       .post('/api/auth/register')
@@ -74,8 +57,7 @@ describe('Observability (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await close();
   });
 
   beforeEach(() => captureLogs());

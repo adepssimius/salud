@@ -1,39 +1,62 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { DatabaseService } from '../persistence/database.service';
+// The dialect-resolved 'db/schema' — correct here because this test now builds its own raw
+// connection to match whatever DB_CLIENT jest-env-setup.ts already set (from TEST_DB) before this
+// file's imports ran, the same dialect schema.ts itself resolved against.
 import { users } from '../../db/schema';
 import { RegisterDto } from './dto/register.dto';
 
-// Unit-level, not e2e: a fabricated claims object and a real temp SQLite -- no HTTP, no
+// Unit-level, not e2e: a fabricated claims object and a real temp database -- no HTTP, no
 // openid-client, no Authelia. What matters here (security.md → "OIDC login") is entirely covered
 // by this: match-by-sub-then-email, linking vs. provisioning, and that identity never duplicates
-// or misroutes across repeat logins.
+// or misroutes across repeat logins. Runs against whichever dialect TEST_DB selects (default
+// pglite), same as every e2e suite via create-test-app.ts — this file predates that helper and
+// has different enough needs (no HTTP layer, no Nest module) that it builds its own connection
+// rather than sharing it.
 describe('AuthService.loginOrProvisionOidc', () => {
   let tmpDir: string;
-  let raw: Database.Database;
   let dbService: DatabaseService;
   let auth: AuthService;
+  let closeConnection: () => Promise<void>;
 
   beforeEach(async () => {
+    const dialect = process.env.DB_CLIENT ?? 'pglite';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-auth-unit-'));
-    raw = new Database(path.join(tmpDir, 'test.db'));
-    const db = drizzle(raw);
-    await migrate(db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    dbService = new DatabaseService({ client: 'sqlite', db, raw } as any);
+
+    if (dialect === 'sqlite') {
+      const Database = (await import('better-sqlite3')).default;
+      const { drizzle } = await import('drizzle-orm/better-sqlite3');
+      const { migrate } = await import('drizzle-orm/better-sqlite3/migrator');
+      const raw = new Database(path.join(tmpDir, 'test.db'));
+      const db = drizzle(raw);
+      await migrate(db, {
+        migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
+      });
+      dbService = new DatabaseService({ client: 'sqlite', db, raw } as any);
+      closeConnection = async () => raw.close();
+    } else {
+      const { PGlite } = await import('@electric-sql/pglite');
+      const { drizzle } = await import('drizzle-orm/pglite');
+      const { migrate } = await import('drizzle-orm/pglite/migrator');
+      const raw = new PGlite(path.join(tmpDir, 'pgdata'));
+      const db = drizzle(raw);
+      await migrate(db, {
+        migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/postgres'),
+      });
+      dbService = new DatabaseService({ client: 'pglite', db, raw } as any);
+      closeConnection = async () => raw.close();
+    }
+
     auth = new AuthService(dbService, new JwtService({ secret: 'unit-test-secret' }));
   });
 
-  afterEach(() => {
-    raw.close();
+  afterEach(async () => {
+    await closeConnection();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

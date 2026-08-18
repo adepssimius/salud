@@ -1,7 +1,7 @@
 import path from 'path';
 import { resolveDataDir } from './paths';
 
-export type DatabaseClient = 'sqlite' | 'postgres' | 'mysql';
+export type DatabaseClient = 'sqlite' | 'postgres' | 'mysql' | 'pglite';
 
 export interface DatabaseConfig {
   client: DatabaseClient;
@@ -23,6 +23,17 @@ export function resolveDatabaseConfig(): DatabaseConfig {
       client,
       sqliteFile: '',
       url,
+    };
+  }
+
+  // pglite (real Postgres in WASM, in-process — the e2e default; see create-test-app.ts) takes a
+  // data directory, not a connection string, but DATABASE_URL is reused for it so the test harness
+  // can set one env var regardless of dialect. Unset means an in-memory instance.
+  if (client === 'pglite') {
+    return {
+      client,
+      sqliteFile: '',
+      url: process.env.DATABASE_URL ?? 'memory://',
     };
   }
 

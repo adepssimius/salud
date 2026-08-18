@@ -1,12 +1,7 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
-import { DatabaseService } from '../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { createTestApp } from '../../testing/create-test-app';
 
 // The wire contract from app-spec/api.md → Conventions: every response timestamp is an integer of
 // epoch seconds, never an ISO string. #20 found three mappers that broke this by copying a Drizzle
@@ -59,7 +54,7 @@ async function registerAndLogin(app: INestApplication) {
 
 describe('Timestamp wire contract (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
   let token: string;
   let patientId: string;
   let medicationId: string;
@@ -72,23 +67,7 @@ describe('Timestamp wire contract (e2e)', () => {
   beforeAll(async () => {
     // Distinct prefix from every other suite's tmpdir (ISSUES #21 tracks the cross-suite
     // process.env.DATA_DIR flake this doesn't fix, only avoids compounding).
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-timestamps-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    await app.init();
-    // Explicit bind (ISSUES #25): without this, supertest rebinds/closes an ephemeral port on
-    // every single request instead of once per suite -- the leading suspect for the flake where
-    // a request occasionally gets a real but wrong response (401/404 on a route that just worked).
-    await app.listen(0);
+    ({ app, close } = await createTestApp('timestamps'));
 
     const auth = await registerAndLogin(app);
     token = auth.token;
@@ -157,8 +136,7 @@ describe('Timestamp wire contract (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await close();
   });
 
   const auth = () => ({ Authorization: `Bearer ${token}` });

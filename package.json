@@ -8,14 +8,15 @@
     "start:web": "nx serve web",
     "build:api": "nx build api",
     "build:web": "nx build web",
-    "test:api": "nx test api",
+    "test:api": "NODE_OPTIONS=--experimental-vm-modules nx test api",
     "test:web": "nx test web",
     "lint:api": "nx lint api",
     "lint:web": "nx lint web",
     "e2e:api": "nx e2e api-e2e",
     "e2e:web": "nx e2e web-e2e",
     "seed:test-user": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/seed-test-user.ts",
-    "seed:catalog": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/seed-catalog.ts"
+    "seed:catalog": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/seed-catalog.ts",
+    "migrate:sqlite-to-postgres": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/sqlite-to-postgres.ts"
   },
   "private": true,
   "devDependencies": {
@@ -25,6 +26,7 @@
     "@angular/cli": "~20.3.0",
     "@angular/compiler-cli": "~20.3.0",
     "@angular/language-service": "~20.3.0",
+    "@electric-sql/pglite": "^0.2.17",
     "@eslint/js": "^9.8.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
@@ -46,6 +48,7 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/jest": "^29.5.12",
     "@types/node": "20.19.9",
+    "@types/pg": "^8.11.10",
     "@types/supertest": "^2.0.16",
     "@typescript-eslint/utils": "^8.40.0",
     "angular-eslint": "^20.3.0",

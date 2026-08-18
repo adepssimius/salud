@@ -3,6 +3,18 @@ import path from 'path';
 import { Logger } from '@nestjs/common';
 import { DatabaseConnection } from './database.providers';
 
+// pglite is Postgres (real Postgres compiled to WASM), not a fourth dialect — it must resolve to
+// the same migration folder as 'postgres' and never grow its own lineage. See database.providers.ts.
+type MigrationDialect = 'sqlite' | 'postgres';
+
+function migrationDialectFor(client: DatabaseConnection['client']): MigrationDialect {
+  if (client === 'sqlite') return 'sqlite';
+  if (client === 'mysql') {
+    throw new Error('mysql has never had a schema ported to it — see app-spec/persistence.md');
+  }
+  return 'postgres'; // 'postgres' or 'pglite'
+}
+
 /**
  * Where the generated `.sql` lives depends on how the process was started:
  *
@@ -18,10 +30,11 @@ export function resolveMigrationsFolder(client: DatabaseConnection['client']): s
   const override = process.env.MIGRATIONS_DIR;
   if (override) return override;
 
-  const bundled = path.join(__dirname, 'assets', 'migrations', client);
+  const dialect = migrationDialectFor(client);
+  const bundled = path.join(__dirname, 'assets', 'migrations', dialect);
   if (fs.existsSync(bundled)) return bundled;
 
-  return path.join(process.cwd(), 'apps/api/src/db/migrations', client);
+  return path.join(process.cwd(), 'apps/api/src/db/migrations', dialect);
 }
 
 /**
@@ -31,8 +44,13 @@ export function resolveMigrationsFolder(client: DatabaseConnection['client']): s
  * seen the old one. See app-spec/development.md on why the flattened-migration policy stops
  * applying once an instance holds real data.
  *
+ * SQLite and Postgres are both fully supported deployment targets (app-spec/persistence.md), so
+ * both lineages are maintained side by side — a schema change is not done until both have a
+ * matching generated migration (schema-parity.spec.ts enforces the schemas agree; nothing enforces
+ * the migrations were both actually generated, so that step is on the author).
+ *
  * The dialect migrators are imported lazily for the same reason the drivers are in
- * `database.providers.ts`: sqlite is the only one used in practice and loading all three costs
+ * `database.providers.ts`: only one dialect runs in a given process and loading all of them costs
  * real startup time.
  */
 export async function runMigrations(connection: DatabaseConnection): Promise<void> {
@@ -42,6 +60,9 @@ export async function runMigrations(connection: DatabaseConnection): Promise<voi
 
   if (connection.client === 'postgres') {
     const { migrate } = await import('drizzle-orm/node-postgres/migrator');
+    await migrate(connection.db, { migrationsFolder });
+  } else if (connection.client === 'pglite') {
+    const { migrate } = await import('drizzle-orm/pglite/migrator');
     await migrate(connection.db, { migrationsFolder });
   } else if (connection.client === 'mysql') {
     const { migrate } = await import('drizzle-orm/mysql2/migrator');

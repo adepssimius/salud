@@ -21,7 +21,31 @@ jobs:
 
       - run: yarn install --frozen-lockfile
 
-      - run: yarn nx run-many -t lint,test,build
+      # `test` deliberately excluded here — the api and web suites need different NODE_OPTIONS
+      # (see below) and run as their own steps instead.
+      - run: yarn nx run-many -t lint,build
+
+      - name: Test web
+        run: yarn test:web
+
+      # NODE_OPTIONS is required for the api suite's default TEST_DB=pglite leg — @electric-sql/pglite
+      # loads part of itself via a dynamic import() at runtime, which Node's Jest-managed worker
+      # processes refuse without this flag (ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG). It has to
+      # be scoped to just the api steps: applied job-wide, it changes Jest's module-loading path
+      # for jest-preset-angular's .mjs setup file too and breaks every web test with "Must use
+      # import to load ES Module" — found by CI actually going red on exactly that, not in review.
+      - name: Test api (Postgres)
+        run: yarn test:api --skip-nx-cache
+
+      # SQLite is a fully supported deployment target (self-hosting), not just a dev fallback —
+      # app-spec/persistence.md. The step above already ran the api suite once, but on Postgres
+      # (TEST_DB defaults to pglite — real Postgres in WASM, see
+      # apps/api/src/testing/create-test-app.ts); a green run there says nothing about the SQLite
+      # build a self-hoster actually gets, so run the same suite again on that leg.
+      - name: Test api (SQLite)
+        run: yarn test:api --skip-nx-cache
+        env:
+          TEST_DB: sqlite
 
   publish:
     needs: test

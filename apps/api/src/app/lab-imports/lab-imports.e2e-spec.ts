@@ -1,12 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
-import { DatabaseService } from '../persistence/database.service';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { createTestApp } from '../../testing/create-test-app';
 
 // Synthetic fixtures (fake patient data) exercising the real pdf-parse integration end to end.
 const QUEST_PDF = fs.readFileSync(path.join(__dirname, '__fixtures__', 'quest-sample.pdf'));
@@ -22,7 +19,7 @@ async function registerAndLogin(app: INestApplication) {
 
 describe('Lab imports (e2e)', () => {
   let app: INestApplication;
-  let tmpDir: string;
+  let close: () => Promise<void>;
   let token: string;
   let patientId: string;
 
@@ -37,21 +34,7 @@ describe('Lab imports (e2e)', () => {
   }
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'salud-labs-'));
-    process.env.DATA_DIR = tmpDir;
-    process.env.DB_CLIENT = 'sqlite';
-    process.env.JWT_SECRET = 'test-secret';
-
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    const dbService = app.get(DatabaseService);
-    await migrate((dbService as any).db, {
-      migrationsFolder: path.join(process.cwd(), 'apps/api/src/db/migrations/sqlite'),
-    });
-    await app.init();
-    // Explicit bind (ISSUES #25) — same reasoning as every other e2e suite.
-    await app.listen(0);
+    ({ app, close } = await createTestApp('labs'));
 
     const auth = await registerAndLogin(app);
     token = auth.token;
@@ -65,8 +48,7 @@ describe('Lab imports (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await close();
   });
 
   it('requires authentication', async () => {
