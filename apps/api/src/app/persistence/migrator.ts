@@ -48,8 +48,70 @@ export async function runMigrations(connection: DatabaseConnection): Promise<voi
     await migrate(connection.db, { migrationsFolder });
   } else {
     const { migrate } = await import('drizzle-orm/better-sqlite3/migrator');
-    migrate(connection.db, { migrationsFolder });
+    await runSqliteMigrations(connection, () => migrate(connection.db, { migrationsFolder }), logger);
   }
 
   logger.log('Migrations up to date');
+}
+
+/**
+ * Runs the sqlite migrations with foreign-key enforcement suspended, then verifies the result.
+ *
+ * SQLite cannot drop a column's NOT NULL (or otherwise alter a column) in place, so drizzle-kit
+ * emits the standard table-rebuild for those: create `__new_x`, copy the rows, `DROP TABLE x`,
+ * rename. That drop is what needs foreign keys off — every table referencing `x` still points at
+ * the rows being dropped, and `users` alone has ~18 referencing columns.
+ *
+ * **The pragma has to be set here, outside the transaction, and this is the whole point of this
+ * function.** Two things make the obvious alternatives silently wrong:
+ *
+ *  - `PRAGMA foreign_keys=OFF` *inside* the migration file is a documented no-op: drizzle wraps
+ *    every migration in one `BEGIN`/`COMMIT` (`sqlite-core/dialect.cjs`), and SQLite ignores that
+ *    pragma inside a transaction. drizzle-kit generates exactly this, so a generated rebuild is
+ *    broken out of the box.
+ *  - `PRAGMA defer_foreign_keys=ON` *does* apply inside a transaction, but doesn't help either:
+ *    deferred enforcement is a counter, and `DROP TABLE`'s implicit deletes increment it while the
+ *    later `RENAME` never decrements it. The migration then fails at `COMMIT` instead of at the
+ *    drop — same outage, less obvious stack trace.
+ *
+ * This shipped broken once (migration 0006, the OIDC `users` rebuild): it crash-looped the
+ * production pod at boot while passing every test, because a from-empty database has no rows and
+ * therefore no foreign key to violate. `migrations.e2e-spec.ts` now runs this path against a
+ * populated database specifically to keep that from recurring.
+ */
+async function runSqliteMigrations(
+  connection: DatabaseConnection,
+  migrate: () => void,
+  logger: Logger,
+): Promise<void> {
+  const raw = connection.raw as { pragma(source: string): unknown };
+  // Read rather than assume: better-sqlite3 turns foreign keys on by default, but a caller that
+  // has already turned them off should get them left off.
+  const wasEnabled = isForeignKeysEnabled(raw);
+
+  if (wasEnabled) raw.pragma('foreign_keys = OFF');
+  try {
+    migrate();
+
+    // Belt and braces: with enforcement off, a genuinely broken migration would leave dangling
+    // references behind instead of failing. Health records are the wrong place to find that out
+    // later, so check before handing the database to the app — and while still able to say which
+    // rows are wrong.
+    const violations = raw.pragma('foreign_key_check') as unknown[];
+    if (violations.length) {
+      throw new Error(
+        `Migrations left ${violations.length} foreign key violation(s): ${JSON.stringify(violations.slice(0, 5))}`,
+      );
+    }
+  } finally {
+    if (wasEnabled) raw.pragma('foreign_keys = ON');
+  }
+  logger.log('Foreign key integrity verified after migration');
+}
+
+function isForeignKeysEnabled(raw: { pragma(source: string): unknown }): boolean {
+  const result = raw.pragma('foreign_keys') as Array<{ foreign_keys: number }> | number;
+  // better-sqlite3 returns a row array by default, but `simple: true` callers see a scalar.
+  if (Array.isArray(result)) return result[0]?.foreign_keys === 1;
+  return result === 1;
 }
