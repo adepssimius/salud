@@ -2,7 +2,215 @@
 
 This file captures UI and client-side behavior specifics. The product spec (`product.md`) holds the broad capabilities.
 
+## Information architecture (v2)
+
+**Status: proposed, not yet built.** This section defines the target structure of the app — what
+lives where and how a caregiver moves between it. The behavioral specs in the sections that follow
+(dose entry mechanics, entry builder, advisories, lab import, errors, …) all continue to apply
+*inside* this structure; where a **placement** rule below contradicts an older bullet (written
+against the v1 page layout), this section wins and the older section carries a pointer note.
+
+### Two levels, one household
+
+Everything in the app is either **household-level** (the home screen, the medication and analyte
+catalogs, the shopping list, account preferences) or **patient-level** (journal, meds, conditions,
+reactions, episodes, labs, ER brief, care team). v1 mixes the two into one flat route list —
+patient-level pages are siblings reached via Back buttons, and the patient list is hidden inside a
+Profile tab. v2 makes the split structural:
+
+- Household-level things live on **Home** and under **Manage**.
+- Patient-level things live inside a **patient hub** — one shell per patient that carries the
+  patient's identity persistently, with tabs beneath it.
+- The patient list is a **top-level destination** (`/patients`), not a profile tab. Profile keeps
+  only the caregiver's own display name and unit preferences.
+
+### App shell
+
+- **Mobile: a bottom bar** with three slots — **Home**, a **center `+` (Quick Log)**, and
+  **Patients** — all thumb-reachable. The v1 top-right link nav is a desktop pattern on the
+  device the product is primarily for (P7). The header keeps brand + avatar menu (Profile,
+  Manage, Log out).
+- **Desktop: a left rail** — the patient list always visible (name, accent color, sick
+  indicator), Home at the top, Manage at the bottom. The content area is free to go multi-column.
+- The `+` is available on every authenticated screen. Inside a patient hub it is already scoped
+  to that patient; elsewhere it asks which patient first — see "Quick Log" below.
+
+### Patient identity — accent colors and the wrong-chart guard
+
+Concurrent illness is the design case, not the edge case: **more than one patient is often sick
+at the same time**, frequently on the same medications at different weight-based amounts. Two
+rules follow:
+
+- **Every patient has a stable accent color** — `patients.accentColor`, a palette token assigned
+  server-side at creation and editable in the hub's Settings tab (data-model.md → Patient) — used
+  everywhere the patient appears: patient chips, sick cards, journal headers, night-board rows,
+  dose confirmation. Color encodes identity and nothing else.
+- **Every write names its patient at the point of commitment.** The quick-log save button reads
+  "Save for ⟨name⟩" (name + color), never a bare "Save". Recents, dose guidance, and next-allowed
+  arithmetic are always computed per patient; a "same as last time" affordance must never surface
+  another patient's last dose, precisely because two children on the same medication at different
+  amounts is the normal concurrent-illness case. Logging onto the wrong child's record is the most
+  dangerous data error the UI can invite — worth a permanent pixel budget on every entry surface.
+
+### Patient hub
+
+`/patients/:id` becomes a shell, not a page:
+
+- **Persistent header** on every tab: name, age, accent color, danger-severity reaction pills
+  (mirroring the ER Brief's allergies-in-the-header priority), active-episode pill(s), and the
+  stale-weight indicator.
+- **Tabs: Now · Journal · Meds · History · Share**, plus a settings gear.
+  - **Now** — the live state: the same content as this patient's Home sick card (below) with
+    quick actions inline. The landing tab while an episode is active; a quiet patient lands on
+    Journal instead.
+  - **Journal** — the narrative timeline; supersedes `/patients/:id/timeline` (see "Journal").
+  - **Meds** — this patient's schedules (with adherence), last doses and next-allowed, and the
+    **Reactions card + add-reaction flow**. Reactions warn at dose time; they belong beside meds,
+    not on an edit form.
+  - **History** — conditions, the episode list (active and resolved), the lab-import entry point,
+    and per-analyte history links.
+  - **Share** — ER Brief (including flash mode and shareable links) and care team management.
+  - **Settings** (gear) — the v1 patient-detail content: the edit form, code status card, delete.
+    Landing a caregiver on an edit form (v1 behavior) is the wrong default; editing is a
+    deliberate act, not the resting state of a patient page.
+- Route map (existing detail routes — `/episodes/:id`, `/conditions/:id`, `/schedules/:id`,
+  `/brief/:token` — are unchanged):
+
+```
+/patients                    patient list (moved out of /profile)
+/patients/:id                → redirects to now (episode active) or journal (quiet)
+/patients/:id/now
+/patients/:id/journal        supersedes /patients/:id/timeline
+/patients/:id/meds
+/patients/:id/history
+/patients/:id/share          ER brief + care team
+/patients/:id/settings       v1 patient-detail content
+```
+
+### Quick Log
+
+The core loop is logging, and the budget is P7's number: **under 30 seconds, one-handed, in a
+dark room — and a repeat dose in at most four taps.** The `+` opens a sheet, not a page:
+
+- **Verbs, not entities.** The sheet offers **Temp · Dose · Pain · Note · Photo**, plus "Full
+  observation…" for the multi-entry composer. The observation/intervention split is a persistence
+  concern; the sheet never says "observation", "intervention", or "embodiment".
+- **Patient scoping**: inside a hub, pre-scoped. Elsewhere, a single-patient household skips the
+  question entirely; a multi-patient household shows patient chips first, **ordered sick-first**
+  (active episode before quiet, then by most recent event). The chosen patient's name and color
+  stay pinned at the top of the sheet through save.
+- Each verb lands in the existing form (`/observations/new`, `/interventions/new`) with patient
+  and entry type pre-selected — one form codepath, no parallel implementation. The forms render a
+  compact single-purpose layout when arriving with a preselected type.
+- **Dose: recents first, search second.** For the selected patient, the medication step leads
+  with cards for medications recently given or scheduled: name, embodiment, amount last given,
+  last-dose age, and the next-allowed countdown. Tapping a card prefills medication + embodiment
+  + amount ("same as last time"); dose-checks still run, guidance cards, advisory banners, and
+  the danger interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩".
+  The typeahead search remains below for anything new. This inverts v1, where every repeat dose
+  pays the general-case search cost. Backed by `GET /api/patients/:id/recent-medications`
+  (api.md → Timeline & dashboard), which carries the last amount/embodiment for the prefill and is
+  per-patient by construction.
+- **Episode attachment is a visible default, never a silent inference (P5).** When the patient
+  has exactly one active episode, the form shows it pre-attached as a removable chip ("Adding to
+  *Fever – Aug 2026* ✕") — zero taps in the common case, and the attachment sits on screen for
+  the caregiver to reject before saving, so the judgment stays theirs. Multiple active episodes →
+  a chip picker with nothing pre-selected. "Start new episode" and "this resolves…" move behind a
+  "More" disclosure — resolution remains only a side effect of a logged event (P5); it just stops
+  occupying prime space on every entry.
+
+### Home
+
+`/dashboard` keeps its route; the label becomes **Home**, and the page is **bimodal** — its shape
+follows the household's state instead of rendering one fixed stack of sections:
+
+**Sick mode** — whenever at least one patient has an active episode:
+
+- **One sick card per sick patient**, stacked, each carrying the patient's accent color: episode
+  name and day count, last dose per active medication with the **next-allowed countdown as the
+  visually dominant element** (it answers the founding question; it is the hero of the card, not
+  a muted suffix), a 48-hour temperature sparkline (from the dashboard payload's
+  `recentTemperatures` — Home stays a single request, as in v1), atypical-dose flags, and inline
+  Temp/Dose quick actions scoped to that patient.
+- **Night board — the concurrent-illness centerpiece.** When **two or more** patients are sick, a
+  condensed grid renders *above* the cards: one row per sick patient (name + color), one line per
+  active medication, each cell just the countdown ("can give now" / "in 1h 40m") plus any
+  atypical flag. A single caregiver alternating between two bedrooms gets "who can have what,
+  when" in one glance, without scrolling between cards. The board is pure arithmetic — computed
+  next-allowed times, no interpretation (P6).
+- Card order: the patient with the **soonest next actionable moment** (earliest next-allowed
+  time or most-overdue schedule) first — the top of the screen is the next thing to do.
+- Quiet-household content (shopping list, "since you last looked" rows for quiet patients)
+  demotes below the sick cards; it never interleaves with them.
+
+**Quiet mode** — no active episodes: due/overdue schedules (existing rules, including the one-tap
+"Log dose"), the "since you last looked" summaries, the shopping list, and the confident-negative
+last-doses strip.
+
+Content rules carry over from the v1 Dashboard section verbatim: relative times everywhere (ER
+Brief excepted), the episode-agnostic `lastDoses` semantics, explicit confident negatives, and
+"an unreachable API must say so".
+
+- **Catalog and admin actions leave Home.** "Medication catalog", "Analyte catalog", and "New
+  schedule" move under **Manage** (avatar menu on mobile, rail bottom on desktop). They are
+  monthly setup tasks; in v1 they compete with "log a dose" for the most urgent screen in the app.
+
+### Journal
+
+Supersedes the chart-only Timeline page. The product's promise is a *shared narrative*; the
+narrative artifact is a feed, and the chart is its instrument panel:
+
+- **A chronological feed**, grouped by day: observations (existing entry-summary treatment),
+  doses, notes, photo thumbnails, document links, and advisory firings — **every row attributed
+  by name and time (P3)**: "Dana — 240 mg ibuprofen · 2:15 AM". Attribution is the entire point
+  of a multi-caregiver log, and in v1 it is invisible outside revision history. Names arrive with
+  the payload — timeline entries carry `recordedBy { id, displayName }` resolved server-side
+  (api.md → Timeline & dashboard) — so the feed never fans out to map user ids, and rows keep
+  their author even after that caregiver leaves the care team.
+- **The chart is a collapsible header** above the feed — same hand-drawn SVG, same no-annotation
+  rule (P6), same medication/tag filter chips, with filters applying to chart and feed together.
+  On desktop the chart and feed render side by side (P7).
+- **Episode frames become feed dividers** as well as chart bands: "— Fever, day 3 —" section
+  markers in the feed, clickable through to episode detail.
+- **The since-you-last-looked marker.** The What's-New watermark renders as a labeled divider
+  line *inside the feed* — the reader opens the journal and reads down to the line; that *is*
+  the handoff. A "Mark as seen" action on the marker calls the existing `whats-new/ack`;
+  scrolling never acks (same deliberate-ack rule as v1). This supersedes the separate What's-New
+  page; Home's summaries deep-link to the journal positioned at the marker. The marker is per
+  patient — with two patients sick, each journal keeps its own line, and Home shows one summary
+  row per patient with unseen changes.
+- The lab aggregate-line, photo-thumbnail, and document-link render rules carry over unchanged
+  from the v1 Timeline / Photos / Documents sections.
+
+### API additions v2 depends on
+
+Four additions, specced in api.md / data-model.md alongside this section; everything else in v2
+derives from existing payloads:
+
+- `patients.accentColor` — palette token, server-assigned at creation, editable via patient PATCH
+  (data-model.md → Patient).
+- `recordedBy { id, displayName }` on timeline entries — server-resolved attribution for the
+  journal feed (P3).
+- `recentTemperatures` on `GET /api/dashboard` — 48h temperature points per sick patient, keeping
+  Home a single request.
+- `GET /api/patients/:id/recent-medications` — the quick-log recents source, carrying last
+  amount/embodiment for the "same as last time" prefill.
+
+### What v2 supersedes
+
+| v1 | v2 |
+| --- | --- |
+| Header contains the only nav link (Dashboard) | App shell: bottom bar (mobile) / left rail (desktop) |
+| Patient list is a tab inside `/profile` | `/patients` top-level; profile keeps caregiver prefs only |
+| `/patients/:id` lands on an edit form | Patient hub; the edit form moves to its Settings tab |
+| Timeline is a chart-only page | Journal: attributed feed + collapsible chart |
+| Dedicated What's-New page | The journal's since-you-last-looked marker |
+| Dashboard is a fixed section stack + five admin buttons | Bimodal Home + night board; admin under Manage |
+| Every entry form opens with a patient dropdown and episode checkboxes | Quick Log: scoped verbs, recents-first dosing, episode chip default |
+
 ## Navigation & header
+> Placement superseded by "Information architecture (v2)" → App shell; the dropdown behavior rules
+> below still apply.
 - Global header shows brand plus a profile avatar icon (icon only, no text). When unauthenticated, show `Sign In`/`Sign Up` links, hiding the link for the page currently shown.
 - When authenticated, hide auth links and show the avatar dropdown with `Edit profile` and `Log out`.
 - Dropdown closes when: clicking Edit profile, clicking outside the menu, or navigating. Clicking the avatar toggles it.
@@ -14,6 +222,9 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 - JWT stored client-side (localStorage) and sent via auth interceptor as `Authorization: Bearer <token>`.
 
 ## Profile experience
+> v2 moves the Patients tab to a top-level `/patients` list and the patient-detail content into
+> the patient hub's Settings tab ("Information architecture (v2)"); the form-level behavior below
+> is unchanged.
 - `/profile` shows a left-side tab list with `My Profile` first (additional tabs can be added later).
 - Tabs include `My Profile` and `Patients`; notifications tab is placeholder/disabled.
 - My Profile lets the caregiver update display name and unit preferences.
@@ -104,6 +315,9 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   yet — every M4 producer follows the same candidate-then-persist-on-save shape as M2's).
 
 ## Dashboard
+> Placement superseded by "Information architecture (v2)" → Home (bimodal, with the multi-patient
+> night board). The content rules below — last-doses semantics, relative times, confident
+> negatives — carry over into the sick cards and quiet mode unchanged.
 - **"Last doses" strip — the first content on the page after any advisories.** Per patient: every
   medication given in the last 24 hours, with its name, how long ago in relative form ("2h 15m
   ago"), and the next-allowed countdown ("can give now" / "next dose in 1h 40m", omitted entirely
@@ -157,6 +371,9 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
   Condition-frame overlay needs its own query shape rather than reusing the Episode-band code as-is.
 
 ## Reactions
+> v2 moves this card from patient detail to the patient hub's **Meds** tab, with danger-severity
+> pills also pinned in the hub header ("Information architecture (v2)"); every other rule below is
+> unchanged.
 
 Adverse reactions drive the `reaction_warning` inline banner and the `reaction_danger` full-screen
 interstitial at dose entry (see "Dose entry" above) — the single most safety-critical input in the
@@ -197,6 +414,8 @@ app. They therefore need somewhere to be entered.
   own decision.
 
 ## Timeline
+> v2 folds this chart into the **Journal** as its collapsible header ("Information architecture
+> (v2)" → Journal); every rendering rule below carries over.
 - Desktop-weighted (P7): a temperature curve (or other numeric-observation curve) rendered as a
   hand-drawn SVG — no charting library, consistent with the rest of the app's hand-rolled styling —
   with medication dose markers overlaid at their `performedAt` positions (F-5.2). The overlay is
@@ -244,6 +463,9 @@ what keeps a brief read three days later from claiming to show "the last 72 hour
 `er-brief.md` → Web for the headings, empty states, and the phone-width table rule.
 
 ## While You Were Asleep
+> v2 supersedes the dedicated page with the Journal's since-you-last-looked marker
+> ("Information architecture (v2)" → Journal); the ack semantics and dashboard-count rules below
+> carry over.
 - `whats-new.page.ts` (per patient, entry point from the dashboard card): renders the diff — events
   since the watermark, advisories fired, and what's due right now — then an explicit "Mark as seen"
   action calls `POST .../whats-new/ack`. Loading the page does **not** ack; only the button does,
@@ -403,5 +625,6 @@ what keeps a brief read three days later from claiming to show "the last 72 hour
   decide whether something has already been done. An unreachable API must say so.
 
 ## App shell & routing
+> Target navigation structure: "Information architecture (v2)" → App shell.
 - Basic routing for auth, profile, and dashboard; auth routes should not surface profile/logout affordances.
 - Typed HTTP client for API calls; auth interceptor attaches JWT to requests and handles logout on invalid tokens.

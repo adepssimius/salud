@@ -1,12 +1,24 @@
 name: CI
 
+# Docs-only changes (markdown anywhere, anything under app-spec/) skip the pipeline: they can't
+# change test results, and skipping the publish job on a docs-only push to main means no new image
+# and no Flux-triggered redeploy for a change that is invisible to the running app. Safe because
+# `main` has no required status checks (a path-ignored required check would strand PRs on
+# "Expected"). Note GitHub does not evaluate path filters for tag pushes, so `20*` release tags
+# always publish regardless of what the tagged commit touched.
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'app-spec/**'
   push:
     branches:
       - main
     tags:
       - '20*'
+    paths-ignore:
+      - '**/*.md'
+      - 'app-spec/**'
 
 jobs:
   test:
