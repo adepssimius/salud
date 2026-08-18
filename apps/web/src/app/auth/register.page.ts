@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
@@ -107,10 +107,28 @@ import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
     `,
   ],
 })
-export class RegisterPage {
+export class RegisterPage implements OnInit {
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+
+  ngOnInit(): void {
+    // Nothing links here in OIDC mode -- the login page hides its "Sign Up" link -- but the route
+    // still resolves, so a bookmark or browser autocomplete lands on a form whose only possible
+    // outcome is 403 PASSWORD_AUTH_DISABLED. Send those people to the one door that works instead
+    // of letting them fill in a form to be rejected.
+    //
+    // A redirect rather than deleting the route: password registration is still the only way into
+    // a local dev instance, which can't reach a real Authelia (config/env.ts → authMode()).
+    this.auth.authConfig().subscribe({
+      next: (res) => {
+        if (res.mode === 'oidc') this.router.navigateByUrl('/login');
+      },
+      // Same posture as the login page: if /auth/config is unreachable, leave the password form
+      // up rather than bouncing someone off a page that might be their only way in.
+      error: () => undefined,
+    });
+  }
 
   form = this.fb.nonNullable.group({
     displayName: ['', [Validators.required, Validators.minLength(1)]],
