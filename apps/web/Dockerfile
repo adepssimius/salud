@@ -10,7 +10,14 @@ RUN yarn install --frozen-lockfile
 COPY . .
 RUN yarn nx build web
 
+# The static bundle, flattened so its layout is identical whether it came from `build` above or
+# from outside. CI passes `--build-context dist=dist/apps/web/browser` (the artifact the `build`
+# job already produced), which substitutes this stage wholesale and prunes the compile above out
+# of the graph entirely. A plain `docker build .` with no extra flags still builds from source.
+FROM scratch AS dist
+COPY --from=build /workspace/dist/apps/web/browser/ /
+
 FROM nginx:1.27-alpine AS runtime
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /workspace/dist/apps/web/browser /usr/share/nginx/html
+COPY --from=dist / /usr/share/nginx/html
 EXPOSE 80
