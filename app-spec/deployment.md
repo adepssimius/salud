@@ -221,6 +221,17 @@ The run number rather than a timestamp is deliberate: it is identical across bot
 publish matrix, so api and web can never land on different tags, and it is monotonic without
 depending on fixed-width formatting.
 
+Neither image is compiled inside Docker. CI builds the workspace once, in the job that also lints
+and tests it, and hands `dist/api` and `dist/apps/web/browser` to the publish jobs as artifacts;
+each Dockerfile ends its from-source path in a `dist` stage that the build substitutes with those
+(`--build-context`), which prunes the compile out of the image graph. Running `docker build` on
+either Dockerfile with no extra flags still builds from source, so the images remain reproducible
+outside CI — that path is just not what a release takes.
+
+Pull requests build both images too, and throw them away; only a push pushes. The image build is
+nearly free now that it carries no compile, and without it a change that breaks an image would
+stay green until it had already merged and started deploying.
+
 `scripts/release.sh` cuts a `YYYYMMDD-HHMMSS` tag. That publishes an image but does **not**
 deploy — Flux matches only the `main-` form. It exists to pin a release you want to point at.
 
