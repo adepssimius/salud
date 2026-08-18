@@ -92,6 +92,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+        with:
+          cache-key-suffix: -${{ matrix.name }}
 
       # NODE_OPTIONS=--experimental-vm-modules, which the Postgres leg needs (@electric-sql/pglite
       # loads part of itself through a dynamic import() that Jest's worker processes otherwise
@@ -130,6 +132,8 @@ jobs:
             artifact: dist-web
             cache_from: ''
             cache_to: ''
+    # Without this the cache_from/cache_to values land in the job name on the checks list.
+    name: publish (${{ matrix.image }})
     steps:
       # Still needed for the Dockerfiles themselves and, for web, nginx.conf — just not for a
       # compile any more.
