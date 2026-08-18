@@ -1,0 +1,27 @@
+meta {
+  name: OIDC Login
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}auth/oidc/login
+  body: none
+  auth: none
+}
+
+settings {
+  encodeUrl: true
+  // Bruno follows redirects by default, which would chase this straight into Authelia's own
+  // login page rather than showing the 302 itself -- disable it here to inspect the redirect and
+  // the salud_oidc_txn cookie this endpoint sets, which is the point of this request.
+  followRedirects: false
+  timeout: 0
+}
+
+docs {
+  A real browser navigation, not a JSON endpoint -- see security.md → "OIDC login". Redirects to
+  Authelia with state/nonce/PKCE params and sets the short-lived signed transaction cookie that
+  GET auth/oidc/callback reads back. Only meaningful against an environment with
+  AUTHELIA_ISSUER_URL/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET configured -- see deployment.md.
+}

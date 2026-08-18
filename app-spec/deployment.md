@@ -67,15 +67,40 @@ no infrastructure work in front of it.
 
 ## Access control
 
-The host sits behind Authelia forward-auth, `policy: one_factor`, `subject: group:admins` — the
-rule lives in `k8s-infra` → `apps/iam/authelia/values.yaml`, not on the Ingress. salud's own
-email/password + JWT login runs *behind* that gate and remains the real per-user access control;
-Authelia is a perimeter, not a replacement. There is no trusted-header auth: the app ignores
-`Remote-User` entirely.
+As deployed today, the host still sits behind Authelia forward-auth, `policy: one_factor`,
+`subject: group:admins` — the rule lives in `k8s-infra` → `apps/iam/authelia/values.yaml`, not on
+the Ingress. salud's own email/password + JWT login runs *behind* that gate and remains the real
+per-user access control; Authelia is a perimeter, not a replacement. There is no trusted-header
+auth: the app ignores `Remote-User` entirely.
 
 Consequence worth knowing: the ER Brief capability URLs (`/api/er-brief/shared/:token` and the
 `/brief/:token` SPA route), which `security.md` describes as links to hand to a triage desk, are
 gated too. They do not currently work for anyone without a cluster account. See `security.md`.
+
+### OIDC login (in progress)
+
+The app now also supports signing in via Authelia's own OIDC provider, gated to the `salud_users`
+group — see `security.md` → "OIDC login" for the flow itself. This ships in stages, on purpose,
+because it touches the only thing standing between the internet and this household's health
+records:
+
+1. **Shipped in this change**: the OIDC login code path, a nullable `users.password_hash` +
+   `users.oidc_subject` migration, and the web UI's mode-branching. `authMode()`
+   (`apps/api/src/app/config/env.ts`) governs which login path is active and is `'password'`
+   everywhere until `OIDC_ENABLED=true` is set **and** `NODE_ENV=production` — so merging this
+   changes nothing about how anyone signs in today.
+2. **Manual verification against production**, with `OIDC_ENABLED=true` but the forward-auth
+   perimeter still up (a temporary double gate) — walking the full flow for real before anything
+   about today's access control changes.
+3. **The actual cutover**: `OIDC_ENABLED` collapses into plain `isProduction()` (password login
+   hard-disabled in prod), and — in the same change or immediately after, never before — the
+   `access_control` rule and the `ingress.yaml` forward-auth annotations described above are
+   removed from `k8s-infra`. Order matters: dropping the perimeter while the API still accepts
+   passwords would leave `POST /api/auth/register` open to the internet with no gate at all.
+
+Once step 3 lands, the "Consequence worth knowing" paragraph above stops applying: removing the
+perimeter is what lets the ER Brief's capability URLs work for people without a cluster account,
+which is what `security.md` always intended for them.
 
 ## Configuration
 
@@ -91,6 +116,11 @@ the 1Password Connect operator, everything else is a literal.
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |
 | `ACCESS_LOG` | unset (on). `false` disables the HTTP access log — see Logging |
 | `SLOW_REQUEST_MS` | unset (1000). Requests at or over this are logged at warn and tagged `SLOW` |
+| `OIDC_ENABLED` | unset (off). `true` (with `NODE_ENV=production`) is the actual login-mode cutover — see "Access control" → "OIDC login" |
+| `AUTHELIA_ISSUER_URL` | `https://auth.bpd.sh`. Required for `GET /api/auth/oidc/login\|callback` to work at all — those routes are always registered, independent of `OIDC_ENABLED` |
+| `OIDC_CLIENT_ID` | `salud`. Same requirement as `AUTHELIA_ISSUER_URL` |
+| `OIDC_CLIENT_SECRET` | from `salud-secrets`. Same requirement as `AUTHELIA_ISSUER_URL` |
+| `OIDC_REQUIRED_GROUP` | unset (`salud_users`). The Authelia group a login must carry |
 
 In production the API refuses to start rather than degrade quietly: an unset, too-short, or
 well-known `JWT_SECRET` is fatal, and an unwritable `/data` is fatal instead of silently falling

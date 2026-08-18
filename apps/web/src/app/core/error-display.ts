@@ -65,6 +65,11 @@ export const ERROR_SENTENCES = {
   // to someone already known to be on the care team, so there is nothing left to hide.
   NOT_PATIENT_OWNER:
     "Only this patient's owner can delete them. Ask the owner, or have them transfer ownership to you first.",
+  // The oidc-complete page's own fallback text already covers this well (security.md → "OIDC
+  // login"); this entry exists so a direct API caller or a future call site gets the same
+  // sentence instead of degrading to something generic.
+  OIDC_HANDOFF_NOT_FOUND: 'This sign-in link has expired or was already used. Try signing in again.',
+  PASSWORD_AUTH_DISABLED: 'Password sign-in is turned off. Use "Sign in with Authelia" instead.',
   PATIENT_ID_REQUIRED: 'Choose a patient first.',
   // Deliberately silent on which of "no such file" / "someone else's file" it was, for the same
   // non-disclosure reason FILE_NOT_FOUND is.

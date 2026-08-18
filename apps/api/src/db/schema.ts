@@ -11,7 +11,13 @@ const now = () => sql`(strftime('%s','now'))`;
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
+  // Nullable: an OIDC-only account (security.md → "OIDC login") has no password. Never NULL for a
+  // password-registered account.
+  passwordHash: text('password_hash'),
+  // Authelia's `sub` claim. Nullable because a password-only account has never been through OIDC.
+  // Once set, this is the authoritative match key for that account on every later login — email
+  // alone would misroute a household member if their LDAP email is ever edited or reused.
+  oidcSubject: text('oidc_subject').unique(),
   displayName: text('display_name').notNull(),
   preferredTempUnit: text('preferred_temp_unit', { enum: ['C', 'F'] }).notNull(),
   preferredLengthUnit: text('preferred_length_unit', { enum: ['cm', 'in'] }).notNull(),

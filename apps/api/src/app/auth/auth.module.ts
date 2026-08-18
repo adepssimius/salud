@@ -10,6 +10,8 @@ import { JwtAuthGuard } from './jwt.guard';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { resolveJwtSecret } from '../config/env';
+import { OidcController } from './oidc/oidc.controller';
+import { OidcService } from './oidc/oidc.service';
 
 @Module({
   imports: [
@@ -24,8 +26,8 @@ import { resolveJwtSecret } from '../config/env';
     }),
     PersistenceModule,
   ],
-  controllers: [AuthController, UsersController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, UsersService],
+  controllers: [AuthController, UsersController, OidcController],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, UsersService, OidcService],
   exports: [AuthService, UsersService],
 })
 export class AuthModule {}

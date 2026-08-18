@@ -184,6 +184,50 @@ describe('Auth (e2e)', () => {
       });
   });
 
+  it('reports password mode by default in this test environment', async () => {
+    await request(app.getHttpServer())
+      .get('/api/auth/config')
+      .expect(200)
+      .expect({ mode: 'password' });
+  });
+
+  it('refuses register and login once OIDC is the active login path', async () => {
+    // The regression this guards: once the forward-auth perimeter is gone (deployment.md →
+    // "Access control"), an un-gated register endpoint is a completely open, internet-reachable
+    // account-creation endpoint. authMode() reads NODE_ENV/OIDC_ENABLED fresh on every call, so
+    // toggling them around a single request is enough -- no app restart needed.
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalOidcEnabled = process.env.OIDC_ENABLED;
+    process.env.NODE_ENV = 'production';
+    process.env.OIDC_ENABLED = 'true';
+    try {
+      await request(app.getHttpServer())
+        .get('/api/auth/config')
+        .expect(200)
+        .expect({ mode: 'oidc' });
+
+      await request(app.getHttpServer())
+        .post('/api/auth/register')
+        .send({ email: `blocked-${Date.now()}@example.com`, password: 'password123', displayName: 'Nope' })
+        .expect(403)
+        .expect((res) => {
+          expect(res.body.message).toBe('PASSWORD_AUTH_DISABLED');
+        });
+
+      await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'anyone@example.com', password: 'whatever' })
+        .expect(403)
+        .expect((res) => {
+          expect(res.body.message).toBe('PASSWORD_AUTH_DISABLED');
+        });
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      if (originalOidcEnabled === undefined) delete process.env.OIDC_ENABLED;
+      else process.env.OIDC_ENABLED = originalOidcEnabled;
+    }
+  });
+
   it('searches users by email', async () => {
     const email = `search-${Date.now()}@example.com`;
     const password = 'password123';

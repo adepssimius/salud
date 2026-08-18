@@ -3,7 +3,9 @@ import { Router } from '@angular/router';
 import { tap } from 'rxjs/operators';
 import { Observable } from 'rxjs';
 import {
+  AuthConfigResponse,
   AuthResponse,
+  ExchangeOidcCodeDto,
   LoginDto,
   RegisterDto,
   UpdateUserDto,
@@ -41,6 +43,19 @@ export class AuthService {
         this.persistSession(res);
       }),
     );
+  }
+
+  authConfig(): Observable<AuthConfigResponse> {
+    return this.api.get<AuthConfigResponse>('/auth/config');
+  }
+
+  // Exchanges the one-time handoff code from GET /auth/oidc/callback's redirect for the real
+  // session — see security.md → "OIDC login" for why the JWT never travels in that redirect
+  // itself. Same persistSession() as password login; everything downstream is unchanged.
+  completeOidc(code: string): Observable<AuthResponse> {
+    return this.api
+      .post<AuthResponse, ExchangeOidcCodeDto>('/auth/oidc/exchange', { code })
+      .pipe(tap((res) => this.persistSession(res)));
   }
 
   me(): Observable<{ user: UserProfile }> {

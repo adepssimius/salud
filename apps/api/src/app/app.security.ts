@@ -1,5 +1,7 @@
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import { resolveJwtSecret } from './config/env';
 
 /**
  * Trust-proxy and security-header setup, shared by `main.ts` and the e2e suites.
@@ -43,4 +45,9 @@ export function applyAppSecurity(app: NestExpressApplication) {
       // one that matters most here — again for the file-download route.
     }),
   );
+
+  // Only consumer today is the OIDC login flow's short-lived state/PKCE transaction cookie
+  // (auth/oidc/oidc.controller.ts) — reuses resolveJwtSecret() rather than provisioning a second
+  // secret, since the cookie payload is opaque and lives for minutes, not the day a JWT does.
+  app.use(cookieParser(resolveJwtSecret()));
 }

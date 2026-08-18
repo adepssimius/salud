@@ -43,6 +43,13 @@
       "when": 1786554358768,
       "tag": "0005_sharp_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787073421890,
+      "tag": "0006_slippery_switch",
+      "breakpoints": true
     }
   ]
 }

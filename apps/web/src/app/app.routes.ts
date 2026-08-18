@@ -9,6 +9,13 @@ export const appRoutes: Route[] = [
   { path: 'login', loadComponent: () => import('./auth/login.page').then((m) => m.LoginPage) },
   { path: 'register', loadComponent: () => import('./auth/register.page').then((m) => m.RegisterPage) },
   { path: 'logout', loadComponent: () => import('./auth/logout.page').then((m) => m.LogoutPage) },
+  // Unauthenticated by design, same bucket as login/register/brief/:token — this is where
+  // GET /auth/oidc/callback redirects the browser with its one-time handoff code (security.md →
+  // "OIDC login"). It can't be behind authGuard: there is no session yet when it's reached.
+  {
+    path: 'oidc-complete',
+    loadComponent: () => import('./auth/oidc-complete.page').then((m) => m.OidcCompletePage),
+  },
   {
     path: 'profile',
     loadComponent: () => import('./profile/profile.page').then((m) => m.ProfilePage),
