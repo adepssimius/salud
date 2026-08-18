@@ -21,7 +21,13 @@ jobs:
 
       - run: yarn install --frozen-lockfile
 
+      # NODE_OPTIONS is required for the api suite's default TEST_DB=pglite leg — @electric-sql/pglite
+      # loads part of itself via a dynamic import() at runtime, which Node's Jest-managed worker
+      # processes refuse without this flag (ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING_FLAG). Harmless
+      # for lint/build and for web's tests, which don't touch pglite at all.
       - run: yarn nx run-many -t lint,test,build
+        env:
+          NODE_OPTIONS: --experimental-vm-modules
 
       # SQLite is a fully supported deployment target (self-hosting), not just a dev fallback —
       # app-spec/persistence.md. The `test` target above already ran the api suite once, but on
