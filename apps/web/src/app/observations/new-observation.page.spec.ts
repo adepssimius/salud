@@ -317,11 +317,12 @@ describe('NewObservationPage', () => {
 
   // frontend.md → Quick Log: each verb lands in this same form with the type pre-selected.
   describe('quick-log handoff', () => {
-    function renderCompact(entryType: string) {
+    function renderCompact(entryType: string, extraParams: Record<string, string> = {}) {
       routeMock.snapshot.queryParamMap = new Map([
         ['patientId', 'p1'],
         ['entryType', entryType],
         ['compact', '1'],
+        ...Object.entries(extraParams),
       ]);
       apiMock.get.mockImplementation((path: string) => {
         if (path.includes('/episodes')) return of([]);
@@ -354,6 +355,18 @@ describe('NewObservationPage', () => {
     it('ignores an entryType it does not offer as a verb', () => {
       const fixture = renderCompact('lab_result');
       expect(fixture.componentInstance.lockedEntryType()).toBeNull();
+    });
+
+    // Home's Temp quick action passes the patient's habitual method
+    // (api.md → GET /api/dashboard → recentTemperatures.lastMethod).
+    it('seeds the temperature method from the ?method param', () => {
+      const fixture = renderCompact('temperature', { method: 'tympanic' });
+      expect(fixture.componentInstance.initialTempMethod()).toBe('tympanic');
+    });
+
+    it('ignores a method that is not in the enum, and never prefills unknown', () => {
+      expect(renderCompact('temperature', { method: 'telepathy' }).componentInstance.initialTempMethod()).toBeNull();
+      expect(renderCompact('temperature', { method: 'unknown' }).componentInstance.initialTempMethod()).toBeNull();
     });
   });
 });

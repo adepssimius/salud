@@ -609,10 +609,14 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     model"); the most common dose of all is the 3 AM one logged with no episode at all, and it must
     still reach the dashboard.
   - Response includes:
-    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose } ] } ]`
+    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl } ] } ]`
       — the most recent dose of each distinct medication **in the last 24 hours**, per patient,
       **episode-agnostic**. This is the direct answer to product.md's founding question ("did I
       already give Tylenol?").
+      - The `last*` fields mirror `GET .../recent-medications` and exist for the sick card's
+        one-tap repeat-dose prefill (frontend.md → Home): they are read from the same dose
+        metadata this row is already built from, so Home stays a single request. Each is `null`
+        when the dose's metadata lacks it.
       - **One entry per accessible patient, always — including patients with `doses: []`.** The
         empty array is the answer, not the absence of one; the client renders it as an explicit
         "nothing given in the last 24 hours" rather than omitting the patient. Do not "optimize"
@@ -646,9 +650,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - The card and the WYWA page are computed at two different request times, so an event landing
         between them can legitimately make the card say 3 and the page show 4. That is staleness, not
         a defect — the definitions are shared in code precisely so a genuine mismatch can't happen.
-    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
+    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl }] } ]`
       — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
-      episode", which the patient-scoped 24h `lastDoses` above deliberately does not.
+      episode", which the patient-scoped 24h `lastDoses` above deliberately does not. The `last*`
+      fields match `lastDoses[].doses` above, same source and same purpose — the sick card merges
+      the two arrays and either can win the merge, so both must carry the prefill.
     - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean } ]`
     - `shoppingList`: `[ { embodimentId, medicationId, medicationName, label, runningLowFlaggedAt } ]`
       — embodiments across all the caregiver's patients' shared catalog currently flagged
@@ -667,13 +673,20 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       Home, which is exactly the fan-out this endpoint's single-request rule exists to prevent.
       `recentTemperatures` deliberately does *not* carry it: it is keyed by `patientId` and
       consumed inside a card that already has the token.
-    - `recentTemperatures`: `[ { patientId, points: [ { timestamp, valueC } ] } ]` — the last 48
-      hours of temperature entries, one row **only for patients with at least one active episode**
-      (quiet patients render no sparkline, so their rows would be dead weight). Values are
-      canonical °C; the client converts to the viewer's preferred unit at read time like every
-      other consumer. Exists so the bimodal Home's sick cards (frontend.md → "Information
-      architecture (v2)" → Home) render from the one dashboard request instead of fanning out a
-      timeline query per sick patient.
+    - `recentTemperatures`: `[ { patientId, lastMethod, points: [ { timestamp, valueC } ] } ]` —
+      the last 48 hours of temperature entries, one row **only for patients with at least one
+      active episode** (quiet patients render no sparkline, so their rows would be dead weight).
+      Values are canonical °C; the client converts to the viewer's preferred unit at read time
+      like every other consumer. Exists so the bimodal Home's sick cards (frontend.md →
+      "Information architecture (v2)" → Home) render from the one dashboard request instead of
+      fanning out a timeline query per sick patient.
+      - `lastMethod` is the method of this patient's most recent temperature entry whose method is
+        known — `'unknown'` entries are skipped, and the lookup deliberately ignores both the 48h
+        window and episode boundaries, because the measurement method is a per-patient habit
+        (tympanic for one child, rectal for the baby), not an episode property. `null` when no
+        entry with a known method exists (bounded lookback — see the service). It seeds the Temp
+        quick action's method select (frontend.md → Home); the select stays editable, so this is
+        a prefill, never an assertion.
     - `temperatureRanges`: `[ { patientId, ranges: ResolvedRange[] } ]` — the patient's temperature
       bands (data-model.md → AnalyteRange, on the seeded `temperature` vital), one row per lineage
       resolved to now, reference first. Same patient set and same reason as `recentTemperatures`:

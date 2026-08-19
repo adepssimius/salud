@@ -7,7 +7,7 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relative-time';
 import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { DashboardPayload, DashboardTemperaturePoint, PatientAccentColor } from '@salud/shared/types';
+import { DashboardPayload, DashboardTemperaturePoint, PatientAccentColor, TemperatureMethod } from '@salud/shared/types';
 import { DisplayBand, PlottedBand, bandedDomain, describeBand, plotBands, toDisplayBands } from '../core/value-bands';
 
 // The sparkline canvas. Small on purpose: it is a glance at the shape of the last two nights, not
@@ -29,6 +29,11 @@ interface SickMedication {
   lastDoseAt: number;
   nextAllowedAt: number | null;
   isAtypicalLastDose: boolean;
+  /** The repeat-dose prefill, carried by both payload arrays (api.md → GET /api/dashboard). */
+  lastEmbodimentId: string | null;
+  lastEmbodimentLabel: string | null;
+  lastAmountMg: number | null;
+  lastAmountMl: number | null;
 }
 
 interface SickEpisode {
@@ -60,6 +65,8 @@ interface SickCard {
   scaleLow: number | null;
   /** The soonest moment this patient needs something done — the card sort key. `null` sorts last. */
   nextActionableAt: number | null;
+  /** Seeds the Temp quick action's method select — a per-patient habit, editable on the form. */
+  lastTempMethod: TemperatureMethod | null;
 }
 
 @Component({
@@ -134,6 +141,12 @@ interface SickCard {
                 <span class="med-name">{{ m.medicationName }}</span>
                 <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
                 <span class="ago">last dose {{ ago(m.lastDoseAt) }}</span>
+                <!-- "Same as last time", labeled with exactly what it will prefill — at 3 AM the
+                     button has to say what it is going to do. One button per active medication:
+                     the tylenol+ibuprofen alternation is the design case (frontend.md → Home). -->
+                <button type="button" class="secondary small" (click)="repeatDose(c.patientId, m)">
+                  ↻ {{ repeatLabel(m) }}
+                </button>
               </div>
             </div>
 
@@ -190,7 +203,7 @@ interface SickCard {
             </p>
 
             <div class="quick-actions">
-              <button type="button" class="secondary small" (click)="quickTemp(c.patientId)">Temp</button>
+              <button type="button" class="secondary small" (click)="quickTemp(c)">Temp</button>
               <button type="button" class="secondary small" (click)="quickDose(c.patientId)">Dose</button>
             </div>
           </li>
@@ -520,6 +533,7 @@ export class DashboardPage implements OnInit {
           scaleHigh: null,
           scaleLow: null,
           nextActionableAt: null,
+          lastTempMethod: null,
         } as SickCard);
       card.episodes.push({
         episodeId: ep.episodeId,
@@ -555,6 +569,7 @@ export class DashboardPage implements OnInit {
     }
 
     const temperaturesByPatient = new Map(payload.recentTemperatures?.map((r) => [r.patientId, r.points]) ?? []);
+    const methodByPatient = new Map(payload.recentTemperatures?.map((r) => [r.patientId, r.lastMethod]) ?? []);
     const bandsByPatient = new Map(payload.temperatureRanges?.map((r) => [r.patientId, r.ranges]) ?? []);
     const displayUnit = unitsFor(this.auth.user()).temp;
 
@@ -584,6 +599,7 @@ export class DashboardPage implements OnInit {
       card.bands = drawn.bands;
       card.scaleHigh = drawn.domain ? round1(drawn.domain.hi) : null;
       card.scaleLow = drawn.domain ? round1(drawn.domain.lo) : null;
+      card.lastTempMethod = methodByPatient.get(card.patientId) ?? null;
     }
 
     // The top of the screen is the next thing to do — a "can give now" (a next-allowed already
@@ -709,16 +725,59 @@ export class DashboardPage implements OnInit {
     this.router.navigate(['/interventions/new']);
   }
 
-  // Patient-scoped quick actions off a sick card. The observation form already honours
-  // `?patientId=`; the intervention form does not read it yet (that file belongs to the entry-form
-  // track), so a Dose lands on the form with its own patient select for the caregiver to confirm —
-  // the same as today's unscoped "Log intervention" button, and correct the moment the param lands.
-  quickTemp(patientId: string) {
-    this.router.navigate(['/observations/new'], { queryParams: { patientId } });
+  // Patient-scoped quick actions off a sick card, handing off to the same compact entry forms
+  // Quick Log's verbs use — one form codepath, no parallel implementation (frontend.md → Quick Log).
+
+  /**
+   * One tap to the number: the compact temperature form, with the method preselected from this
+   * patient's own last known-method reading (`lastMethod` on the payload's `recentTemperatures`).
+   * The select stays on the form and editable — a prefill, never an assertion.
+   */
+  quickTemp(card: SickCard) {
+    const queryParams: Record<string, string> = {
+      patientId: card.patientId,
+      entryType: 'temperature',
+      compact: '1',
+    };
+    if (card.lastTempMethod) queryParams['method'] = card.lastTempMethod;
+    this.router.navigate(['/observations/new'], { queryParams });
   }
 
   quickDose(patientId: string) {
-    this.router.navigate(['/interventions/new'], { queryParams: { patientId } });
+    this.router.navigate(['/interventions/new'], {
+      queryParams: { patientId, type: 'medication_dose', compact: '1' },
+    });
+  }
+
+  /**
+   * "Same as last time" from the card — the exact prefill contract Quick Log's recents cards hand
+   * the dose form (quick-log-sheet.component.ts → chooseRecent). A prefill and nothing more:
+   * dose-checks still run there, guidance cards still render, advisory banners and the danger
+   * interstitial still fire, and the caregiver still reviews before "Save for ⟨name⟩".
+   *
+   * Per-patient by construction: the medication row lives inside this patient's card, so a
+   * sibling's dose can never seed it (frontend.md → "Patient identity").
+   */
+  repeatDose(patientId: string, m: SickMedication) {
+    const queryParams: Record<string, string> = {
+      patientId,
+      type: 'medication_dose',
+      compact: '1',
+      medicationId: m.medicationId,
+    };
+    if (m.lastEmbodimentId) queryParams['embodimentId'] = m.lastEmbodimentId;
+    if (m.lastAmountMg != null) queryParams['amountMg'] = String(m.lastAmountMg);
+    if (m.lastAmountMl != null) queryParams['amountMl'] = String(m.lastAmountMl);
+    this.router.navigate(['/interventions/new'], { queryParams });
+  }
+
+  /** The button says what it will prefill — "160 mg · Children's syrup" — or falls back to words. */
+  repeatLabel(m: SickMedication): string {
+    const parts: string[] = [];
+    if (m.lastAmountMg != null) parts.push(`${m.lastAmountMg} mg`);
+    if (m.lastAmountMl != null) parts.push(`${m.lastAmountMl} mL`);
+    if (m.lastEmbodimentLabel) parts.push(m.lastEmbodimentLabel);
+    return parts.length ? parts.join(' · ') : 'Repeat dose';
   }
 
   goToSchedule(scheduleId: string) {
