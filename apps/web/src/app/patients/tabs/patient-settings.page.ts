@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { FormsModule } from '@angular/forms';
-import { Patient, UpdateCodeStatusDto, UpdatePatientDto } from '@salud/shared/types';
+import { Patient, PatientAccentColor, UpdateCodeStatusDto, UpdatePatientDto } from '@salud/shared/types';
 import { ApiClientService } from '../../core/api-client.service';
 import { AuthService } from '../../core/auth.service';
 import { errorText } from '../../core/error-display';
@@ -19,6 +19,26 @@ import { PatientHubStore } from '../patient-hub.store';
  * v2). Reactions, conditions and the care team, which used to share this page, now live on the
  * tabs where they are acted on.
  */
+/**
+ * Token -> the name a caregiver reads.
+ *
+ * A Record over the union is exhaustive in both directions, so adding a color to
+ * PatientAccentColor fails this build until it is named here — which is the closest the web can get
+ * to the compile-time guard the server has around PATIENT_ACCENT_COLORS
+ * (apps/api/src/app/patients/accent-colors.ts). The label is also the swatch's accessible name: a
+ * colored square has no text of its own. Order matches the server's palette order.
+ */
+const ACCENT_LABELS: Record<PatientAccentColor, string> = {
+  teal: 'Teal',
+  amber: 'Amber',
+  violet: 'Violet',
+  rose: 'Rose',
+  lime: 'Lime',
+  sky: 'Sky',
+  fuchsia: 'Fuchsia',
+  indigo: 'Indigo',
+};
+
 @Component({
   selector: 'app-patient-settings-page',
   standalone: true,
@@ -63,6 +83,32 @@ import { PatientHubStore } from '../patient-hub.store';
                 <option value="male">Male</option>
               </select>
             </label>
+          </div>
+
+          <!-- Full width rather than a fourth grid column: eight swatches don't fit a 220px cell,
+               and this is identity, not a demographic detail. The color is what the header, the
+               patient list and Home's sick cards use to say whose record is open (frontend.md ->
+               "Patient identity"), so it is worth its own row. -->
+          <div class="field">
+            <span>Color</span>
+            <div class="swatches" role="group" aria-label="Patient color">
+              <button
+                *ngFor="let option of accentOptions"
+                type="button"
+                class="swatch"
+                [ngClass]="'accent-' + option.token"
+                [attr.aria-pressed]="isAccentSelected(option.token)"
+                (click)="selectAccent(option.token)"
+              >
+                <span class="accent-dot"></span>
+                <!-- The name is written out, not left to the disc: a swatch that only differs by
+                     color has no accessible name and nothing to say to a color-blind caregiver. -->
+                <span>{{ option.label }}</span>
+                <!-- A glyph as well as the tinted border, so selection survives the color being
+                     ignored. aria-hidden — aria-pressed already says this to a screen reader. -->
+                <span *ngIf="isAccentSelected(option.token)" aria-hidden="true">✓</span>
+              </button>
+            </div>
           </div>
 
           <label class="field">
@@ -151,6 +197,39 @@ import { PatientHubStore } from '../patient-hub.store';
         display: flex;
         gap: 0.5rem;
       }
+      .swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+      /* Shaped like the journal's filter chips, but tinted from --patient-accent — which the
+         accent-<token> class on the button already carries, so no hex belongs here. The palette
+         lives in styles.css and nowhere else. */
+      .swatch {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.65rem;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--border-strong);
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      /* Keyed off the ARIA state rather than a parallel class, so what is announced and what is
+         drawn cannot drift apart. The var() fallbacks leave an unknown token a neutral chip, the
+         same way the global palette block degrades. */
+      .swatch[aria-pressed='true'] {
+        background: var(--patient-accent-bg, var(--accent-bg));
+        border-color: var(--patient-accent, var(--accent-border));
+      }
+      /* The global focus ring is scoped to input/select/textarea and never reaches a button. */
+      .swatch:focus-visible {
+        outline: 2px solid var(--accent-focus);
+        outline-offset: 2px;
+      }
     `,
   ],
 })
@@ -174,7 +253,16 @@ export class PatientSettingsPage {
     dateOfBirth: ['', [Validators.required]],
     sexAtBirth: this.fb.control<'female' | 'male'>('female', { nonNullable: true }),
     notes: [''],
+    // '' is "not hydrated yet" — it matches no palette class, so nothing reads as selected before
+    // the patient lands, and savePatient() drops it rather than sending a token the API would 400.
+    accentColor: this.fb.control<PatientAccentColor | ''>('', { nonNullable: true }),
   });
+
+  // Derived in TS rather than iterating the Record through `keyvalue` in the template — that pipe
+  // sorts alphabetically, which would scramble the palette into amber, fuchsia, indigo, lime, …
+  protected readonly accentOptions = (Object.keys(ACCENT_LABELS) as PatientAccentColor[]).map(
+    (token) => ({ token, label: ACCENT_LABELS[token] }),
+  );
 
   private currentUserId = computed(() => this.auth.user()?.id ?? null);
 
@@ -221,14 +309,32 @@ export class PatientSettingsPage {
       dateOfBirth: p.dateOfBirth,
       sexAtBirth: p.sexAtBirth,
       notes: p.notes ?? '',
+      accentColor: p.accentColor ?? '',
     });
+  }
+
+  /**
+   * markAsDirty is load-bearing: setValue on its own leaves the form pristine, and the constructor
+   * effect re-patches a pristine form from the store — so without it the next store emission would
+   * silently undo the caregiver's pick.
+   */
+  selectAccent(token: PatientAccentColor) {
+    const control = this.form.controls.accentColor;
+    if (control.value === token) return;
+    control.setValue(token);
+    control.markAsDirty();
+  }
+
+  protected isAccentSelected(token: PatientAccentColor) {
+    return this.form.controls.accentColor.value === token;
   }
 
   savePatient() {
     if (!this.currentUserId() || this.form.invalid) return;
     this.savingPatient.set(true);
     this.saveMessage.set(null);
-    const dto: UpdatePatientDto = { ...this.form.getRawValue() };
+    const { accentColor, ...rest } = this.form.getRawValue();
+    const dto: UpdatePatientDto = { ...rest, ...(accentColor ? { accentColor } : {}) };
     this.api.patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, dto).subscribe({
       next: (p) => {
         this.store.patient.set(p);

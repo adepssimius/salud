@@ -189,7 +189,7 @@ interface SickCard {
         <h2>While you were asleep</h2>
         <ul class="schedule-list">
           <li *ngFor="let w of whatsNewSummaries()" [ngClass]="accentClass(w.accentColor)">
-            <button type="button" class="row-link" (click)="goToWhatsNew(w.patientId)">
+            <button type="button" class="row-link" (click)="goToJournal(w.patientId)">
               <div class="row-main">
                 <strong><span class="accent-dot"></span>{{ w.patientName }}</strong>
               </div>
@@ -598,8 +598,11 @@ export class DashboardPage implements OnInit {
     }));
   }
 
-  goToWhatsNew(patientId: string) {
-    this.router.navigate(['/patients', patientId, 'whats-new']);
+  // The since-you-last-looked marker lives inside the journal feed now, so a summary row deep-links
+  // to the narrative rather than to a separate briefing page (frontend.md → "Information
+  // architecture (v2)" → Journal). The row's own rendering — accent colour included — is unchanged.
+  goToJournal(patientId: string) {
+    this.router.navigate(['/patients', patientId, 'journal']);
   }
 
   goToNewObservation() {

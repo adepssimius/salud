@@ -12,6 +12,7 @@ import {
   observationEntries,
   observations,
   patients,
+  users,
 } from '../../db/schema';
 import { PatientsService } from '../patients/patients.service';
 import { ObservationsService } from '../observations/observations.service';
@@ -27,7 +28,7 @@ import {
 } from '../whats-new/whats-new-window';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
-import { PatientAccentColor } from '@salud/shared/types';
+import { PatientAccentColor, TimelineRecordedBy } from '@salud/shared/types';
 
 const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
@@ -88,7 +89,16 @@ export class TimelineService {
     const patient = await this.patientsService.get(patientId, userId);
     const db = this.db.db as any;
 
-    const entries: Array<{ id: string; kind: string; type: string; timestamp: number; display: any }> = [];
+    // recordedByUserId is scratch: it is resolved to `recordedBy` in one query below and never
+    // leaves this method, so the feed gets names without the client fanning out to map ids.
+    const entries: Array<{
+      id: string;
+      kind: string;
+      type: string;
+      timestamp: number;
+      recordedByUserId: string | null;
+      display: any;
+    }> = [];
 
     if (params.includeObservations !== false) {
       const obs = await this.observationsService.list(patientId, userId, {
@@ -103,6 +113,7 @@ export class TimelineService {
           kind: 'observation',
           type: o.entries.map((e: any) => e.type).join(',') || 'observation',
           timestamp: o.observedAt,
+          recordedByUserId: o.recordedByUserId ?? null,
           display: o,
         });
       }
@@ -129,6 +140,7 @@ export class TimelineService {
           kind: 'intervention',
           type: i.type,
           timestamp: i.performedAt,
+          recordedByUserId: i.recordedByUserId ?? null,
           display: i,
         });
       }
@@ -152,6 +164,9 @@ export class TimelineService {
         kind: 'advisory',
         type: a.type,
         timestamp: ts,
+        // Advisories fire from the engine, not from a caregiver — the table has no author column
+        // (see resolveRecordedBy). `null` is the honest answer, not a lookup that failed.
+        recordedByUserId: null,
         display: {
           id: a.id,
           patientId: a.patientId,
@@ -172,19 +187,47 @@ export class TimelineService {
 
     entries.sort((a, b) => b.timestamp - a.timestamp);
 
+    const namesById = await this.resolveRecordedBy(entries.map((e) => e.recordedByUserId));
+
     const weightRecordedAt = normalizeTs((patient as any).latestWeightRecordedAt);
     const nowTs = Math.floor(Date.now() / 1000);
     const daysSince = weightRecordedAt != null ? Math.floor((nowTs - weightRecordedAt) / 86400) : null;
 
     return {
       patient,
-      entries,
+      entries: entries.map(({ recordedByUserId, ...entry }) => ({
+        ...entry,
+        recordedBy: recordedByUserId ? (namesById.get(recordedByUserId) ?? null) : null,
+      })),
       weightPrompt: {
         needsUpdate: weightRecordedAt === null || (daysSince ?? 0) > STALE_WEIGHT_DAYS,
         lastRecordedAt: weightRecordedAt,
         daysSince,
       },
     };
+  }
+
+  /**
+   * Names for the users who recorded a page of timeline entries (api.md → Timeline & dashboard).
+   *
+   * **Read from `users`, never through `care_team_memberships`.** Attribution outlives membership
+   * (product.md → P3): a caregiver removed from the care team keeps their name on every row they
+   * wrote, because "who gave that dose" stays true regardless of who is on the team today. Joining
+   * the membership table would blank exactly those rows — and the handoff log a household most
+   * needs to trust is the one written by the person who has since left.
+   *
+   * One `inArray` for the whole page, deduplicated first: a night's feed is typically two authors
+   * across fifty rows, and a per-row lookup is the fan-out this field exists to prevent.
+   */
+  private async resolveRecordedBy(userIds: Array<string | null>): Promise<Map<string, TimelineRecordedBy>> {
+    const ids = Array.from(new Set(userIds.filter((id): id is string => !!id)));
+    if (!ids.length) return new Map();
+    const db = this.db.db as any;
+    const rows = await db
+      .select({ id: users.id, displayName: users.displayName })
+      .from(users)
+      .where(inArray(users.id, ids));
+    return new Map(rows.map((r: any) => [r.id, { id: r.id, displayName: r.displayName }]));
   }
 
   // lastSeenAt rides along free: this already reads the caller's care_team_memberships rows, and the

@@ -7,10 +7,29 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 **Status: partly built.** Shipped: the `/patients` list, the hub shell and its persistent header,
 the Journal / Meds / History / Share / Settings tabs, per-patient `accentColor` (server-assigned,
 carried on the hub header, the list rows and every patient-naming surface on Home), the bimodal
-Home with its night board, and `/manage` (reached from the avatar menu) holding the catalogs and
-"New schedule". Still proposed: the `now` tab, Quick Log, the journal feed (the Journal tab
-renders today's chart), and the bottom-bar/left-rail shell. Until `now` exists, `/patients/:id`
-redirects to `journal` for every patient, sick or quiet.
+Home with its night board, `/manage` (reached from the avatar menu) holding the catalogs and
+"New schedule", Quick Log, the bottom-bar/left-rail shell, and **the journal feed** — the
+attributed chronological feed, its collapsible chart header, episode dividers, and the
+since-you-last-looked marker that replaced the dedicated What's-New page (the route now redirects
+to the journal). Still proposed: the `now` tab. Until it exists, `/patients/:id` redirects to
+`journal` for every patient, sick or quiet.
+
+Three notes on what the journal shipped as, where the "Journal" section below leaves a choice open:
+
+- **An advisory row carries no name.** `recordedBy` is `null` for advisories — the table has no
+  author column, and the engine, not a caregiver, fires them (api.md → Timeline & dashboard). The
+  feed labels those rows as the app's own rather than borrowing the name of whoever's write
+  triggered the firing, which would attribute a judgment the app made to a person (P6).
+- **The marker sits below the *oldest* unseen row, not above the newest.** "Unseen" is decided on
+  log time, the same column the ack watermark selects on, while the feed is ordered by clinical
+  time — so a 2 AM entry written up at 6 AM is new but sits among rows already read. Putting the
+  line under the last unseen row is what makes "read down to the line" cover everything new; the
+  unseen rows themselves carry a tint so the interleaving is legible without the reader
+  reconciling two clocks.
+- **One episode divider per frame per day**, each labelled with that day's number ("— Fever, day
+  3 —" over Wednesday's rows, "day 2" over Tuesday's). One marker per frame would have to pick a
+  single day number for a stretch spanning several, and would leave the earlier days of a long
+  illness looking unframed.
 
 Two notes on what shipped, where the section below leaves a choice open:
 
@@ -504,14 +523,17 @@ fetched through the token file route. There is no live supersession check anywhe
 unconditional by design (er-brief.md → Formats).
 
 ## While You Were Asleep
-> v2 supersedes the dedicated page with the Journal's since-you-last-looked marker
-> ("Information architecture (v2)" → Journal); the ack semantics and dashboard-count rules below
-> carry over.
-- `whats-new.page.ts` (per patient, entry point from the dashboard card): renders the diff — events
-  since the watermark, advisories fired, and what's due right now — then an explicit "Mark as seen"
-  action calls `POST .../whats-new/ack`. Loading the page does **not** ack; only the button does,
-  so a caregiver who opens it, gets pulled away, and closes the tab hasn't silently consumed the
-  briefing.
+> **Superseded and removed.** The dedicated page is gone; the diff is read as the Journal's
+> since-you-last-looked marker ("Information architecture (v2)" → Journal), and
+> `/patients/:id/whats-new` redirects there for old bookmarks. The ack semantics and
+> dashboard-count rules below carry over unchanged.
+- The watermark and the ack: the marker renders the boundary — events since the watermark sit above
+  it — and an explicit "Mark as seen" action calls `POST .../whats-new/ack`. Opening the journal
+  does **not** ack, and neither does scrolling past the line; only the button does, so a caregiver
+  who opens it, gets pulled away, and closes the tab hasn't silently consumed the briefing.
+- `GET .../whats-new` stays the journal's source for `since`. Only that field is read now — the
+  feed already has the events — but the number has to come from the endpoint that defines the
+  boundary the ack resets, or the line and the button end up disagreeing about what "seen" meant.
 - Dashboard card: reads the `whatsNew` counts already on `GET /api/dashboard` — it does **not** call
   `GET .../whats-new` itself. The per-patient endpoint stays the *page's* data source, where the full
   hydrated diff is actually rendered; the card only ever needed three integers, and fanning out for
