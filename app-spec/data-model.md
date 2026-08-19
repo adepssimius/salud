@@ -387,6 +387,49 @@ became catalog rows (above) instead of a second table.
   legitimately contains a goal; adjudicating which arrangements are sensible is clinical judgment
   the app doesn't have.
 
+#### ChartOverlayDefault
+
+Which dose markers a metric's chart shows **by default**. One row says "doses of medications tagged
+`antipyretic` show on the `temperature` chart unless the reader says otherwise" — and deliberately
+nothing more. This is presentation config, not clinical knowledge: the app never records that
+antipyretics *affect* temperature, only that the household wants the two visible together. The
+marker itself stays presence-only under the existing no-annotation rule (frontend.md → Timeline);
+what this table adds is merely which markers appear *first*. Framing it as a display default rather
+than a relationship is what keeps it P6-safe — a default can't later be "improved" into a
+responsiveness score, because it never asserted a relationship to begin with — and it makes
+disagreement cheap: removing a row is decluttering a chart, not editing medicine.
+
+Household-global like the catalogs it points into (P4): caregivers share one narrative, so they
+share one chart. Deliberately **not** per-patient or per-user, and deliberately **not** a property
+of any dose or observation instance — a rule about the *class* applies retroactively to every
+historical dose the moment it exists, needs no backfill, and costs nothing at the 3 AM write. The
+instance-level "this dose was given because of this reading" association already has a home:
+episodes.
+
+- `id: uuid`
+- `analyteId: uuid` — the metric whose chart this row configures: a seeded vital or a lab analyte
+  alike (a vital *is* an analyte row), so one mechanism serves the fever chart and a ferritin
+  history chart without a vital-specific table.
+- `kind: enum('medication_tag')` — what `value` names. The shape deliberately admits more kinds —
+  `'intervention_type'` (e.g. dressing changes on a lesion-size chart) is the anticipated second —
+  but **only `medication_tag` ships in Phase 1**; the enum widens when a second kind earns its
+  render rule.
+- `value: string` (≤ 120) — the medication tag, matched against `Medication.tags` **exactly**, the
+  same rule as `GET .../timeline?medicationTag=`. A value no medication currently carries is not an
+  error: it matches nothing, shows nothing, and starts working the day a medication gains the tag.
+  Conversely, retagging a medication re-classifies its past doses on every chart at once — that
+  retroactivity is the point of config-over-instance-data.
+- `createdAt`, `updatedAt`
+- Unique on (`analyteId`, `kind`, `value`). The API edits a metric's defaults **whole**
+  (api.md → "Chart overlay defaults"), so duplicates collapse rather than conflict.
+- **Seeded by `yarn seed:catalog`**, beside the starter medications whose tags it references:
+  `temperature → antipyretic` and `pain_score → analgesic`. Same lifecycle as every other seed:
+  idempotent, never a boot-time write, and a delete is permanent — nothing automatic re-seeds it,
+  so removing a default is a decision that sticks (the seeded-temperature-range rule).
+- Deleting an analyte deletes its overlay defaults with it — rows about a chart have no independent
+  referents (the same divergence from block-on-own-children that ranges get). Vital rows are never
+  deletable, so the seeded pair can only ever be removed deliberately, one row at a time.
+
 ### Intervention (base)
 - `id: uuid`
 - `patientId: uuid`

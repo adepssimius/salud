@@ -529,6 +529,18 @@ app. They therefore need somewhere to be entered.
   with medication dose markers overlaid at their `performedAt` positions (F-5.2). The overlay is
   the raw series only: **no computed "responsive to X" annotation** ever renders on or near a dose
   marker — the reader draws that conclusion, not the app (P6).
+- **Which dose markers show first is a configured default, not a judgment** (data-model.md →
+  ChartOverlayDefault): the chart opens showing doses whose medication carries one of the metric's
+  defaulted tags — out of the box, antipyretics on the temperature chart — with a legend naming the
+  tag ("▲ antipyretic dose") and each marker's tooltip naming the medication, amount and time. Copy
+  stays in display terms ("shown by default on this chart"), never relational ("affects", "related
+  to"): the app is saying *you probably want these visible together*, nothing more, and the
+  no-annotation rule above is unchanged. The filter chips remain the override in both directions —
+  chip-picking a medication or tag replaces the default selection, and an explicit "all doses"
+  affordance widens back to the full series, which the payload always carries. The default selects
+  **chart markers only**: the feed is the narrative and always shows every event; only the explicit
+  chips filter chart and feed together. A metric with no defaults opens with no markers until the
+  reader asks, and the Home sparkline stays marker-free regardless — too small to read them.
 - Carries the same **scale labels and temperature bands** as the Home sparkline, on the same rules
   (bands come from the patient's `AnalyteRange` rows on the seeded `temperature` vital; band bounds
   join the y-domain so a band is never clipped; no bands recorded means no shading). The glance
@@ -730,6 +742,13 @@ unconditional by design (er-brief.md → Formats).
 - **Detail**, one section each:
   - **Header** — editable `displayName`, `unit` and `panel`; the verbatim `name` shown muted and
     read-only alongside, since it is what incoming reports match against.
+  - **Chart defaults** — household-global like the header, so it sits above the patient picker:
+    the medication tags whose doses this metric's chart shows by default (api.md → "Chart overlay
+    defaults"), edited whole as a small tag list. Labeled in display terms — "Doses shown on this
+    chart by default" — with no relational language anywhere in the section (P6): this is a viewing
+    convenience the household owns, not a statement about medicine. Out of the box only the seeded
+    pair exists (temperature → antipyretic, pain_score → analgesic); removing an entry is permanent
+    (nothing automatic re-seeds it), and an empty list is a valid, respected choice.
   - **Patient picker** — everything below it is scoped to the selected patient. Switching patients
     reloads the ranges and the history together, because both belong to that person.
   - **Ranges** — this patient's named ranges, grouped by lineage (label), each lineage's rows dated
@@ -745,7 +764,9 @@ unconditional by design (er-brief.md → Formats).
     band per range lineage, clipped to each row's effective span, plus the value series with
     per-point tooltips. Non-numeric values (`"<0.2"`) are listed below the chart rather than
     plotted. If the series mixes units, the chart says so instead of co-plotting incomparable
-    numbers.
+    numbers. When the metric carries chart defaults, the response's `doses` render as dose markers
+    under the same rules as the journal chart — legend naming the tag, tooltip naming the
+    medication, amount and time, presence only, no effect annotation (P6).
 - Interpretation bands ("Deficiency below 20") are **entered by hand**, never read out of the
   report's advice text — the parser surfaces those lines as import warnings and the caregiver
   decides what to record (P6).

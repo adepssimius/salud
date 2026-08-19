@@ -359,6 +359,14 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
 - `GET /api/patients/:patientId/interventions`
   - Filters: `type`, `medicationId`, `tag`, `episodeId`, `from`, `to`.
 - `GET /api/interventions/:interventionId`
+  - A `medication_dose` response is enriched with read-only `medicationTags: string[]` — the
+    medication's **current** `tags`, resolved at read time and never stored on the intervention
+    (the `labContext` pattern: classification belongs to the catalog and is attached when read).
+    Present wherever the full intervention object is returned, the timeline's `display` included —
+    which is how a chart decides whether a dose matches a chart overlay default
+    (data-model.md → ChartOverlayDefault) without a per-dose catalog lookup. Current tags,
+    deliberately: retagging a medication re-classifies its past doses everywhere at once. Never
+    accepted on write.
 - `PATCH /api/interventions/:interventionId`
   - Allow updates with re-validation of atypical logic.
 
@@ -580,7 +588,8 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       "temperatureRanges": [
         { "id": "...", "kind": "reference", "label": "Normal", "low": 36.1, "high": 37.2,
           "refText": null, "effectiveFrom": 0 }
-      ]
+      ],
+      "temperatureOverlayTags": ["antipyretic"]
     }
     ```
     `temperatureRanges` carries this patient's temperature bands (data-model.md → AnalyteRange, on
@@ -588,6 +597,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     °C. It rides along for the same reason the dashboard's copy does: the journal's chart draws its
     curve against these, and fetching them otherwise means resolving the vital's analyte id and then
     its ranges — two round trips to draw one chart. Empty when the household has recorded none.
+    `temperatureOverlayTags` rides along for the same one-request reason: the household's chart
+    overlay defaults for the `temperature` vital (data-model.md → ChartOverlayDefault), reduced to
+    their tag strings — which dose markers the journal chart shows by default. A display default
+    only, never a claim that the doses relate to the readings (P6); empty when the household has
+    cleared the defaults, in which case the chart opens with no markers until the reader filters.
     `display` is the same object `GET .../observations/:id` / `.../interventions/:id` / the
     advisories list already return — no separate summarization shape to keep in sync (P6: the
     timeline presents raw data, never a derived summary).
@@ -1082,7 +1096,8 @@ from the importer's paths so a printed "TEMPERATURE" line can never bind onto on
   availability (renaming to its own current name is a no-op, not a conflict).
 - `DELETE /api/analytes/:id` — 409 `ANALYTE_IN_USE` with `{ dependents: { labResults: n } }` when
   any `lab_result` entry references it. Otherwise deletes the analyte together with every patient's
-  ranges for it (data-model.md explains the divergence from the medication catalog). A seeded vital
+  ranges for it **and its chart overlay defaults** (data-model.md explains the divergence from the
+  medication catalog: neither ranges nor overlay rows have independent referents). A seeded vital
   row is **never** deletable — 409 `ANALYTE_IS_VITAL`, checked before the dependency count, which
   for a vital is structurally zero and would otherwise green-light deleting every patient's bands.
 - `POST /api/analytes` and `PATCH /api/analytes/:id` do not accept `vitalMetric`; it is set by
@@ -1123,8 +1138,35 @@ patient. Rows sharing (patient, analyte, `kind`, case-insensitive `label`) form 
 - `GET /api/patients/:patientId/analytes/:analyteId/history` — everything the history view needs in
   one request: `{ analyte, ranges: AnalyteRange[] (ascending by effectiveFrom), points: [{ observationId, observedAt, valueText, value, unit, flag }] (ascending) }`.
   Points come from this patient's `lab_result` entries naming the analyte.
+  When the analyte carries chart overlay defaults (below), the response also carries
+  `doses: [{ interventionId, performedAt, medicationId, medicationName, amountMg, medicationTags }]`
+  (ascending) — this patient's `medication_dose` interventions whose medication matches a defaulted
+  tag, so the history chart can draw its default markers without a timeline fan-out. Presence data
+  only, never an effect annotation (P6); `[]` when the analyte has no defaults or nothing matches.
 - All range and history routes are patient-scoped and answer 404 `PATIENT_NOT_FOUND` to a
   non-member; the analyte routes themselves are household-global and need only authentication.
+
+### Chart overlay defaults
+
+Which dose markers a metric's chart shows by default (data-model.md → ChartOverlayDefault). Display
+config, not a recorded relationship: a row means "show antipyretic doses on the temperature chart
+unless the reader filters otherwise", never "antipyretics affect temperature". Household-global
+like the analyte catalog itself — authenticated only, no patient scoping.
+
+- `GET /api/analytes/:analyteId/chart-defaults` — `{ overlays: [{ id, kind, value }] }`, `kind`
+  currently always `medication_tag`. 404 `ANALYTE_NOT_FOUND`. Works identically on a vital and a
+  lab analyte.
+- `PUT /api/analytes/:analyteId/chart-defaults` — `{ overlays: [{ kind, value }] }`, edited
+  **whole** (the `patients.devices` shape): the submitted list replaces the stored one, duplicate
+  (`kind`, `value`) pairs collapse to one row, and an empty list clears the metric's defaults —
+  which is how a household opts a chart out entirely. Returns the `GET` shape. `kind` accepts only
+  `'medication_tag'` in Phase 1 (DTO-validated, array-form 400); `value` is free text ≤ 120 — a tag
+  no medication carries is accepted and simply matches nothing.
+- No new error codes: both routes answer 404 `ANALYTE_NOT_FOUND` for an unknown id.
+- The defaults select what a chart shows **first**, never what the reader can see: the timeline
+  keeps returning every dose, and the web's filter chips remain the override in both directions
+  (frontend.md → Timeline). There is no server-side "filtered for you" timeline mode keyed on these
+  rows — `?medicationTag=` already exists for explicit filtering.
 
 ## Validation & errors
 - Error codes are returned as the message string so clients can branch on them.
