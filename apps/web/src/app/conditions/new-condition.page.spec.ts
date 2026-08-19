@@ -52,7 +52,7 @@ describe('NewConditionPage', () => {
         contacts: [{ name: 'Dr. Okafor', role: 'Oncologist', phone: '555-1234' }],
       }),
     );
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'history']);
   });
 
   it('removes list entries by index', () => {
@@ -82,6 +82,6 @@ describe('NewConditionPage', () => {
     const fixture = TestBed.createComponent(NewConditionPage);
     fixture.detectChanges();
     fixture.componentInstance.cancel();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'history']);
   });
 });

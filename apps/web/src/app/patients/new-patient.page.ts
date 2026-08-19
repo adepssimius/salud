@@ -116,7 +116,7 @@ export class NewPatientPage implements OnInit {
     this.api.post<{ patient: unknown }>(`/patients`, body).subscribe({
       next: () => {
         this.saving.set(false);
-        this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
+        this.router.navigate(['/patients']);
       },
       error: (err) => {
         this.saving.set(false);
@@ -126,6 +126,6 @@ export class NewPatientPage implements OnInit {
   }
 
   cancel() {
-    this.router.navigateByUrl('/profile?tab=patients');
+    this.router.navigateByUrl('/patients');
   }
 }

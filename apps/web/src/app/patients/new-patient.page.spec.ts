@@ -52,7 +52,7 @@ describe('NewPatientPage', () => {
     });
     component.submit();
     expect(apiMock.post).toHaveBeenCalledWith('/patients', expect.objectContaining({ fullName: 'Pat One' }));
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/profile'], { queryParams: { tab: 'patients' } });
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients']);
   });
 
   it('shows error on failure', () => {

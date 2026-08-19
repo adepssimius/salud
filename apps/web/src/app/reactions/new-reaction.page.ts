@@ -308,6 +308,6 @@ export class NewReactionPage implements OnInit {
   }
 
   backToPatient() {
-    this.router.navigate(['/patients', this.patientId]);
+    this.router.navigate(['/patients', this.patientId, 'meds']);
   }
 }

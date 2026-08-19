@@ -570,7 +570,7 @@ export class ConditionDetailPage implements OnInit {
   backToPatient() {
     const patientId = this.condition()?.patientId;
     if (patientId) {
-      this.router.navigate(['/patients', patientId]);
+      this.router.navigate(['/patients', patientId, 'history']);
     } else {
       this.router.navigate(['/dashboard']);
     }
@@ -585,7 +585,7 @@ export class ConditionDetailPage implements OnInit {
     this.api.delete<{ deleted: boolean }>(`/conditions/${this.conditionId}`).subscribe({
       next: () => {
         this.deleting.set(false);
-        this.router.navigate(patientId ? ['/patients', patientId] : ['/dashboard']);
+        this.router.navigate(patientId ? ['/patients', patientId, 'history'] : ['/dashboard']);
       },
       error: (err) => {
         this.deleting.set(false);

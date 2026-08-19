@@ -169,7 +169,7 @@ describe('ConditionDetailPage', () => {
     const comp = fixture.componentInstance;
     comp.condition.set(baseCondition as any);
     comp.backToPatient();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'history']);
   });
 
   it('goToEpisode navigates to the episode detail page for a nested episode', () => {

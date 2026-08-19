@@ -2,14 +2,13 @@ import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import { ProfilePage } from './profile.page';
 import { AuthService } from '../core/auth.service';
-import { ApiClientService } from '../core/api-client.service';
 import { Router } from '@angular/router';
 import { ActivatedRoute } from '@angular/router';
 
 describe('ProfilePage', () => {
   let authMock: any;
-  let apiMock: any;
   let routerMock: any;
+  let routeMock: any;
 
   beforeEach(async () => {
     authMock = {
@@ -26,11 +25,8 @@ describe('ProfilePage', () => {
       updateProfile: jest.fn(),
       logout: jest.fn(),
     };
-    apiMock = {
-      get: jest.fn().mockReturnValue(of({ patients: [] })),
-    };
     routerMock = { navigateByUrl: jest.fn(), navigate: jest.fn() };
-    const routeMock = {
+    routeMock = {
       snapshot: {
         queryParamMap: {
           get: (key: string) => null,
@@ -42,7 +38,6 @@ describe('ProfilePage', () => {
       imports: [ProfilePage],
       providers: [
         { provide: AuthService, useValue: authMock },
-        { provide: ApiClientService, useValue: apiMock },
         { provide: Router, useValue: routerMock },
         { provide: ActivatedRoute, useValue: routeMock },
       ],
@@ -95,35 +90,12 @@ describe('ProfilePage', () => {
     expect(component.saved()).toBe(false);
   });
 
-  it('loads patients when tab selected', () => {
-    apiMock.get.mockReturnValue(
-      of([
-        {
-          id: 'p1',
-          fullName: 'Pat One',
-          dateOfBirth: '2010-01-01',
-          sexAtBirth: 'female',
-          notes: null,
-          ownedById: 'u1',
-          latestWeightKg: null,
-          latestWeightRecordedAt: null,
-          myRole: 'parent',
-        },
-      ]),
-    );
+  it('forwards the legacy ?tab=patients deep link to the patient list', () => {
+    // That query param was the only way to reach the patient list for this page's whole life, so
+    // it is in bookmarks; it must not silently land on the profile form.
+    routeMock.snapshot.queryParamMap.get = (key: string) => (key === 'tab' ? 'patients' : null);
     const fixture = TestBed.createComponent(ProfilePage);
-    const component = fixture.componentInstance;
     fixture.detectChanges();
-    component.selectTab('patients');
-    expect(apiMock.get).toHaveBeenCalledWith('/patients');
-    expect(component.patients().length).toBe(1);
-  });
-
-  it('navigates to add patient', () => {
-    const fixture = TestBed.createComponent(ProfilePage);
-    const component = fixture.componentInstance;
-    fixture.detectChanges();
-    component.startAddPatient();
-    expect(routerMock.navigateByUrl).toHaveBeenCalledWith('/patients/new');
+    expect(routerMock.navigateByUrl).toHaveBeenCalledWith('/patients');
   });
 });

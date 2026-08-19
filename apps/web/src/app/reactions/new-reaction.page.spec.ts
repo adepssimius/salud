@@ -57,7 +57,7 @@ describe('NewReactionPage', () => {
       tag: undefined,
       occurredAt: undefined,
     });
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'meds']);
   });
 
   it('clears the other targets when the scope type changes', () => {

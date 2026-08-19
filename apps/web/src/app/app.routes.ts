@@ -1,5 +1,6 @@
 import { Route } from '@angular/router';
 import { authGuard } from './core/auth.guard';
+import { PatientHubStore } from './patients/patient-hub.store';
 
 // Every page is loaded lazily, including login. Importing them statically put all 21 pages — and
 // @angular/forms, which only pages use — into the initial bundle, which is what pushed it 72 kB past
@@ -22,20 +23,17 @@ export const appRoutes: Route[] = [
     canActivate: [authGuard],
   },
   {
+    path: 'patients',
+    loadComponent: () => import('./patients/patients-list.page').then((m) => m.PatientsListPage),
+    canActivate: [authGuard],
+  },
+  // Before `patients/:id`: routes match top-down, so the literal has to win over the parameter.
+  {
     path: 'patients/new',
     loadComponent: () => import('./patients/new-patient.page').then((m) => m.NewPatientPage),
     canActivate: [authGuard],
   },
-  {
-    path: 'patients/:id',
-    loadComponent: () => import('./patients/patient-detail.page').then((m) => m.PatientDetailPage),
-    canActivate: [authGuard],
-  },
-  {
-    path: 'patients/:id/timeline',
-    loadComponent: () => import('./timeline/timeline.page').then((m) => m.TimelinePage),
-    canActivate: [authGuard],
-  },
+  { path: 'patients/:id/timeline', redirectTo: 'patients/:id/journal' },
   {
     path: 'patients/:id/conditions/new',
     loadComponent: () => import('./conditions/new-condition.page').then((m) => m.NewConditionPage),
@@ -83,6 +81,44 @@ export const appRoutes: Route[] = [
     path: 'patients/:id/whats-new',
     loadComponent: () => import('./whats-new/whats-new.page').then((m) => m.WhatsNewPage),
     canActivate: [authGuard],
+  },
+  // The patient hub. Declared after every literal `patients/:id/<segment>` route above, because
+  // routes match top-down and this one would otherwise swallow them: ER Brief and lab import are
+  // full pages (the brief is a print document), not tabs, so they must not render inside the tab
+  // chrome. Children read `:id` off this parent via `paramsInheritanceStrategy: 'always'`
+  // (app.config.ts), which is what lets the timeline page move under here unchanged.
+  {
+    path: 'patients/:id',
+    loadComponent: () => import('./patients/patient-hub.shell').then((m) => m.PatientHubShell),
+    canActivate: [authGuard],
+    providers: [PatientHubStore],
+    children: [
+      // `now` is deferred (it needs the bimodal Home work), so a quiet and a sick patient both
+      // land on the journal for the moment.
+      { path: '', pathMatch: 'full', redirectTo: 'journal' },
+      {
+        path: 'journal',
+        loadComponent: () => import('./timeline/timeline.page').then((m) => m.TimelinePage),
+      },
+      {
+        path: 'meds',
+        loadComponent: () => import('./patients/tabs/patient-meds.page').then((m) => m.PatientMedsPage),
+      },
+      {
+        path: 'history',
+        loadComponent: () =>
+          import('./patients/tabs/patient-history.page').then((m) => m.PatientHistoryPage),
+      },
+      {
+        path: 'share',
+        loadComponent: () => import('./patients/tabs/patient-share.page').then((m) => m.PatientSharePage),
+      },
+      {
+        path: 'settings',
+        loadComponent: () =>
+          import('./patients/tabs/patient-settings.page').then((m) => m.PatientSettingsPage),
+      },
+    ],
   },
   {
     path: 'observations/new',
