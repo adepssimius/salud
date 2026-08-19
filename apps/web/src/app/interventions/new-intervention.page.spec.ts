@@ -10,10 +10,10 @@ describe('NewInterventionPage', () => {
   let authMock: any;
   let routerMock: any;
   let routeMock: any;
-  let scheduleIdParam: string | null;
+  let queryParams: Record<string, string>;
 
   beforeEach(async () => {
-    scheduleIdParam = null;
+    queryParams = {};
     apiMock = {
       get: jest.fn(),
       post: jest.fn(),
@@ -33,7 +33,10 @@ describe('NewInterventionPage', () => {
     };
     routerMock = { navigate: jest.fn(), navigateByUrl: jest.fn() };
     routeMock = {
-      snapshot: { queryParamMap: { get: jest.fn(() => scheduleIdParam) } },
+      // Keyed, not a single stub value: the page now reads several query params, and a `get` that
+      // answered every key with the same string is how a scheduleId ended up being read as a
+      // medicationId.
+      snapshot: { queryParamMap: { get: (key: string) => queryParams[key] ?? null } },
     };
 
     await TestBed.configureTestingModule({
@@ -387,7 +390,7 @@ describe('NewInterventionPage', () => {
   }));
 
   it('prefills patient, dose, and medication from a scheduleId query param', () => {
-    scheduleIdParam = 'sched-1';
+    queryParams = { scheduleId: 'sched-1' };
     const schedule = {
       id: 'sched-1',
       patientId: 'p1',
@@ -463,5 +466,136 @@ describe('NewInterventionPage', () => {
     expect(val.medicationEmbodimentId).toBe('emb-1');
     expect(component.selectedMedication()?.id).toBe('med-1');
     expect(component.embodiments().length).toBe(1);
+  });
+  // frontend.md → "Information architecture (v2)" → Quick Log: "Dose: recents first, search
+  // second." The sheet picks the medication; this form takes the prefill and does everything else
+  // exactly as it always did.
+  describe('quick-log handoff', () => {
+    const medication = {
+      id: 'med-1',
+      name: 'Acetaminophen',
+      brandNames: ['Tylenol'],
+      description: null,
+      tags: [],
+      defaultActive: true,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const embodiments = [
+      {
+        id: 'emb-1',
+        medicationId: 'med-1',
+        label: 'infant suspension 160mg/5mL',
+        concentrationMgPerMl: 32,
+        strengthMgPerUnit: null,
+        unitType: 'ml',
+        notes: null,
+        atHome: true,
+        expiresAt: null,
+        runningLow: false,
+        runningLowFlaggedByUserId: null,
+        runningLowFlaggedAt: null,
+      },
+    ];
+
+    function render(params: Record<string, string>, episodes: Array<{ id: string; name: string }> = []) {
+      queryParams = params;
+      apiMock.get.mockImplementation((path: string) => {
+        if (path === '/medications/med-1') return of(medication);
+        if (path === '/medications/med-1/embodiments') return of(embodiments);
+        if (path.includes('/episodes')) return of(episodes);
+        return of([{ id: 'p1', fullName: 'Kiddo' }]);
+      });
+      apiMock.post.mockReturnValue(
+        of({ guidance: { weightBased: null, ageBand: null }, nextAllowedAt: null, dailyTotalMg: 0, advisories: [] }),
+      );
+      const fixture = TestBed.createComponent(NewInterventionPage);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    const repeatDose = {
+      patientId: 'p1',
+      type: 'medication_dose',
+      compact: '1',
+      medicationId: 'med-1',
+      embodimentId: 'emb-1',
+      amountMg: '160',
+      amountMl: '5',
+    };
+
+    it('prefills medication, embodiment and amount from "same as last time"', () => {
+      const fixture = render(repeatDose);
+      const val = fixture.componentInstance.form.getRawValue();
+
+      expect(val.patientId).toBe('p1');
+      expect(val.medicationId).toBe('med-1');
+      expect(val.medicationEmbodimentId).toBe('emb-1');
+      expect(val.amountMg).toBe(160);
+      expect(val.amountMl).toBe(5);
+      expect(fixture.componentInstance.selectedMedication()?.id).toBe('med-1');
+    });
+
+    it('renders the compact layout with the patient pinned and no patient or type picker', () => {
+      const fixture = render(repeatDose);
+      const el = fixture.nativeElement as HTMLElement;
+
+      expect(el.querySelector('h1')?.textContent).toContain('Log dose');
+      expect(el.querySelector('.for-patient-name')?.textContent).toContain('Kiddo');
+      expect(el.querySelector('select[formControlName="patientId"]')).toBeNull();
+      expect(el.querySelector('select[formControlName="type"]')).toBeNull();
+    });
+
+    it('names the patient on the save button, never a bare "Save"', () => {
+      const fixture = render(repeatDose);
+      const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
+      expect(save?.textContent?.trim()).toBe('Save for Kiddo');
+    });
+
+    // The prefill fills fields; it does not skip a single guardrail (P1).
+    it('still runs the dose check on the prefilled values', fakeAsync(() => {
+      const fixture = render(repeatDose);
+      tick(400);
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/patients/p1/dose-checks',
+        expect.objectContaining({ medicationId: 'med-1', medicationEmbodimentId: 'emb-1', amountMg: 160 }),
+      );
+      fixture.destroy();
+    }));
+
+    it('still raises the danger interstitial on a prefilled repeat dose', fakeAsync(() => {
+      queryParams = repeatDose;
+      apiMock.get.mockImplementation((path: string) => {
+        if (path === '/medications/med-1') return of(medication);
+        if (path === '/medications/med-1/embodiments') return of(embodiments);
+        if (path.includes('/episodes')) return of([]);
+        return of([{ id: 'p1', fullName: 'Kiddo' }]);
+      });
+      apiMock.post.mockReturnValue(
+        of({
+          guidance: { weightBased: null, ageBand: null },
+          nextAllowedAt: null,
+          dailyTotalMg: 0,
+          advisories: [{ type: 'reaction_danger', severity: 'danger', payload: {} }],
+        }),
+      );
+      const fixture = TestBed.createComponent(NewInterventionPage);
+      fixture.detectChanges();
+      tick(400);
+      expect(fixture.componentInstance.showDangerInterstitial()).toBe(true);
+      fixture.destroy();
+    }));
+
+    it('pre-attaches a single active episode and pre-selects nothing when there are two', () => {
+      const one = render(repeatDose, [{ id: 'ep1', name: 'Fever – Aug 2026' }]);
+      expect(one.componentInstance.selectedEpisodeIds()).toEqual(['ep1']);
+      expect((one.nativeElement as HTMLElement).textContent).toContain('Adding to');
+
+      const two = render(repeatDose, [
+        { id: 'ep1', name: 'Fever' },
+        { id: 'ep2', name: 'Ear infection' },
+      ]);
+      expect(two.componentInstance.selectedEpisodeIds()).toEqual([]);
+    });
   });
 });

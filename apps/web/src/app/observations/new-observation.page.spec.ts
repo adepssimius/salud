@@ -251,7 +251,7 @@ describe('NewObservationPage', () => {
     expect(comp.form.getRawValue().patientId).toBe('p1');
     expect(comp.form.getRawValue().episodeSelection).toEqual(['ep1']);
     expect(comp.form.getRawValue().resolveSelected).toBe(true);
-    expect(comp.isEpisodeSelected('ep1')).toBe(true);
+    expect(comp.selectedEpisodeIds()).toEqual(['ep1']);
   });
 
   it('ignores a resolveEpisodeId that is not among the patient\'s active episodes', () => {
@@ -268,7 +268,92 @@ describe('NewObservationPage', () => {
     fixture.detectChanges();
     const comp = fixture.componentInstance;
 
-    expect(comp.form.getRawValue().episodeSelection).toEqual([]);
+    // The stale id is dropped; what remains is the ordinary single-active-episode default, which
+    // attaches but does NOT resolve — resolution is never inferred (P5).
+    expect(comp.selectedEpisodeIds()).toEqual(['ep1']);
     expect(comp.form.getRawValue().resolveSelected).toBe(false);
+  });
+
+  // frontend.md → "Information architecture (v2)" → Quick Log: a visible default, never a silent
+  // inference.
+  describe('episode attachment', () => {
+    function renderWithEpisodes(episodes: Array<{ id: string; name: string }>) {
+      routeMock.snapshot.queryParamMap = new Map([['patientId', 'p1']]);
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/episodes')) return of(episodes);
+        if (path === '/patients') return of([{ id: 'p1', fullName: 'Kiddo' }]);
+        return of([]);
+      });
+      const fixture = TestBed.createComponent(NewObservationPage);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    it('pre-attaches the one active episode as a removable chip — zero taps', () => {
+      const fixture = renderWithEpisodes([{ id: 'ep1', name: 'Fever – Aug 2026' }]);
+      expect(fixture.componentInstance.selectedEpisodeIds()).toEqual(['ep1']);
+      const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+      expect(text).toContain('Adding to');
+      expect(text).toContain('Fever – Aug 2026');
+    });
+
+    it('pre-selects nothing when more than one episode is active', () => {
+      const fixture = renderWithEpisodes([
+        { id: 'ep1', name: 'Fever' },
+        { id: 'ep2', name: 'Ear infection' },
+      ]);
+      expect(fixture.componentInstance.selectedEpisodeIds()).toEqual([]);
+    });
+
+    it('lets the caregiver reject the default before saving', () => {
+      const fixture = renderWithEpisodes([{ id: 'ep1', name: 'Fever' }]);
+      const remove: HTMLButtonElement = fixture.nativeElement.querySelector('.chip-remove');
+      remove.click();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedEpisodeIds()).toEqual([]);
+      expect(fixture.componentInstance.form.getRawValue().episodeSelection).toEqual([]);
+    });
+  });
+
+  // frontend.md → Quick Log: each verb lands in this same form with the type pre-selected.
+  describe('quick-log handoff', () => {
+    function renderCompact(entryType: string) {
+      routeMock.snapshot.queryParamMap = new Map([
+        ['patientId', 'p1'],
+        ['entryType', entryType],
+        ['compact', '1'],
+      ]);
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/episodes')) return of([]);
+        if (path === '/patients') return of([{ id: 'p1', fullName: 'Kiddo' }]);
+        return of([]);
+      });
+      const fixture = TestBed.createComponent(NewObservationPage);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    it('renders a compact single-purpose layout with the patient pinned and no type picker', () => {
+      const fixture = renderCompact('temperature');
+      const el = fixture.nativeElement as HTMLElement;
+
+      expect(fixture.componentInstance.lockedEntryType()).toBe('temperature');
+      expect(el.querySelector('h1')?.textContent).toContain('Log temperature');
+      expect(el.querySelector('.for-patient-name')?.textContent).toContain('Kiddo');
+      // The patient dropdown is gone; the entry-type dropdown with it.
+      expect(el.querySelector('select[formControlName="patientId"]')).toBeNull();
+      expect(el.querySelector('select[name="entryType"]')).toBeNull();
+    });
+
+    it('names the patient on the save button, never a bare "Save"', () => {
+      const fixture = renderCompact('pain_score');
+      const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
+      expect(save?.textContent?.trim()).toBe('Save for Kiddo');
+    });
+
+    it('ignores an entryType it does not offer as a verb', () => {
+      const fixture = renderCompact('lab_result');
+      expect(fixture.componentInstance.lockedEntryType()).toBeNull();
+    });
   });
 });
