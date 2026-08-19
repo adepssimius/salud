@@ -752,3 +752,197 @@ h2 {
 .accent-rail {
   border-left: 4px solid var(--patient-accent, var(--border-strong));
 }
+
+/* ---- journal feed ------------------------------------------------------ */
+
+/*
+ * The Journal tab (frontend.md → "Information architecture (v2)" → Journal). The narrative artifact
+ * is the feed; the chart is its instrument panel. On a phone the chart stacks above as a collapsible
+ * header; from 900px up the two sit side by side, chart pinned so the feed scrolls against it (P7).
+ */
+.journal {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .journal {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+  .journal-chart-card {
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+.journal-chart-card,
+.journal-feed-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.journal-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.journal-chart-head h2,
+.journal-feed-card h2 {
+  margin: 0;
+}
+
+/* The filter chips sit outside the collapsible region on purpose: they filter the feed as well as
+   the chart, so hiding the chart must not take the feed's filters with it. */
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.feed-day + .feed-day {
+  margin-top: 1.25rem;
+}
+
+/* Sticky so the day a caregiver is reading stays named while they scroll through a long night. */
+.feed-day-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.feed-row {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.feed-row:last-child {
+  border-bottom: none;
+}
+
+/*
+ * Rows logged since the watermark. The line below marks where "new" ends, but new and old can
+ * interleave: the feed is ordered by clinical time while "unseen" is decided on log time, so a
+ * 2 AM entry written up at 6 AM sits among rows already read. The tint says which is which without
+ * making the reader reconcile two clocks.
+ */
+.feed-row.unseen {
+  margin-left: -0.6rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--accent-border);
+}
+
+.feed-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+/* Attribution carries weight in the literal sense: who logged it is the first thing a second
+   caregiver looks for, and in v1 it was invisible outside revision history (P3). */
+.feed-author {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Advisories fire from the engine; nobody wrote them, and the name slot says so rather than
+   borrowing a caregiver's name for a judgment the app made (P6). */
+.feed-author-system {
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.feed-dash {
+  color: var(--text-dim);
+}
+
+.feed-text {
+  color: var(--text-muted);
+}
+
+.feed-time {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.feed-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+/* Episode frames are dividers in the feed and bands in the chart — the same frame, twice. */
+.episode-divider {
+  display: block;
+  width: 100%;
+  margin: 0.75rem 0 0.35rem;
+  padding: 0.25rem 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.episode-divider:hover {
+  color: var(--accent-soft);
+}
+
+/*
+ * The since-you-last-looked marker. A labeled line the reader reads down to — that is the handoff
+ * (frontend.md → Journal). It is loud enough to find while scanning and quiet enough not to be
+ * mistaken for a warning: this is a bookmark, not an alert.
+ *
+ * Scrolling past it never acks. Only the button does.
+ */
+.watermark {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.85rem 0;
+  padding: 0.5rem 0.75rem;
+  border-top: 2px solid var(--accent-border);
+  border-radius: var(--radius-input);
+  background: var(--accent-bg);
+}
+
+.watermark-label {
+  color: var(--accent-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.watermark-ack {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+}

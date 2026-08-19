@@ -139,8 +139,33 @@ export function labSummary(labEntries: Array<{ metadata?: any }>): string {
   return parts.join(', ');
 }
 
+/**
+ * Caller-supplied context for `describeEvent`. Both fields are optional and both default to the
+ * behavior every caller had before they existed — a page opts in, nothing changes underneath one
+ * that doesn't.
+ */
+export interface DescribeEventOptions {
+  /**
+   * Medication display names by id. With it, a dose reads "240 mg ibuprofen" — the attributed
+   * journal line the product describes (frontend.md → Journal, "Dana — 240 mg ibuprofen · 2:15
+   * AM"). Without it, the generic "medication dose — 240 mg" stands, since the id alone is not
+   * something to show a caregiver.
+   */
+  medicationNames?: Map<string, string>;
+  /**
+   * Drop `document` entries from the text. The journal feed renders them as labeled attachment
+   * links instead (frontend.md → Documents), so repeating them in the summary line would say the
+   * same thing twice; a caller with no link affordance keeps the text and stays whole.
+   */
+  omitDocuments?: boolean;
+}
+
 /** A whole timeline event (observation, intervention, or advisory) as one line. */
-export function describeEvent(entry: TimelineEntry, units: DisplayUnits = CANONICAL_UNITS): string {
+export function describeEvent(
+  entry: TimelineEntry,
+  units: DisplayUnits = CANONICAL_UNITS,
+  options: DescribeEventOptions = {},
+): string {
   const display = entry.display as any;
 
   if (entry.kind === 'observation') {
@@ -149,6 +174,7 @@ export function describeEvent(entry: TimelineEntry, units: DisplayUnits = CANONI
     const parts = entries
       .filter((e) => e.type !== 'photo') // photos render as thumbnails instead
       .filter((e) => e.type !== 'lab_result') // aggregated below — never one line per analyte
+      .filter((e) => !(options.omitDocuments && e.type === 'document')) // rendered as links instead
       .map((e) => entrySummary(e, units));
     if (labs.length) parts.unshift(labSummary(labs));
     return [display.text, ...parts].filter(Boolean).join(' — ');
@@ -158,7 +184,8 @@ export function describeEvent(entry: TimelineEntry, units: DisplayUnits = CANONI
     if (display.type === 'medication_dose') {
       const mg = display.metadata?.amountMg;
       const atypical = display.metadata?.isAtypical ? ' (atypical)' : '';
-      return `medication dose — ${mg ?? '?'} mg${atypical}`;
+      const name = options.medicationNames?.get(display.metadata?.medicationId);
+      return name ? `${mg ?? '?'} mg ${name}${atypical}` : `medication dose — ${mg ?? '?'} mg${atypical}`;
     }
     return `dressing change${display.metadata?.bodyLocation ? ` — ${display.metadata.bodyLocation}` : ''}`;
   }
@@ -173,4 +200,20 @@ export function photoFileIds(entry: TimelineEntry): string[] {
   return (display.entries ?? [])
     .filter((e: any) => e.type === 'photo' && e.metadata?.fileId)
     .map((e: any) => e.metadata.fileId as string);
+}
+
+/**
+ * Document entries on a timeline event, as `{ fileId, label }` for rendering attachment links
+ * (frontend.md → Documents: "a labeled attachment link, not a text summary line"). The label falls
+ * back to the file's original name, and then to a generic word, so a link is never blank.
+ */
+export function documentAttachments(entry: TimelineEntry): Array<{ fileId: string; label: string }> {
+  if (entry.kind !== 'observation') return [];
+  const display = entry.display as any;
+  return (display.entries ?? [])
+    .filter((e: any) => e.type === 'document' && e.metadata?.fileId)
+    .map((e: any) => ({
+      fileId: e.metadata.fileId as string,
+      label: (e.metadata.label ?? e.metadata.originalName ?? 'document') as string,
+    }));
 }

@@ -86,7 +86,7 @@ export const appRoutes: Route[] = [
   // routes match top-down and this one would otherwise swallow them: ER Brief and lab import are
   // full pages (the brief is a print document), not tabs, so they must not render inside the tab
   // chrome. Children read `:id` off this parent via `paramsInheritanceStrategy: 'always'`
-  // (app.config.ts), which is what lets the timeline page move under here unchanged.
+  // (app.config.ts), which is what lets the journal page read its patient id without a resolver.
   {
     path: 'patients/:id',
     loadComponent: () => import('./patients/patient-hub.shell').then((m) => m.PatientHubShell),
@@ -98,7 +98,7 @@ export const appRoutes: Route[] = [
       { path: '', pathMatch: 'full', redirectTo: 'journal' },
       {
         path: 'journal',
-        loadComponent: () => import('./timeline/timeline.page').then((m) => m.TimelinePage),
+        loadComponent: () => import('./timeline/journal.page').then((m) => m.JournalPage),
       },
       {
         path: 'meds',
