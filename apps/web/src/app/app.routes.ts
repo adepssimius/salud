@@ -77,11 +77,10 @@ export const appRoutes: Route[] = [
   // No authGuard — a clinician opening a shared brief now downloads the framework plus this one
   // chunk instead of every page in the app.
   { path: 'brief/:token', loadComponent: () => import('./er-brief/shared-brief.page').then((m) => m.SharedBriefPage) },
-  {
-    path: 'patients/:id/whats-new',
-    loadComponent: () => import('./whats-new/whats-new.page').then((m) => m.WhatsNewPage),
-    canActivate: [authGuard],
-  },
+  // `/patients/:id/whats-new` is gone: the since-you-last-looked marker lives inside the journal
+  // feed now (frontend.md → "Information architecture (v2)" → Journal), so the briefing is read in
+  // the place the narrative already is. Home's summary rows deep-link to the journal instead.
+  { path: 'patients/:id/whats-new', redirectTo: 'patients/:id/journal' },
   // The patient hub. Declared after every literal `patients/:id/<segment>` route above, because
   // routes match top-down and this one would otherwise swallow them: ER Brief and lab import are
   // full pages (the brief is a print document), not tabs, so they must not render inside the tab
