@@ -60,7 +60,7 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
           <li *ngFor="let e of events()">
             <span class="ts">{{ ago(e.timestamp) }}</span>
             <span class="kind">{{ e.kind }}</span>
-            <span>{{ describe(e) }}</span>
+            <button type="button" class="feed-text-link" (click)="openEvent(e)">{{ describe(e) }}</button>
             <app-photo-thumbnail *ngFor="let fid of photos(e)" [fileId]="fid"></app-photo-thumbnail>
           </li>
         </ul>
@@ -160,6 +160,16 @@ export class EpisodeDetailPage implements OnInit {
 
   photos(entry: TimelineEntry): string[] {
     return photoFileIds(entry);
+  }
+
+  /**
+   * Through to the event's read-only detail page (frontend.md → "Observation & intervention
+   * detail"), same affordance the journal feed carries. Advisories are split out of `events()`
+   * above and rendered as banners, so nothing here can be one.
+   */
+  openEvent(entry: TimelineEntry) {
+    if (entry.kind === 'advisory') return;
+    this.router.navigate([entry.kind === 'observation' ? '/observations' : '/interventions', entry.id]);
   }
 
   // No resolve endpoint exists by design — an episode closes as the side effect of a logged

@@ -386,6 +386,43 @@ describe('JournalPage', () => {
     expect(fixture.nativeElement.querySelector('.error').textContent).toContain('Unable to load the journal.');
   });
 
+  // frontend.md → "Observation & intervention detail": the feed line is a summary; the metadata
+  // behind it only fits on a page of its own.
+  it('links each feed row through to that event detail page', () => {
+    const fixture = render();
+    const links = fixture.nativeElement.querySelectorAll('.feed-text-link');
+    expect(links.length).toBe(2);
+    // Newest first: today's dose, then yesterday's observation.
+    links[0].click();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions', 'int-1']);
+    links[1].click();
+    expect(routerMock.navigate).toHaveBeenLastCalledWith(['/observations', 'obs-1']);
+  });
+
+  it('leaves an advisory row unlinked — there is no advisory detail page', () => {
+    apiMock.get.mockImplementation((path: string) => {
+      if (path === '/medications') return of(medications);
+      if (path.endsWith('/episodes')) return of(episodes);
+      if (path.endsWith('/whats-new')) return of(whatsNew);
+      return of({
+        ...timelineResponse,
+        entries: [
+          {
+            id: 'adv-1',
+            kind: 'advisory',
+            type: 'protocol_fired',
+            timestamp: today,
+            recordedBy: null,
+            display: { id: 'adv-1', type: 'protocol_fired', severity: 'warning', createdAt: today },
+          },
+        ],
+      });
+    });
+    const fixture = render();
+    expect(fixture.nativeElement.querySelector('.feed-text-link')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.feed-text')).not.toBeNull();
+  });
+
   it('converts temperatures to the caregiver preferred unit in the feed too', () => {
     TestBed.overrideProvider(AuthService, {
       useValue: { user: () => ({ preferredTempUnit: 'F', preferredWeightUnit: 'kg', preferredLengthUnit: 'cm' }) },

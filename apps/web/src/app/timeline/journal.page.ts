@@ -138,7 +138,15 @@ function prefersChartOpen(): boolean {
                 <span class="feed-author" *ngIf="item.row.author; else systemAuthor">{{ item.row.author }}</span>
                 <ng-template #systemAuthor><span class="feed-author feed-author-system">Salud</span></ng-template>
                 <span class="feed-dash">—</span>
-                <span class="feed-text">{{ item.row.text }}</span>
+                <span class="feed-text" *ngIf="item.row.entry.kind === 'advisory'">{{ item.row.text }}</span>
+                <button
+                  type="button"
+                  class="feed-text feed-text-link"
+                  *ngIf="item.row.entry.kind !== 'advisory'"
+                  (click)="openEvent(item.row.entry)"
+                >
+                  {{ item.row.text }}
+                </button>
                 <span class="feed-time">· {{ item.row.entry.timestamp * 1000 | date: 'shortTime' }}</span>
               </div>
               <div class="feed-attachments" *ngIf="item.row.photoFileIds.length || item.row.documents.length">
@@ -388,6 +396,17 @@ export class JournalPage implements OnInit {
 
   goToEpisode(episodeId: string) {
     this.router.navigate(['/episodes', episodeId]);
+  }
+
+  /**
+   * Through to the event's read-only detail page (frontend.md → "Observation & intervention
+   * detail"). The feed line is a summary by design — the metadata behind it (a photo's site and
+   * size, a dose's guideline and weight) only fits on a page of its own. Advisories never get here:
+   * they aren't correctable entities and have no detail page.
+   */
+  openEvent(entry: TimelineEntry) {
+    if (entry.kind === 'advisory') return;
+    this.router.navigate([entry.kind === 'observation' ? '/observations' : '/interventions', entry.id]);
   }
 }
 
