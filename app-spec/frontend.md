@@ -482,30 +482,56 @@ derives from existing payloads:
   Condition-frame overlay needs its own query shape rather than reusing the Episode-band code as-is.
 
 ## Reactions
-> v2 moves this card from patient detail to the patient hub's **Meds** tab, with danger-severity
-> pills also pinned in the hub header ("Information architecture (v2)"); every other rule below is
-> unchanged.
+> v2 moved this card from patient detail to the patient hub's **Meds** tab, with danger-severity
+> pills also pinned in the hub header ("Information architecture (v2)"). The rules below describe
+> the card in its v2 home; nothing about entry, scoping or deletion changed in the move.
 
 Adverse reactions drive the `reaction_warning` inline banner and the `reaction_danger` full-screen
 interstitial at dose entry (see "Dose entry" above) — the single most safety-critical input in the
 app. They therefore need somewhere to be entered.
 
-- **Placement**: a read-only `Reactions` card on `patient-detail.page.ts`, directly under the care
-  documents card and **above** Conditions. Reactions are header material on the ER Brief (F-7.3,
-  "allergies belong in the header"), and the patient page should mirror that priority. Same card +
-  dedicated-create-page shape Conditions already uses, so it introduces no new interaction
-  vocabulary.
-- **List row**: description, a severity `.pill` (`-danger` for `danger`, `-neutral` for `warning`),
-  the scope in plain language ("Amoxicillin", "Amoxicillin — 250 mg/5 mL suspension", "tag:
-  penicillin-class"), and the date or the literal **"Date unknown"**. Never render an epoch-zero
-  date on a clinical record. Newest first, per the API's `COALESCE(occurredAt, createdAt)` ordering.
+- **Placement**: a `Reactions` card on the hub's **Meds** tab (`tabs/patient-meds.page.ts`), below
+  Schedules. Reactions warn at dose time, so they belong beside the medications they act on rather
+  than on an edit form. They are also header material on the ER Brief (F-7.3, "allergies belong in
+  the header"), which the hub header mirrors with a `danger`-severity pill per reaction. The card +
+  dedicated-create-page shape is the one Conditions already uses, so it introduces no new
+  interaction vocabulary. There is no separate reactions route: the card **is** the list, reached
+  by the Meds tab like every other hub surface.
+- **List row**: a severity `.pill` (`-danger` for `danger`, `-neutral` for `warning`) and the
+  description on the first line — the description is the caregiver's own sentence and renders as
+  they typed it, never title-cased. Beneath it, in muted small text: the scope in plain language,
+  the date, and the attribution, separated by `·`.
+  - **Scope wording**: `"Amoxicillin"` for a medication, `"Amoxicillin — 160 mg/5 mL suspension
+    (Children's Tylenol)"` for an embodiment, `"tag: penicillin"` for a tag. An embodiment reads as
+    `<medication> — <form label>`; the derived concentration (`concentrationText`) is appended
+    **only when the label does not already carry the strength**, which most do — a seeded label is
+    typically the strength as printed, and prefixing the derived figure onto it says the same thing
+    twice. A bare label ("suspension") gets the concentration so the row still says how strong the
+    form is. One `GET /api/medications` resolves every
+    medication-scoped row rather than a lookup per row. An embodiment-scoped reaction stores only
+    `embodimentId` and no endpoint resolves one directly, so the forms are gathered per catalogued
+    medication and indexed by id — **fanned out only when a row on the list actually needs it**,
+    and a medication whose forms fail to load falls back to `"a specific form"` rather than
+    failing the batch.
+  - **Date**: the date, or the literal **"Date unknown"**. Never render an epoch-zero date on a
+    clinical record.
+  - **Attribution** (P3): `"recorded by <name>"`, resolved against the care team the hub has
+    already loaded — no extra request. When the recorder has since left the care team the
+    attribution is **dropped entirely** rather than degrading to a raw user id.
+  - Newest first, per the API's `COALESCE(occurredAt, createdAt)` ordering.
+  - The card resolves these names off the **reactions signal**, not once at init: the hub store
+    fetches reactions over HTTP and the tab renders while that request is still in flight, so a
+    one-shot read at construction finds an empty list and leaves every row generically worded.
 - **`new-reaction.page.ts`** at `patients/:id/reactions/new`: description (required), severity
   (default `warning`), scope-type selector, scope target picker, and an optional date labelled
   **"Date (optional — leave blank if you don't remember)"**. That label is the thing that makes the
   optional-date rule reachable from the product rather than merely true in the API.
 - **Scope picker** — this is where the safety weight sits:
-  - `medication` → the same typeahead over `GET /api/medications?q=` used by the dose and schedule
-    forms.
+  - `medication` → the shared `core/medication-typeahead.component.ts`, the same search over
+    `GET /api/medications?q=` the dose and schedule forms use. The host owns the selection and the
+    component only reports it, so switching scope type can clear it (below). Dose entry, schedule
+    entry and the quick-log sheet still carry their own inline copies of this input; this component
+    is the destination for that consolidation (ISSUES.md #29), not a further copy of it.
   - `embodiment` → that typeahead to choose the medication, then a select over its embodiments; the
     payload carries `embodimentId` only.
   - `tag` → free text with a datalist of tags harvested from the catalog.
@@ -521,8 +547,16 @@ app. They therefore need somewhere to be entered.
   judgment the caregiver makes explicitly — the scope selector *is* that judgment.
 - **Delete** per row, behind a confirm, matching the care-team and patient delete convention. A
   mis-scoped reaction otherwise fires an interstitial on every future dose with no way to stop it.
-  Editing is deferred: an edit should capture a revision, and which entities are correctable is its
-  own decision.
+  Removal goes through the hub store, so the header's danger pills drop the reaction at the same
+  moment the list does.
+- **Editing is deferred**, and the card says so rather than leaving a caregiver hunting for an
+  affordance that does not exist: below the list, *"Reactions can't be edited. To correct one,
+  remove it and record it again."* An edit should capture a revision, and which entities are
+  correctable is its own decision (ISSUES.md #30). There is no `PATCH` to call.
+- **Error codes** reaching this surface get their own sentence in `core/error-display.ts`:
+  `INVALID_REACTION_SCOPE` (a save carrying no target or more than one) and `REACTION_NOT_FOUND`
+  (a delete racing another caregiver on the same care team). Without those, both degrade to the
+  call site's generic fallback.
 
 ## Timeline
 > v2 folds this chart into the **Journal** as its collapsible header ("Information architecture

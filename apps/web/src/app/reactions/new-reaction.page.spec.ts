@@ -43,7 +43,7 @@ describe('NewReactionPage', () => {
     const comp = fixture.componentInstance;
 
     comp.form.patchValue({ description: 'throat tingled', severity: 'warning', scopeType: 'medication' });
-    comp.selectMedication(CATALOG[0] as any);
+    comp.onMedicationChange(CATALOG[0] as any);
     comp.save();
 
     // occurredAt omitted rather than null: an unknown date stores null server-side, and forcing a
@@ -65,7 +65,7 @@ describe('NewReactionPage', () => {
     const comp = fixture.componentInstance;
 
     comp.form.patchValue({ description: 'x', scopeType: 'medication' });
-    comp.selectMedication(CATALOG[0] as any);
+    comp.onMedicationChange(CATALOG[0] as any);
     expect(comp.form.getRawValue().medicationId).toBe('m1');
 
     comp.form.controls.scopeType.setValue('tag');
@@ -101,13 +101,54 @@ describe('NewReactionPage', () => {
     expect(comp.tagMatchesNothing()).toBe(false);
   });
 
+  it('sends only embodimentId for a form-scoped reaction', () => {
+    const fixture = build();
+    const comp = fixture.componentInstance;
+
+    comp.form.controls.scopeType.setValue('embodiment');
+    comp.onScopeTypeChange();
+    comp.form.patchValue({ description: 'blistered' });
+    comp.onMedicationChange(CATALOG[0] as any);
+
+    // The medication was only how the caregiver found the form, so it must not travel with it:
+    // two targets is 400 INVALID_REACTION_SCOPE.
+    expect(apiMock.get).toHaveBeenCalledWith('/medications/m1/embodiments');
+    expect(comp.embodiments().length).toBe(1);
+
+    comp.form.patchValue({ embodimentId: 'e1' });
+    comp.save();
+
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/patients/p1/reactions',
+      expect.objectContaining({ scopeType: 'embodiment', embodimentId: 'e1', medicationId: undefined, tag: undefined }),
+    );
+  });
+
+  it('drops a form chosen under a previous medication when the medication changes', () => {
+    const fixture = build();
+    const comp = fixture.componentInstance;
+
+    comp.form.controls.scopeType.setValue('embodiment');
+    comp.onScopeTypeChange();
+    comp.onMedicationChange(CATALOG[0] as any);
+    comp.form.patchValue({ embodimentId: 'e1' });
+
+    // Clearing via the shared typeahead's "Change" affordance: an embodiment id from the old
+    // medication would otherwise be sent as a target that does not belong to the new one.
+    comp.onMedicationChange(null);
+
+    expect(comp.selectedMedication()).toBeNull();
+    expect(comp.form.getRawValue().embodimentId).toBe('');
+    expect(comp.form.getRawValue().medicationId).toBe('');
+  });
+
   it('surfaces a save failure instead of silently doing nothing', () => {
     apiMock.post.mockReturnValue(throwError(() => ({ status: 400, error: { message: 'INVALID_REACTION_SCOPE' } })));
     const fixture = build();
     const comp = fixture.componentInstance;
 
     comp.form.patchValue({ description: 'x', scopeType: 'medication' });
-    comp.selectMedication(CATALOG[0] as any);
+    comp.onMedicationChange(CATALOG[0] as any);
     comp.save();
 
     expect(comp.error()).toBeTruthy();

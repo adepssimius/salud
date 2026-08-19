@@ -826,12 +826,15 @@ used to demonstrate the hole (it sent `isAtypical: true`) and now sends a harmle
 ### 29. 🟢 The medication typeahead now exists in three copies
 
 `new-intervention.page.ts`, `new-schedule.page.ts`, and (as of 2026-08-09) `new-reaction.page.ts`
-each carry their own copy of the search-over-`GET /api/medications?q=` input, its result list, and
+each carried their own copy of the search-over-`GET /api/medications?q=` input, its result list, and
 the `.med-results`/`.med-result`/`.chosen-med` styles. Two copies was tolerable; three is the point
 at which `core/medication-typeahead.component.ts` pays for itself.
 
-Deliberately not done while adding the third — extracting a shared component in the same change as
-a new page would have made both harder to review.
+**Partly done.** `core/medication-typeahead.component.ts` now exists and `new-reaction.page.ts` uses
+it — the host owns the selection and the component emits `selectedChange`, which is the shape the
+other call sites need too. Still to migrate: `new-intervention.page.ts`, `new-schedule.page.ts`, and
+`quick-log/quick-log-sheet.component.ts` (a fourth copy that post-dates this entry). Left for their
+own change rather than swapping four entry forms alongside a feature.
 
 ---
 
@@ -844,7 +847,9 @@ An edit should capture a `Revision` (api.md → Corrections), which means adding
 **no migration** — the column is plain `text` with no CHECK constraint — but it is a spec
 conversation about which entities are correctable, not a drive-by.
 
-Delete plus re-create covers the case today, at the cost of the original's timestamp.
+Delete plus re-create covers the case today, at the cost of the original's timestamp. The Reactions
+card now says so in as many words ("Reactions can't be edited. To correct one, remove it and record
+it again."), so the absence is stated rather than left as a missing affordance.
 
 ---
 
