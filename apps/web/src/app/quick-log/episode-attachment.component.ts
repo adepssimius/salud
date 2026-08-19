@@ -32,8 +32,10 @@ export interface EpisodeOption {
     <div class="episode-attachment" *ngIf="episodes.length || createNew">
       <ng-container *ngIf="isSingle(); else picker">
         <div class="attached" *ngIf="isSelected(episodes[0].id); else reattach">
+          <!-- &ngsp; not a plain space: Angular's default whitespace collapsing trims the trailing
+               space off this text node, and the chip renders "Adding toFever". -->
           <span class="pill">
-            Adding to <strong>{{ episodes[0].name }}</strong>
+            Adding to&ngsp;<strong>{{ episodes[0].name }}</strong>
           </span>
           <button
             type="button"
