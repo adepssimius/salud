@@ -828,7 +828,8 @@ h2 {
   min-width: 0;
 }
 
-.journal-chart-head {
+.journal-chart-head,
+.journal-feed-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;

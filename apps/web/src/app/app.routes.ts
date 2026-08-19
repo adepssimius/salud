@@ -153,6 +153,15 @@ export const appRoutes: Route[] = [
           import('./timeline/journal.page').then((m) => m.JournalPage),
         title: 'Journal',
       },
+      // Photos by site — the progression read of `photo` entries (frontend.md → Photos →
+      // "Photos by site"). A hub child, so it inherits `:id` and the patient header like the
+      // other tabs.
+      {
+        path: 'photos',
+        loadComponent: () =>
+          import('./photos/photos.page').then((m) => m.PhotosPage),
+        title: 'Photos',
+      },
       {
         path: 'meds',
         loadComponent: () =>

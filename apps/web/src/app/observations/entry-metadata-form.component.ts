@@ -15,6 +15,7 @@ import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { errorText } from '../core/error-display';
+import { Side, photoSiteKey } from '../core/photo-sites';
 import {
   LengthUnit,
   ObservationType,
@@ -26,12 +27,15 @@ import {
   WeightUnit,
 } from '@salud/shared/types';
 
+// Both live in core/photo-sites.ts now — the Photos page groups by the same identity, and a page
+// that only needs the grouping rule must not pull this form (and FormsModule) into its bundle.
+export { photoSiteKey };
+export type { Side };
+
 export interface EntryDraft {
   type: ObservationType;
   metadata: any;
 }
-
-export type Side = 'left' | 'right' | 'bilateral' | 'n/a';
 
 /**
  * One photographed site within the selected episode — a (bodyLocation, side) group of its photo
@@ -49,10 +53,6 @@ export interface PhotoReferenceGroup {
   count: number;
 }
 
-/** Grouping identity: location compared trimmed and case-insensitively, side exactly. */
-export function photoSiteKey(bodyLocation: string, side: Side): string {
-  return `${bodyLocation.trim().toLowerCase()}|${side}`;
-}
 type SymptomSeverity = 'mild' | 'moderate' | 'severe';
 
 // The five types that are just "one number plus an optional note" share a single form driven by
