@@ -32,9 +32,12 @@ import { Patient } from '@salud/shared/types';
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <ul class="row-list patient-list" *ngIf="!loading() && patients().length">
-        <li *ngFor="let patient of patients()">
+        <!-- Each row carries the patient's accent color (frontend.md → "Patient identity"): this
+             list is where a caregiver picks whose record to open, so it is the first place the
+             color has to be learnable, and the last place two children should look alike. -->
+        <li *ngFor="let patient of patients()" class="accent-rail" [ngClass]="accentClass(patient)">
           <button type="button" class="patient-button" (click)="goToPatient(patient.id)">
-            <div class="patient-name">{{ patient.fullName }}</div>
+            <div class="patient-name"><span class="accent-dot"></span>{{ patient.fullName }}</div>
             <div class="patient-meta">
               <span class="pill">{{ patient.myRole ?? '—' }}</span>
               <span class="muted">DOB: {{ patient.dateOfBirth }}</span>
@@ -65,10 +68,15 @@ import { Patient } from '@salud/shared/types';
       .patient-list {
         gap: 0.65rem;
       }
+      /* Three sides, not the border shorthand: the leading edge belongs to the global
+         .accent-rail utility, and a shorthand here (specificity 0,2,1 against the utility's 0,1,0)
+         would quietly paint over it. */
       .patient-list li {
         border-radius: var(--radius-control);
         background: var(--surface-raised);
-        border: 1px solid var(--border);
+        border-top: 1px solid var(--border);
+        border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
       }
       .patient-button {
         width: 100%;
@@ -84,6 +92,9 @@ import { Patient } from '@salud/shared/types';
       .patient-name {
         font-weight: 700;
         margin-bottom: 0.25rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
       }
       .patient-meta {
         display: flex;
@@ -116,6 +127,12 @@ export class PatientsListPage implements OnInit {
     } else {
       this.loadPatients();
     }
+  }
+
+  // An unrecognised token matches no palette rule, so the row keeps the neutral fallback rather
+  // than losing its rail entirely — see the palette block in styles.css.
+  protected accentClass(patient: Patient) {
+    return patient.accentColor ? `accent-${patient.accentColor}` : '';
   }
 
   startAddPatient() {

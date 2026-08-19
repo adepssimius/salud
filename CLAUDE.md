@@ -34,6 +34,11 @@ yarn start:api && yarn start:web    # api on :3000, web on :4200 (proxies /api v
   (`tools/seed-catalog.ts`, idempotent by medication name). Dose guidance does nothing without it.
 - `yarn drizzle-kit generate --config=drizzle.config.ts` then `yarn drizzle-kit migrate --config=drizzle.config.ts`
   — generate/apply **once per dialect** (`DB_CLIENT=sqlite`/`DB_CLIENT=postgres`); see "Migrations".
+- `yarn migrate:attachments` — copies attachment blobs between storage backends (local⇄s3, s3⇄s3),
+  enumerated from `file_assets`, SHA-256 verified at the destination, resumable, non-destructive.
+  Run it **before** flipping `FILE_STORAGE_DRIVER` on a populated instance
+  (`apps/api/src/tools/migrate-attachments.ts`). Also ships in the api image as
+  `migrate-attachments.js` so a Job can run it in-cluster.
 - `yarn migrate:sqlite-to-postgres` — one-time copy of an existing SQLite instance's data into a
   (migrated, empty) Postgres target, with an orphan pre-flight and a row-count verification
   (`tools/sqlite-to-postgres.ts`).

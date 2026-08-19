@@ -33,6 +33,9 @@ FROM node:22.13.0-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=dist /main.js* ./
+# The attachment migration utility (app-spec/persistence.md → "Switching drivers is a data
+# migration"). Not run at startup; a Job invokes it as `node migrate-attachments.js`.
+COPY --from=dist /migrate-attachments.js* ./
 COPY --from=dist /assets ./assets
 COPY --from=prod-deps /app/node_modules ./node_modules
 RUN mkdir -p /data && chown -R node:node /data /app

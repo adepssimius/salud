@@ -12,6 +12,7 @@ const patient = {
   sexAtBirth: 'female',
   notes: null,
   ownedById: 'u1',
+  accentColor: 'teal',
   latestWeightKg: null,
   latestWeightRecordedAt: null,
   myRole: 'parent',
@@ -68,6 +69,16 @@ describe('PatientsListPage', () => {
     const component = fixture.componentInstance;
     expect(component.error()).toBe('Unable to load patients right now.');
     expect(component.loading()).toBe(false);
+  });
+
+  it('paints each row with the patient accent color', () => {
+    apiMock.get.mockReturnValue(of([patient]));
+    const fixture = TestBed.createComponent(PatientsListPage);
+    fixture.detectChanges();
+    const row = fixture.nativeElement.querySelector('.patient-list li');
+    expect(row.classList).toContain('accent-teal');
+    expect(row.classList).toContain('accent-rail');
+    expect(row.querySelector('.accent-dot')).toBeTruthy();
   });
 
   it('navigates into a patient and to the create form', () => {

@@ -99,12 +99,31 @@ export interface UserProfile {
 }
 
 // Patient DTOs
+// A patient's stable identity color, stored as a palette token rather than a hex value so the
+// palette can be retuned without a data migration (data-model.md → Patient). It encodes identity
+// and nothing else — never severity, never status — because the case this app is built for is two
+// children sick at once on the same medication at different weight-based doses, where the color is
+// the always-on guard against logging onto the wrong child's record (frontend.md → "Patient
+// identity"). The palette's runtime list lives with the server that assigns from it, in
+// apps/api/src/app/patients/accent-colors.ts.
+export type PatientAccentColor =
+  | 'teal'
+  | 'amber'
+  | 'violet'
+  | 'rose'
+  | 'lime'
+  | 'sky'
+  | 'fuchsia'
+  | 'indigo';
+
 export interface CreatePatientDto {
   fullName: string;
   dateOfBirth: string; // ISO date
   sexAtBirth: SexAtBirth;
   notes?: string;
   myRole?: CareTeamRole;
+  // Omit and the server assigns the least-used token across the caller's patients.
+  accentColor?: PatientAccentColor;
 }
 
 export interface UpdatePatientDto {
@@ -114,6 +133,7 @@ export interface UpdatePatientDto {
   notes?: string | null;
   ownedById?: string;
   myRole?: CareTeamRole;
+  accentColor?: PatientAccentColor;
 }
 
 export interface Patient {
@@ -123,6 +143,7 @@ export interface Patient {
   sexAtBirth: SexAtBirth;
   notes: string | null;
   ownedById: string;
+  accentColor: PatientAccentColor;
   latestWeightKg: number | null;
   latestWeightRecordedAt: number | null;
   myRole: CareTeamRole | null;

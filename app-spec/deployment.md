@@ -92,6 +92,38 @@ managed backups — is supported, not a one-way door requiring a fresh install:
 `yarn migrate:sqlite-to-postgres` (`persistence.md`) copies an existing SQLite instance's data
 across intact, with a pre-flight check and a row-count verification.
 
+## Moving attachments to object storage
+
+The order matters, and the failure mode of getting it wrong is silent: the API does not check that
+a blob exists before serving a row, so a premature driver flip turns every attachment into a broken
+image with nothing in the logs to say why.
+
+1. **Provision the bucket.** On this cluster that is an `ObjectBucketClaim` against
+   `rook-ceph-ssd-bucket-replicated` (Ceph RGW, `ssd-object-replicated`, replicated size 3 on both
+   the metadata and data pools). Rook answers the claim with a ConfigMap (`BUCKET_NAME`,
+   `BUCKET_HOST`, `BUCKET_PORT`) and a Secret (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) named
+   after the claim.
+2. **Copy the blobs, with the API still on `local`.** A Job running the api image with the old
+   volume mounted:
+   `node migrate-attachments.js --dry-run`, then the same without the flag. It reads from
+   `MIGRATE_SOURCE_LOCAL_BASE_PATH` and writes to the bucket described by the ordinary `S3_*`
+   variables, verifying each object by SHA-256 and stamping `file_assets.bucket` as it goes
+   (`persistence.md` → "Switching drivers is a data migration"). **It must exit 0.** A non-zero
+   exit means at least one row's blob is missing or failed to verify; investigate before going on.
+   Uploads during the copy are safe — new blobs land on `local` and a re-run picks them up, since
+   the run is resumable.
+3. **Flip the driver.** Set `FILE_STORAGE_DRIVER=s3` plus the bucket variables on the api
+   Deployment. The pod logs the live backend at boot (`file storage: s3, bucket: …`), which is the
+   quickest confirmation the env actually took.
+4. **Verify through the app**, not just the bucket: open an attachment that predates the migration
+   and confirm the bytes come back. The migration tool leaves the source copy intact precisely so
+   this step can fail safely — reverting `FILE_STORAGE_DRIVER` restores the previous behaviour.
+5. **Only then reclaim the volume.** Dropping the PVC is what removes the last piece of node-local
+   state and lets the api move off `replicas: 1` / `strategy: Recreate`. The PVC's StorageClass is
+   `reclaimPolicy: Retain`, so removing the claim leaves the PV — and the RBD image behind it —
+   intact and `Released`. Deleting those is a separate manual step, irreversible, and worth
+   deferring until the bucket has a backup story.
+
 ## Access control
 
 As deployed today, the host still sits behind Authelia forward-auth, `policy: one_factor`,

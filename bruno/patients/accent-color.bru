@@ -1,0 +1,46 @@
+meta {
+  name: Set Accent Color
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "accentColor": "violet"
+  }
+}
+
+vars:pre-request {
+  ~patientId: d85d5367-ce33-4d91-a955-9345f67dec99
+}
+
+script:pre-request {
+  let pid = bru.getRequestVar('patientId') || bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+assert {
+  res.body.accentColor: eq violet
+}
+
+docs {
+  The accent color is a palette token, never a hex value — the server rejects anything outside the
+  palette with a 400 (api.md → Patients). Omit it on create and the server assigns the least-used
+  token across your patients; this request is the "I want that one to be violet" path.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

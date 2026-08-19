@@ -15,6 +15,7 @@ const patient = {
   sexAtBirth: 'female',
   notes: null,
   ownedById: 'u1',
+  accentColor: 'violet',
   latestWeightKg: 18,
   latestWeightRecordedAt: nowSeconds() - 5 * 86400,
   myRole: 'parent',
@@ -129,6 +130,23 @@ describe('PatientHubShell', () => {
     stale.detectChanges();
     expect(stale.componentInstance.weightStale()).toBe(true);
     expect(stale.nativeElement.textContent).toContain('weight never recorded');
+  });
+
+  it('carries the patient accent color in the header', () => {
+    const fixture = build();
+    expect(fixture.componentInstance.accentClass()).toBe('accent-violet');
+    const header = fixture.nativeElement.querySelector('.hub-header');
+    expect(header.classList).toContain('accent-violet');
+    expect(header.classList).toContain('accent-rail');
+    expect(fixture.nativeElement.querySelector('.accent-dot')).toBeTruthy();
+  });
+
+  it('leaves the header neutral until the patient resolves', () => {
+    // No class at all rather than a guessed one: a color that changes once the payload lands is
+    // the opposite of the stable identity cue this is for.
+    const fixture = build();
+    fixture.componentInstance['store'].patient.set(null);
+    expect(fixture.componentInstance.accentClass()).toBe('');
   });
 
   it('sends a request with no patient id back to the list', () => {

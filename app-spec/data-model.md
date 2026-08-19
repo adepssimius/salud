@@ -26,7 +26,8 @@ seconds — see `api.md` → Conventions.
   creation — least-used token across the requester's accessible patients first — and editable via
   the general patient PATCH. Encodes identity only (frontend.md → "Patient identity"): with several
   patients sick at once, the color is the always-on guard against logging onto the wrong child's
-  record.
+  record. A patient row predating the column resolves to a stable token derived from its id, so the
+  field is always a token on the wire and no surface has to render a colorless patient.
 - `latestWeightKg: decimal(5,2)` (denormalized helper)
 - `latestWeightRecordedAt: datetime`
   - Updated whenever a `weight` observation entry is created **or edited**, on this patient, anywhere on
