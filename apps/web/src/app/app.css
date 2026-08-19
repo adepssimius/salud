@@ -9,10 +9,22 @@
 }
 
 .app-shell {
-  max-width: 960px;
+  /* Wider than v1's 960px: the desktop rail takes a column, leaving content near its old width. */
+  max-width: 1200px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
   position: relative;
+}
+
+/* Clearance for the fixed bottom bar. */
+.shell-authed {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 900px) {
+  .shell-authed {
+    padding-bottom: 3rem;
+  }
 }
 
 .app-header {
@@ -125,4 +137,104 @@
   border-radius: var(--radius-card);
   padding: 1.5rem;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+/* ---- app body: rail + content ------------------------------------------- */
+
+.app-body {
+  display: block;
+}
+
+@media (min-width: 900px) {
+  .app-body {
+    display: grid;
+    grid-template-columns: 13.5rem minmax(0, 1fr);
+    gap: 1.5rem;
+    align-items: start;
+  }
+}
+
+/* The desktop left rail; below 900px the bottom bar carries the same destinations within thumb
+   reach (frontend.md → "Information architecture (v2)" → App shell). */
+.side-rail {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .side-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    position: sticky;
+    top: 1.5rem;
+    padding: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+  }
+}
+
+.rail-link {
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-input);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rail-link:hover {
+  background: var(--surface-raised);
+  color: var(--accent-focus);
+}
+
+.rail-link.active {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-soft);
+}
+
+.rail-muted {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.rail-add {
+  margin: 0.35rem 0 0.5rem;
+  text-align: center;
+}
+
+.rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Manage sits at the bottom: monthly setup, not the urgent path. */
+.rail-bottom {
+  margin-top: auto;
+}
+
+.rail-label {
+  padding: 0.25rem 0.65rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.menu-label {
+  padding: 0.4rem 0.65rem 0.15rem;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rail-link:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
 }
