@@ -9,9 +9,19 @@ import { ApiClientService } from './api-client.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <a *ngIf="objectUrl()" [href]="objectUrl()" target="_blank" rel="noopener" class="photo-thumb">
+    <a
+      *ngIf="objectUrl() && link"
+      [href]="objectUrl()"
+      target="_blank"
+      rel="noopener"
+      class="photo-thumb"
+      [class.large]="large"
+    >
       <img [src]="objectUrl()" alt="photo entry" />
     </a>
+    <span *ngIf="objectUrl() && !link" class="photo-thumb" [class.large]="large">
+      <img [src]="objectUrl()" alt="photo entry" />
+    </span>
   `,
   styles: [
     `
@@ -26,6 +36,10 @@ import { ApiClientService } from './api-client.service';
         border-radius: 8px;
         border: 1px solid rgba(255, 255, 255, 0.15);
       }
+      .large img {
+        width: 136px;
+        height: 136px;
+      }
     `,
   ],
 })
@@ -33,6 +47,9 @@ export class PhotoThumbnailComponent implements OnChanges, OnDestroy {
   private readonly api = inject(ApiClientService);
 
   @Input({ required: true }) fileId!: string;
+  /** false renders a plain image with no anchor — for use inside a card that is itself a button. */
+  @Input() link = true;
+  @Input() large = false;
 
   objectUrl = signal<string | null>(null);
 

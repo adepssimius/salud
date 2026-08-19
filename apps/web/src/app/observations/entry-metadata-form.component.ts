@@ -1,4 +1,14 @@
-import { Component, EventEmitter, Input, OnInit, Output, inject, signal } from '@angular/core';
+import {
+  Component,
+  EventEmitter,
+  Input,
+  OnChanges,
+  OnInit,
+  Output,
+  SimpleChanges,
+  inject,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiClientService } from '../core/api-client.service';
@@ -21,7 +31,28 @@ export interface EntryDraft {
   metadata: any;
 }
 
-type Side = 'left' | 'right' | 'bilateral' | 'n/a';
+export type Side = 'left' | 'right' | 'bilateral' | 'n/a';
+
+/**
+ * One photographed site within the selected episode — a (bodyLocation, side) group of its photo
+ * entries, represented by the group's most recent photo (frontend.md → Photos, F-8.2 v2).
+ */
+export interface PhotoReferenceGroup {
+  /** Stored casing of the group's most recent photo — what a tap prefills. */
+  bodyLocation: string;
+  side: Side;
+  /** The group's most recent photo — the framing to match. */
+  fileId: string;
+  /** Epoch seconds of that photo. */
+  timestamp: number;
+  /** Photos at this site in the episode, so an established series announces itself. */
+  count: number;
+}
+
+/** Grouping identity: location compared trimmed and case-insensitively, side exactly. */
+export function photoSiteKey(bodyLocation: string, side: Side): string {
+  return `${bodyLocation.trim().toLowerCase()}|${side}`;
+}
 type SymptomSeverity = 'mild' | 'moderate' | 'severe';
 
 // The five types that are just "one number plus an optional note" share a single form driven by
@@ -210,9 +241,30 @@ export function toCm(value: number, unit: LengthUnit): number {
       </ng-container>
 
       <ng-container *ngIf="entryType === 'photo'">
-        <div class="framing-hint" *ngIf="framingHintFileId">
+        <!-- One card per photographed site in the episode; a tap picks the framing reference and
+             prefills location/side. Untapped, this is purely informational — nothing is
+             pre-selected on the caregiver's behalf (frontend.md → Photos, F-8.2 v2). -->
+        <div class="framing-refs" *ngIf="referenceGroups.length">
+          <span class="muted small">Previous photos in this episode — tap to match framing:</span>
+          <div class="ref-strip">
+            <button
+              type="button"
+              class="ref-card"
+              *ngFor="let g of referenceGroups"
+              [class.active]="isSelectedReference(g)"
+              (click)="toggleReference(g)"
+            >
+              <app-photo-thumbnail [fileId]="g.fileId" [link]="false"></app-photo-thumbnail>
+              <span class="ref-label">{{ referenceLabel(g) }}</span>
+              <span class="muted small">
+                {{ g.timestamp * 1000 | date: 'MMM d' }}<ng-container *ngIf="g.count > 1"> · {{ g.count }} photos</ng-container>
+              </span>
+            </button>
+          </div>
+        </div>
+        <div class="framing-hint" *ngIf="selectedReference() as ref">
           <span class="muted small">Frame it like this one:</span>
-          <app-photo-thumbnail [fileId]="framingHintFileId"></app-photo-thumbnail>
+          <app-photo-thumbnail [fileId]="ref.fileId" [large]="true"></app-photo-thumbnail>
         </div>
         <label class="field">
           <span>Photo</span>
@@ -223,11 +275,17 @@ export function toCm(value: number, unit: LengthUnit): number {
         <app-photo-thumbnail *ngIf="photoUploadedFileId() as fid" [fileId]="fid"></app-photo-thumbnail>
         <label class="field">
           <span>Body location</span>
-          <input type="text" [(ngModel)]="bodyLocation" name="photoBodyLocation" placeholder="e.g. left forearm" />
+          <input
+            type="text"
+            [ngModel]="bodyLocation"
+            (ngModelChange)="onPhotoLocationInput($event)"
+            name="photoBodyLocation"
+            placeholder="e.g. left forearm"
+          />
         </label>
         <label class="field">
           <span>Side</span>
-          <select [(ngModel)]="side" name="photoSide">
+          <select [ngModel]="side" (ngModelChange)="onPhotoSideInput($event)" name="photoSide">
             <option *ngFor="let s of sides" [value]="s">{{ s }}</option>
           </select>
         </label>
@@ -357,6 +415,40 @@ export function toCm(value: number, unit: LengthUnit): number {
         color: #7dd3fc;
         font-weight: 700;
       }
+      .framing-refs {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .ref-strip {
+        display: flex;
+        gap: 0.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.25rem;
+      }
+      .ref-card {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.5rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: transparent;
+        color: #e2e8f0;
+        cursor: pointer;
+        font: inherit;
+      }
+      .ref-card.active {
+        background: rgba(34, 211, 238, 0.15);
+        border-color: rgba(34, 211, 238, 0.45);
+      }
+      .ref-label {
+        font-size: 0.85rem;
+        max-width: 7.5rem;
+        text-align: center;
+      }
       .framing-hint {
         display: flex;
         align-items: center;
@@ -368,12 +460,12 @@ export function toCm(value: number, unit: LengthUnit): number {
     `,
   ],
 })
-export class EntryMetadataFormComponent implements OnInit {
+export class EntryMetadataFormComponent implements OnChanges, OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
 
   @Input() patientId = '';
-  @Input() framingHintFileId: string | null = null;
+  @Input() referenceGroups: PhotoReferenceGroup[] = [];
   /**
    * Set when Quick Log picked the verb: the type is fixed and its picker disappears. Applied once,
    * in ngOnInit — the caregiver is still free to change nothing, since there is nothing to change.
@@ -425,6 +517,17 @@ export class EntryMetadataFormComponent implements OnInit {
     if (this.initialTempMethod) this.tempMethod = this.initialTempMethod;
   }
 
+  ngOnChanges(changes: SimpleChanges): void {
+    // Groups are rebuilt objects on every episode refetch — re-point the selection at its site's
+    // fresh group, or drop it when the site is gone (episode changed underneath the caregiver).
+    if (changes['referenceGroups']) {
+      const ref = this.selectedReference();
+      if (ref) {
+        this.selectedReference.set(this.referenceGroups.find((g) => this.sameSite(g, ref)) ?? null);
+      }
+    }
+  }
+
   // Shared across the number-driven types
   numberValue: number | null = null;
   entryNote = '';
@@ -454,6 +557,8 @@ export class EntryMetadataFormComponent implements OnInit {
   // shared by lesion_size and photo
   bodyLocation = '';
   side: Side = 'n/a';
+
+  selectedReference = signal<PhotoReferenceGroup | null>(null);
 
   symptomTag = '';
   symptomSeverity: SymptomSeverity | null = null;
@@ -520,7 +625,56 @@ export class EntryMetadataFormComponent implements OnInit {
 
   onTypeChange(type: ObservationType) {
     this.error.set(null);
+    // The shared location/side fields stay editable under lesion_size, where edits bypass the
+    // photo handlers that would clear a stale reference — so drop it on the way out.
+    if (type !== 'photo') this.selectedReference.set(null);
     this.typeChange.emit(type);
+  }
+
+  referenceLabel(group: PhotoReferenceGroup): string {
+    return group.side === 'n/a' ? group.bodyLocation : `${group.bodyLocation} · ${group.side}`;
+  }
+
+  isSelectedReference(group: PhotoReferenceGroup): boolean {
+    const ref = this.selectedReference();
+    return !!ref && this.sameSite(group, ref);
+  }
+
+  toggleReference(group: PhotoReferenceGroup) {
+    if (this.isSelectedReference(group)) {
+      this.selectedReference.set(null);
+      return;
+    }
+    // Prefill location and side only — never sizeCm or note, which are the things being
+    // re-measured (frontend.md → Photos, F-8.2 v2).
+    this.selectedReference.set(group);
+    this.bodyLocation = group.bodyLocation;
+    this.side = group.side;
+  }
+
+  onPhotoLocationInput(value: string) {
+    this.bodyLocation = value;
+    this.clearReferenceIfEdited();
+  }
+
+  onPhotoSideInput(value: Side) {
+    this.side = value;
+    this.clearReferenceIfEdited();
+  }
+
+  // An edited site means the reference is no longer known to be the right analogue — a photo of a
+  // different site must not influence the framing of what may be an unrelated finding, so the
+  // selection clears rather than staying pinned.
+  private clearReferenceIfEdited() {
+    const ref = this.selectedReference();
+    if (!ref) return;
+    if (this.bodyLocation !== ref.bodyLocation || this.side !== ref.side) {
+      this.selectedReference.set(null);
+    }
+  }
+
+  private sameSite(a: PhotoReferenceGroup, b: PhotoReferenceGroup): boolean {
+    return photoSiteKey(a.bodyLocation, a.side) === photoSiteKey(b.bodyLocation, b.side);
   }
 
   onPhotoFileSelected(event: Event) {
@@ -729,6 +883,7 @@ export class EntryMetadataFormComponent implements OnInit {
     this.lesionDepth = null;
     this.bodyLocation = '';
     this.side = 'n/a';
+    this.selectedReference.set(null);
     this.symptomTag = '';
     this.symptomSeverity = null;
     this.tagValue = '';

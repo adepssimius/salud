@@ -5,7 +5,12 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
-import { EntryDraft, EntryMetadataFormComponent } from './entry-metadata-form.component';
+import {
+  EntryDraft,
+  EntryMetadataFormComponent,
+  PhotoReferenceGroup,
+  photoSiteKey,
+} from './entry-metadata-form.component';
 import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { entrySummary, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
@@ -110,7 +115,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
 
         <app-entry-metadata-form
           [patientId]="form.getRawValue().patientId"
-          [framingHintFileId]="framingHintFileId()"
+          [referenceGroups]="framingReferences()"
           [lockedType]="lockedEntryType()"
           [initialTempMethod]="initialTempMethod()"
           (typeChange)="onEntryTypeChange($event)"
@@ -213,10 +218,10 @@ export class NewObservationPage implements OnInit {
   entries = signal<EntryDraft[]>([]);
   firedAdvisories = signal<Advisory[]>([]);
 
-  // Mirrors the child form's current type so episode changes only refetch the framing hint when a
-  // photo is actually being composed.
+  // Mirrors the child form's current type so episode changes only refetch the framing references
+  // when a photo is actually being composed.
   entryType: ObservationType = 'temperature';
-  framingHintFileId = signal<string | null>(null);
+  framingReferences = signal<PhotoReferenceGroup[]>([]);
 
   selectedEpisodeIds = computed(() => this.formEpisodeIds());
   private formEpisodeIds = signal<string[]>([]);
@@ -339,7 +344,7 @@ export class NewObservationPage implements OnInit {
     this.formEpisodeIds.set(ids);
     const withNew = this.createNewEpisode() ? [...ids, '__new__'] : ids;
     this.form.patchValue({ episodeSelection: withNew });
-    if (this.entryType === 'photo') this.refreshFramingHint();
+    if (this.entryType === 'photo') this.refreshFramingReferences();
   }
 
   setCreateNew(checked: boolean) {
@@ -357,7 +362,7 @@ export class NewObservationPage implements OnInit {
     this.entryType = type;
     this.error.set(null);
     if (type === 'photo') {
-      this.refreshFramingHint();
+      this.refreshFramingReferences();
     }
   }
 
@@ -368,11 +373,11 @@ export class NewObservationPage implements OnInit {
     return entrySummary(entry, unitsFor(this.auth.user()));
   }
 
-  private refreshFramingHint() {
+  private refreshFramingReferences() {
     const { patientId, episodeSelection } = this.form.getRawValue();
     const episodeId = (episodeSelection || []).find((id) => id !== '__new__');
     if (!patientId || !episodeId) {
-      this.framingHintFileId.set(null);
+      this.framingReferences.set([]);
       return;
     }
     this.api.get<TimelineResponse>(`/patients/${patientId}/timeline`, { episodeId }).subscribe({
@@ -382,12 +387,34 @@ export class NewObservationPage implements OnInit {
           .flatMap((e) =>
             ((e.display as any).entries ?? [])
               .filter((x: any) => x.type === 'photo' && x.metadata?.fileId)
-              .map((x: any) => ({ timestamp: e.timestamp, fileId: x.metadata.fileId as string })),
+              .map((x: any) => ({
+                timestamp: e.timestamp,
+                fileId: x.metadata.fileId as string,
+                bodyLocation: ((x.metadata.bodyLocation as string) ?? '').trim(),
+                side: ((x.metadata.side as PhotoReferenceGroup['side']) ?? 'n/a') as PhotoReferenceGroup['side'],
+              })),
           )
           .sort((a, b) => b.timestamp - a.timestamp);
-        this.framingHintFileId.set(photoEntries.length ? photoEntries[0].fileId : null);
+        // One group per photographed site, ordered by the recency of each site's latest photo —
+        // which, iterating newest-first, is the group's first occurrence (F-8.2 v2).
+        const groups = new Map<string, PhotoReferenceGroup>();
+        for (const p of photoEntries) {
+          const existing = groups.get(photoSiteKey(p.bodyLocation, p.side));
+          if (existing) {
+            existing.count++;
+          } else {
+            groups.set(photoSiteKey(p.bodyLocation, p.side), {
+              bodyLocation: p.bodyLocation,
+              side: p.side,
+              fileId: p.fileId,
+              timestamp: p.timestamp,
+              count: 1,
+            });
+          }
+        }
+        this.framingReferences.set([...groups.values()]);
       },
-      error: () => this.framingHintFileId.set(null),
+      error: () => this.framingReferences.set([]),
     });
   }
 

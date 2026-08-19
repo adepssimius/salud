@@ -604,11 +604,25 @@ unconditional by design (er-brief.md → Formats).
   `POST /api/files` with the form's already-selected `patientId`; the returned `fileId` populates
   the entry's metadata alongside body-location/side/note fields. `sizeCm` is entered in the
   caregiver's `preferredLengthUnit` and converted to cm like every other length field.
-  - **Framing hint (F-8.2, v1 — client-only)**: when the form has an episode selected (existing or
-    being created) and that episode already has a photo entry among its events, show the most
-    recent one's thumbnail next to the picker with the hint "frame it like this one." Fetched via
-    the existing timeline query filtered to the episode, no new endpoint. Full framing assistance
-    (ghost overlay, side-by-side) stays deferred per requirements §9.
+  - **Framing references (F-8.2, v2 — client-only)**: when the form has an episode selected and
+    that episode already has photo entries among its events, they are grouped by photographed
+    site — `(bodyLocation, side)`, location compared trimmed and case-insensitively — and each
+    group becomes one card in a horizontally scrollable strip next to the picker: the group's
+    most recent thumbnail, a site label ("ear drum · right"; the side is omitted when `n/a`),
+    the latest photo's date, and a photo count when the group holds more than one. Groups are
+    ordered by the recency of their latest photo.
+    - Tapping a card selects it as the framing reference — its photo shows enlarged with the
+      hint "frame it like this one" — and pre-fills `bodyLocation` and `side` from the group
+      (the stored casing of its latest photo). Only those two fields carry over; `sizeCm` and
+      `note` never do — they are the things being re-measured.
+    - Nothing is pre-selected or pre-filled without a tap: untapped, the strip is purely
+      informational (P5 — a visible choice, never a silent inference).
+    - Editing either prefilled field away from the selected group's values clears the selection
+      and the enlarged reference entirely — a photo of a *different* site must not influence
+      the framing of what may be an unrelated finding. Tapping the selected card again also
+      deselects.
+    - Fetched via the existing timeline query filtered to the episode, no new endpoint. Full
+      framing assistance (ghost overlay, side-by-side) stays deferred per requirements §9.
   - Timeline and episode views render `photo` entries as an inline thumbnail (fetched via
     `GET /api/files/:id`, same access control as every other patient-scoped read) rather than a
     text summary line.
