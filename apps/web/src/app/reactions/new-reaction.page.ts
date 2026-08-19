@@ -5,6 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 import { concentrationText } from '../core/concentration-display';
+import { MedicationTypeaheadComponent } from '../core/medication-typeahead.component';
 import {
   AdverseReaction,
   CreateReactionDto,
@@ -22,7 +23,7 @@ import {
 @Component({
   selector: 'app-new-reaction-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, MedicationTypeaheadComponent],
   template: `
     <div class="card">
       <button type="button" class="link" (click)="backToPatient()">&larr; Patient</button>
@@ -53,28 +54,10 @@ import {
 
         <!-- medication / embodiment both start by choosing a medication -->
         <ng-container *ngIf="scopeType() !== 'tag'">
-          <div class="field med-search" *ngIf="!selectedMedication()">
-            <span>Medication</span>
-            <input
-              type="text"
-              [value]="medicationQuery()"
-              (input)="onMedicationQueryChange($event)"
-              placeholder="Search by name or brand"
-            />
-            <ul class="med-results" *ngIf="medicationResults().length">
-              <li *ngFor="let m of medicationResults()">
-                <button type="button" class="med-result" (click)="selectMedication(m)">
-                  {{ m.name }}
-                  <span class="muted small" *ngIf="m.brandNames.length"> — {{ m.brandNames.join(', ') }}</span>
-                </button>
-              </li>
-            </ul>
-          </div>
-
-          <div class="chosen-med" *ngIf="selectedMedication() as med">
-            <span>{{ med.name }}</span>
-            <button type="button" class="link" (click)="clearMedication()">Change</button>
-          </div>
+          <app-medication-typeahead
+            [selected]="selectedMedication()"
+            (selectedChange)="onMedicationChange($event)"
+          ></app-medication-typeahead>
 
           <label class="field" *ngIf="scopeType() === 'embodiment' && selectedMedication()">
             <span>Which form</span>
@@ -137,48 +120,6 @@ import {
         gap: 0.5rem;
         margin-top: 0.5rem;
       }
-      .med-search {
-        position: relative;
-      }
-      .med-results {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        z-index: 10;
-        list-style: none;
-        margin: 0.25rem 0 0;
-        padding: 0.25rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: #0b1224;
-        max-height: 220px;
-        overflow-y: auto;
-      }
-      .med-result {
-        width: 100%;
-        text-align: left;
-        padding: 0.5rem 0.6rem;
-        border-radius: 6px;
-        border: none;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        cursor: pointer;
-      }
-      .med-result:hover {
-        background: rgba(255, 255, 255, 0.08);
-      }
-      .chosen-med {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.06);
-      }
     `,
   ],
 })
@@ -194,8 +135,6 @@ export class NewReactionPage implements OnInit {
 
   saving = signal(false);
   error = signal<string | null>(null);
-  medicationQuery = signal('');
-  medicationResults = signal<Medication[]>([]);
   selectedMedication = signal<Medication | null>(null);
   embodiments = signal<MedicationEmbodiment[]>([]);
   catalog = signal<Medication[]>([]);
@@ -248,36 +187,21 @@ export class NewReactionPage implements OnInit {
     this.embodiments.set([]);
   }
 
-  onMedicationQueryChange(event: Event) {
-    const q = (event.target as HTMLInputElement).value;
-    this.medicationQuery.set(q);
-    if (!q) {
-      this.medicationResults.set([]);
-      return;
-    }
-    this.api.get<Medication[]>('/medications', { q }).subscribe({
-      next: (res) => this.medicationResults.set(res),
-      error: () => this.medicationResults.set([]),
-    });
-  }
-
-  selectMedication(medication: Medication) {
+  /**
+   * One handler for both directions of the shared typeahead: picking a medication and clearing it.
+   * `embodimentId` is reset either way -- a form belongs to the medication that was chosen, so
+   * carrying one across a change of medication would send a target from the previous selection.
+   */
+  onMedicationChange(medication: Medication | null) {
     this.selectedMedication.set(medication);
-    this.medicationResults.set([]);
-    this.medicationQuery.set('');
-    this.form.patchValue({ medicationId: medication.id, embodimentId: '' });
-    if (this.scopeType() === 'embodiment') {
+    this.embodiments.set([]);
+    this.form.patchValue({ medicationId: medication?.id ?? '', embodimentId: '' });
+    if (medication && this.scopeType() === 'embodiment') {
       this.api.get<MedicationEmbodiment[]>(`/medications/${medication.id}/embodiments`).subscribe({
         next: (res) => this.embodiments.set(res),
         error: () => this.embodiments.set([]),
       });
     }
-  }
-
-  clearMedication() {
-    this.selectedMedication.set(null);
-    this.embodiments.set([]);
-    this.form.patchValue({ medicationId: '', embodimentId: '' });
   }
 
   save() {

@@ -91,6 +91,9 @@ export const ERROR_SENTENCES = {
   // never this caregiver's, or the id was mistyped.
   PATIENT_NOT_FOUND: 'This patient is not available. Go back to your patients list and choose from there.',
   PROTOCOL_NOT_FOUND: 'That protocol is no longer available.',
+  // Two caregivers on the same care team can be looking at this list at once, so "already removed"
+  // is the likely cause rather than anything the reader did wrong.
+  REACTION_NOT_FOUND: 'That reaction is no longer recorded — someone may have removed it already. Reload this patient.',
   RESOLVES_MUST_BE_SUBSET_OF_EPISODES:
     'You can only resolve an episode this entry belongs to. Add the episode first, then mark it resolved.',
   SCHEDULE_EPISODE_CONDITION_CONFLICT:

@@ -1,7 +1,15 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, effect, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { AdverseReaction, InterventionSchedule, Medication } from '@salud/shared/types';
+import { forkJoin, of } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
+import {
+  AdverseReaction,
+  InterventionSchedule,
+  Medication,
+  MedicationEmbodiment,
+} from '@salud/shared/types';
+import { concentrationText } from '../../core/concentration-display';
 import { ApiClientService } from '../../core/api-client.service';
 import { errorText } from '../../core/error-display';
 import { PatientHubStore } from '../patient-hub.store';
@@ -51,23 +59,40 @@ import { PatientHubStore } from '../patient-hub.store';
         <div class="error" *ngIf="reactionsError()">{{ reactionsError() }}</div>
         <ul class="row-list" *ngIf="store.reactions().length">
           <li *ngFor="let r of store.reactions()">
-            <span>
-              <span class="pill" [class.pill-danger]="r.severity === 'danger'" [class.pill-neutral]="r.severity !== 'danger'">
-                {{ r.severity }}
+            <span class="reaction">
+              <span class="reaction-head">
+                <span
+                  class="pill"
+                  [class.pill-danger]="r.severity === 'danger'"
+                  [class.pill-neutral]="r.severity !== 'danger'"
+                  >{{ r.severity }}</span
+                >
+                <!-- The caregiver's own sentence, rendered as they typed it. -->
+                <span class="description">{{ r.description }}</span>
               </span>
-              {{ r.description }}
-              <span class="muted small"> — {{ describeReactionScope(r) }}</span>
-              <span class="muted small">
-                ·
-                <ng-container *ngIf="r.occurredAt; else noDate">{{
-                  r.occurredAt! * 1000 | date: 'mediumDate'
-                }}</ng-container>
-                <ng-template #noDate>Date unknown</ng-template>
+              <span class="muted small reaction-meta">
+                <span>{{ describeReactionScope(r) }}</span>
+                <span aria-hidden="true">·</span>
+                <!-- Never an epoch-zero date on a clinical record: an unknown date says so
+                     (frontend.md -> Reactions -> List row). -->
+                <span>{{
+                  r.occurredAt ? (r.occurredAt * 1000 | date: 'mediumDate') : 'Date unknown'
+                }}</span>
+                <ng-container *ngIf="recordedBy(r) as who">
+                  <span aria-hidden="true">·</span>
+                  <span>recorded by {{ who }}</span>
+                </ng-container>
               </span>
             </span>
             <button type="button" class="tiny" (click)="deleteReaction(r)">Remove</button>
           </li>
         </ul>
+        <!-- There is no PATCH for a reaction (ISSUES.md #30), and a caregiver who spots a typo
+             needs to be told what to do about it rather than hunting for an edit affordance that
+             does not exist. -->
+        <p class="muted small correction-note" *ngIf="store.reactions().length">
+          Reactions can't be edited. To correct one, remove it and record it again.
+        </p>
         <p class="muted" *ngIf="!store.reactions().length">No reactions recorded.</p>
       </div>
     </div>
@@ -120,6 +145,31 @@ import { PatientHubStore } from '../patient-hub.store';
       .pill {
         text-transform: capitalize;
       }
+      .reaction {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        min-width: 0;
+      }
+      .reaction-head {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+      }
+      .description {
+        font-weight: 700;
+      }
+      /* Scope, date and attribution wrap as a group on a phone rather than forcing the row wide. */
+      .reaction-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        flex-wrap: wrap;
+      }
+      .correction-note {
+        margin: 0.6rem 0 0;
+      }
     `,
   ],
 })
@@ -132,6 +182,22 @@ export class PatientMedsPage implements OnInit {
   schedulesError = signal<string | null>(null);
   reactionsError = signal<string | null>(null);
   private medicationNames = signal<Record<string, string>>({});
+  /** `embodimentId` -> "acetaminophen — 160 mg/5 mL suspension (Children's Tylenol)". */
+  private embodimentLabels = signal<Record<string, string>>({});
+  private scopeNamesRequested = false;
+
+  constructor() {
+    // The hub store fetches reactions over HTTP and the shell renders this tab straight after
+    // kicking that off, so the list is still empty when ngOnInit runs. Reading it there resolved
+    // nothing and left every medication-scoped row saying "a medication" for the life of the page;
+    // waiting for the signal instead resolves them the moment the reactions land.
+    effect(() => {
+      const reactions = this.store.reactions();
+      if (!reactions.length || this.scopeNamesRequested) return;
+      this.scopeNamesRequested = true;
+      this.loadScopeNames(reactions);
+    });
+  }
 
   get patientId() {
     return this.store.patientId();
@@ -139,7 +205,6 @@ export class PatientMedsPage implements OnInit {
 
   ngOnInit(): void {
     this.loadSchedules();
-    this.loadMedicationNames();
   }
 
   private loadSchedules() {
@@ -150,22 +215,66 @@ export class PatientMedsPage implements OnInit {
   }
 
   /** One catalog fetch resolves every medication-scoped reaction's name; a lookup per row was N+1. */
-  private loadMedicationNames() {
-    if (!this.store.reactions().length) return;
+  private loadScopeNames(reactions: AdverseReaction[]) {
+    const needsEmbodiments = reactions.some((r) => r.scopeType === 'embodiment');
     this.api.get<Medication[]>('/medications').subscribe({
-      next: (meds) => this.medicationNames.set(Object.fromEntries(meds.map((m) => [m.id, m.name]))),
+      next: (meds) => {
+        this.medicationNames.set(Object.fromEntries(meds.map((m) => [m.id, m.name])));
+        if (needsEmbodiments) this.loadEmbodimentLabels(meds);
+      },
       error: () => this.medicationNames.set({}),
+    });
+  }
+
+  /**
+   * An embodiment-scoped reaction stores only `embodimentId`, and no endpoint resolves one on its
+   * own — so the forms are gathered per medication and indexed by id. Fanned out only when a row
+   * actually needs it: a household catalog is a handful of medications, but this is still one
+   * request each, and most patients have no embodiment-scoped reaction at all. A medication whose
+   * forms fail to load drops out rather than failing the whole batch; its row falls back to the
+   * generic wording instead of the card losing every name it had already resolved.
+   */
+  private loadEmbodimentLabels(meds: Medication[]) {
+    if (!meds.length) return;
+    forkJoin(
+      meds.map((m) =>
+        this.api.get<MedicationEmbodiment[]>(`/medications/${m.id}/embodiments`).pipe(
+          map((forms) => ({ med: m, forms })),
+          catchError(() => of({ med: m, forms: [] as MedicationEmbodiment[] })),
+        ),
+      ),
+    ).subscribe((results) => {
+      const labels: Record<string, string> = {};
+      for (const { med, forms } of results) {
+        for (const f of forms) {
+          // A label is usually already the strength as printed ("160 mg/5 mL suspension"), in which
+          // case prefixing the derived concentration says the same thing twice. Append it only for
+          // a bare label ("suspension") that would otherwise not say how strong the form is.
+          const conc = f.label.includes('mg') ? null : concentrationText(f);
+          labels[f.id] = `${med.name} — ${conc ? `${conc} ` : ''}${f.label}`;
+        }
+      }
+      this.embodimentLabels.set(labels);
     });
   }
 
   describeReactionScope(r: AdverseReaction): string {
     if (r.scopeType === 'tag') return `tag: ${r.tag}`;
-    if (r.scopeType === 'medication' && r.medicationId) {
-      return this.medicationNames()[r.medicationId] ?? 'a medication';
+    if (r.scopeType === 'embodiment') {
+      return (r.embodimentId && this.embodimentLabels()[r.embodimentId]) || 'a specific form';
     }
-    // Embodiment names would need a second lookup per row; the form it applies to is visible on
-    // the medication page, and the description is what a caregiver scans this list for.
-    return 'a specific form';
+    return (r.medicationId && this.medicationNames()[r.medicationId]) || 'a medication';
+  }
+
+  /**
+   * Attribution (P3) read off the care team the hub already loaded — no extra request, and no
+   * second answer to who someone is. Null when the recorder has since left the care team, which
+   * reads better as no attribution at all than as a raw user id.
+   */
+  recordedBy(r: AdverseReaction): string | null {
+    const member = this.store.careTeam().find((m) => m.user.id === r.recordedByUserId);
+    if (!member) return null;
+    return member.user.displayName || member.user.email;
   }
 
   goToNewReaction() {
