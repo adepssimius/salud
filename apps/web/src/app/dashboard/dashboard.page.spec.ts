@@ -518,6 +518,54 @@ describe('DashboardPage', () => {
     // The identity color is a safety affordance, not decoration: with two children sick on the
     // same medication at different weight-based doses, it is the always-on guard against reading
     // the wrong card (frontend.md → "Patient identity").
+    // The regression guard for the NG0100 that turned CI red intermittently on main. Angular's
+    // dev-mode checkNoChanges pass re-renders immediately after the first pass; when the time
+    // labels read the wall clock on each pass, a second boundary landing between the two flipped
+    // "in 2h 30m" to "in 2h 29m" and threw. Production skips that pass, so the impurity showed up
+    // as a flaky test rather than a visible bug — but the same state was not rendering the same
+    // way twice, which is the actual defect.
+    describe('render is pure with respect to the clock', () => {
+      // A clock that jumps a full minute on every read. Under the fix nothing in the render path
+      // reads it at all — the component snapshots once at load — so the two passes agree. Restore
+      // the wall-clock reads and each pass lands in a different minute, which is the bug.
+      const installGallopingClock = () => {
+        const base = Date.now();
+        let call = 0;
+        jest.spyOn(Date, 'now').mockImplementation(() => base + call++ * 60_000);
+      };
+
+      afterEach(() => jest.restoreAllMocks());
+
+      it('does not throw NG0100 when the clock advances mid-render', () => {
+        // Build the payload on the real clock first, so the fixture's timestamps stay sane.
+        const payload = {
+          ...emptyPayload,
+          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() + 9000 })] })],
+          lastDoses: [{ patientId: 'p2', patientName: 'Bo', accentColor: 'rose', doses: [dose()] }],
+        };
+        installGallopingClock();
+
+        apiMock.get.mockReturnValue(of(payload));
+        const fixture = TestBed.createComponent(DashboardPage);
+        expect(() => fixture.detectChanges()).not.toThrow();
+        expect(() => fixture.detectChanges()).not.toThrow();
+      });
+
+      it('renders the same label twice for the same payload', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() + 9000 })] })],
+        });
+        const read = () => fixture.nativeElement.querySelector('.dose-hero').textContent.trim();
+        const first = read();
+        fixture.detectChanges();
+        expect(read()).toBe(first);
+        // Not pinned to an exact string: the fixture is built a moment before the component
+        // snapshots its clock, so "2h 30m" and "2h 29m" are both legitimate here. The property
+        // under test is that whichever one it picks, it keeps.
+        expect(first).toMatch(/^in \d+h \d+m$/);
+      });
+    });
+
     describe('accent colors', () => {
       it('carries the patient token on the sick card and the night-board row', () => {
         const fixture = render({

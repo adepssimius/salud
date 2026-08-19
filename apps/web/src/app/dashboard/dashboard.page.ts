@@ -427,6 +427,22 @@ export class DashboardPage implements OnInit {
   dashboard = signal<DashboardPayload | null>(null);
   error = signal<string | null>(null);
 
+  /**
+   * One clock read per load, shared by every time label and by the card ordering.
+   *
+   * Reading `Date.now()` inside the render methods instead — which is what this page used to do —
+   * makes rendering impure: Angular's dev-mode `checkNoChanges` pass runs immediately after the
+   * first, and a second boundary falling between the two flips "in 2h 30m" to "in 2h 29m" and
+   * throws NG0100. Production skips that pass, so it surfaced as an intermittently red test rather
+   * than a visible bug, but the impurity was real either way — the same render was not reproducible
+   * from the same state.
+   *
+   * Snapshotting also makes the no-live-ticker rule this page already claimed actually true: times
+   * advance when the payload is refetched (open, restock, log-and-return), which is exactly the
+   * "the dashboard is opened fresh in the case that matters" behavior frontend.md describes.
+   */
+  private nowTs = signal(Math.floor(Date.now() / 1000));
+
   sparkWidth = SPARK_WIDTH;
   sparkHeight = SPARK_HEIGHT;
 
@@ -445,7 +461,7 @@ export class DashboardPage implements OnInit {
   sickCards = computed<SickCard[]>(() => {
     const payload = this.dashboard();
     if (!payload) return [];
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = this.nowTs();
 
     const byPatient = new Map<string, SickCard>();
     for (const ep of payload.activeEpisodes) {
@@ -567,6 +583,9 @@ export class DashboardPage implements OnInit {
   private load() {
     this.api.get<DashboardPayload>('/dashboard').subscribe({
       next: (res) => {
+        // Before the payload, so the computeds that read both see a clock at least as new as the
+        // data rather than one from the previous load.
+        this.nowTs.set(Math.floor(Date.now() / 1000));
         this.dashboard.set(res);
         this.error.set(null);
       },
@@ -644,19 +663,19 @@ export class DashboardPage implements OnInit {
     });
   }
 
-  // Thin wrappers around core/relative-time.ts — re-evaluated on every change-detection pass, so
-  // they self-refresh on any interaction. No live ticker: the dashboard is opened fresh in the
-  // case that matters (frontend.md → "Times on this page are relative, not absolute").
+  // Thin wrappers around core/relative-time.ts, every one of them pinned to `nowTs` rather than to
+  // the wall clock — see that field for why a render that reads the clock twice is a defect and not
+  // just a flaky test (frontend.md → "Times on this page are relative, not absolute").
   ago(ts: number) {
-    return timeAgo(ts);
+    return timeAgo(ts, this.nowTs());
   }
 
   until(ts: number) {
-    return relativeTime(ts);
+    return relativeTime(ts, this.nowTs());
   }
 
   nextDose(ts: number | null) {
-    return nextDoseLabel(ts);
+    return nextDoseLabel(ts, this.nowTs());
   }
 
   /**
@@ -668,11 +687,11 @@ export class DashboardPage implements OnInit {
    */
   countdown(nextAllowedAt: number | null) {
     if (nextAllowedAt == null) return 'no interval given';
-    return this.doseReady(nextAllowedAt) ? 'can give now' : timeUntil(nextAllowedAt);
+    return this.doseReady(nextAllowedAt) ? 'can give now' : timeUntil(nextAllowedAt, this.nowTs());
   }
 
   doseReady(ts: number | null) {
-    return ts != null && ts <= Math.floor(Date.now() / 1000);
+    return ts != null && ts <= this.nowTs();
   }
 
   /**

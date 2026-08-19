@@ -27,6 +27,8 @@ export const ERROR_SENTENCES = {
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
+  // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
+  CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
   CONDITION_NOT_FOUND: 'That condition is no longer available. It may have been deleted.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   DOCUMENT_FILE_NOT_FOUND: 'That document could not be attached. Upload it again and retry.',

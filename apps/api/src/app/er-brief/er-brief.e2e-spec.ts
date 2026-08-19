@@ -187,6 +187,13 @@ describe('ER Brief (e2e)', () => {
     expect(res.body.header.protocolFiredReason.instructionText).toBe(
       'ER immediately, do not give antipyretics first',
     );
+    // All three care-document keys are always present. Null here is "not recorded" — the header
+    // must be able to say that, rather than omitting the field and looking like "none".
+    expect(res.body.header.careDocuments).toEqual({
+      livingWill: null,
+      advanceDirective: null,
+      medicalPoa: null,
+    });
   });
 
   it('computes mg/kg on the active schedule from the dose\'s own recorded weight, not the current patient weight', async () => {
@@ -466,6 +473,126 @@ describe('ER Brief (e2e)', () => {
       expect(scope.type).toBe('recent');
       expect(scope.since).toEqual(expect.any(Number));
       expect(scope.generatedAt).toEqual(expect.any(Number));
+    });
+  });
+
+  // The shared link is the copy a clinician actually opens, and it has no account to authenticate
+  // with — so a care document referenced in a frozen brief must be readable through the token, and
+  // nothing else may be (security.md → "ER Brief snapshot tokens").
+  describe('care documents on a frozen snapshot', () => {
+    let docPatientId: string;
+    let docFileId: string;
+    let otherFileId: string;
+    let snapshotToken: string;
+
+    beforeAll(async () => {
+      const patient = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: 'Directive Patient', dateOfBirth: '2015-03-03', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      docPatientId = patient.body.id;
+
+      const upload = await request(app.getHttpServer())
+        .post('/api/files')
+        .set('Authorization', `Bearer ${token}`)
+        .field('patientId', docPatientId)
+        .attach('file', Buffer.from('%PDF-1.4 advance directive'), {
+          filename: 'advance-directive.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(201);
+      docFileId = upload.body.fileId;
+
+      // A second file on the same patient that is NOT referenced by any care document — the token
+      // must not reach it just because it belongs to the same patient.
+      const other = await request(app.getHttpServer())
+        .post('/api/files')
+        .set('Authorization', `Bearer ${token}`)
+        .field('patientId', docPatientId)
+        .attach('file', Buffer.from('unrelated'), { filename: 'x-ray.png', contentType: 'image/png' })
+        .expect(201);
+      otherFileId = other.body.fileId;
+
+      await request(app.getHttpServer())
+        .put(`/api/patients/${docPatientId}/care-documents/advance_directive`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'on_file', fileId: docFileId })
+        .expect(200);
+
+      const snapshot = await request(app.getHttpServer())
+        .post(`/api/patients/${docPatientId}/er-brief/snapshots`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+      snapshotToken = snapshot.body.token;
+    });
+
+    it('freezes the care documents into the payload', async () => {
+      const shared = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}`)
+        .expect(200);
+
+      expect(shared.body.payload.header.careDocuments.advanceDirective).toMatchObject({
+        status: 'on_file',
+        fileId: docFileId,
+        originalName: 'advance-directive.pdf',
+      });
+      expect(shared.body.payload.header.careDocuments.livingWill).toBeNull();
+    });
+
+    it('streams a frozen care-document file with no Authorization header', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}/files/${docFileId}`)
+        .expect(200);
+
+      expect(res.headers['content-type']).toContain('application/pdf');
+      expect(res.body.toString()).toContain('advance directive');
+    });
+
+    // One code for every failure: a valid token gives no signal to probe other files with.
+    it('404s SNAPSHOT_NOT_FOUND for a file that was not frozen into this snapshot', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}/files/${otherFileId}`)
+        .expect(404);
+      expect(res.body.message).toBe('SNAPSHOT_NOT_FOUND');
+    });
+
+    it('404s SNAPSHOT_NOT_FOUND for an unknown token, indistinguishably', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/not-a-real-token/files/${docFileId}`)
+        .expect(404);
+      expect(res.body.message).toBe('SNAPSHOT_NOT_FOUND');
+    });
+
+    // Immutability is what makes freezing ids equivalent to freezing bytes: superseding the
+    // directive is a new file id, and the old link keeps serving what was on file at handoff.
+    it('keeps serving the frozen document after the directive is superseded', async () => {
+      const replacement = await request(app.getHttpServer())
+        .post('/api/files')
+        .set('Authorization', `Bearer ${token}`)
+        .field('patientId', docPatientId)
+        .attach('file', Buffer.from('%PDF-1.4 revised directive'), {
+          filename: 'advance-directive-v2.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .put(`/api/patients/${docPatientId}/care-documents/advance_directive`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'on_file', fileId: replacement.body.fileId })
+        .expect(200);
+
+      const stillFrozen = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}/files/${docFileId}`)
+        .expect(200);
+      expect(stillFrozen.body.toString()).toContain('advance directive');
+
+      // ...and the replacement is not reachable through the old token.
+      await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}/files/${replacement.body.fileId}`)
+        .expect(404);
     });
   });
 

@@ -16,6 +16,7 @@ import { TimelineModule } from './timeline/timeline.module';
 import { ConditionsModule } from './conditions/conditions.module';
 import { ProtocolsModule } from './protocols/protocols.module';
 import { ReactionsModule } from './reactions/reactions.module';
+import { CareDocumentsModule } from './care-documents/care-documents.module';
 import { ErBriefModule } from './er-brief/er-brief.module';
 import { WhatsNewModule } from './whats-new/whats-new.module';
 import { FilesModule } from './files/files.module';
@@ -40,6 +41,7 @@ import { HealthModule } from './health/health.module';
     ConditionsModule,
     ProtocolsModule,
     ReactionsModule,
+    CareDocumentsModule,
     ErBriefModule,
     WhatsNewModule,
     FilesModule,

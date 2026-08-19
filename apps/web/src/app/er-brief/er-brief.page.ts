@@ -6,6 +6,7 @@ import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { describeEvent, photoFileIds, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
+import { BriefCareDocumentsComponent } from './brief-care-documents.component';
 import {
   CreateErBriefSnapshotDto,
   ErBrief,
@@ -18,7 +19,7 @@ import {
 @Component({
   selector: 'app-er-brief-page',
   standalone: true,
-  imports: [CommonModule, PhotoThumbnailComponent],
+  imports: [CommonModule, PhotoThumbnailComponent, BriefCareDocumentsComponent],
   template: `
     <div class="page" [class.flash]="isFlash()">
       <div class="toolbar no-print">
@@ -75,6 +76,8 @@ import {
             </span>
             <span *ngIf="!b.header.codeStatus" class="missing">NOT SET</span>
           </div>
+
+          <app-brief-care-documents [documents]="b.header.careDocuments"></app-brief-care-documents>
 
           <div class="protocol-banner" *ngIf="b.header.protocolFiredReason as pr">
             <strong>Reason for visit:</strong> standing protocol <em>{{ pr.protocolName }}</em> —
@@ -194,6 +197,13 @@ import {
             </ul>
           </div>
         </section>
+
+        <!-- Print only. On screen this page IS current and needs no caveat; the moment it prints
+             it becomes a snapshot with no expiry at all, and the printout is the copy most likely
+             to be handed to a paramedic (er-brief.md → Web). -->
+        <footer class="print-footer">
+          Generated {{ generatedAt * 1000 | date: 'medium' }} — verify documents are current.
+        </footer>
       </ng-container>
     </div>
   `,
@@ -362,9 +372,21 @@ import {
       .table-scroll table {
         min-width: 414px;
       }
+      /* Paper only — see the footer's comment in the template. */
+      .print-footer {
+        display: none;
+      }
       @media print {
         .no-print {
           display: none !important;
+        }
+        .print-footer {
+          display: block;
+          margin-top: 0.75rem;
+          padding-top: 0.5rem;
+          border-top: 1px solid #999;
+          font-size: 0.75rem;
+          font-style: italic;
         }
         /* A paramedic reads the printout in columns -- the real table has to survive printing. */
         .table-scroll {
@@ -404,6 +426,12 @@ export class ErBriefPage implements OnInit {
   private readonly router = inject(Router);
 
   patientId = '';
+  /**
+   * Stamped once when the page is constructed, not re-read per change detection: the footer states
+   * when this copy was produced, and a value that ticked would make two printed pages of the same
+   * brief disagree about their own provenance.
+   */
+  readonly generatedAt = Math.floor(Date.now() / 1000);
   brief = signal<ErBrief | null>(null);
   error = signal<string | null>(null);
   creatingLink = signal(false);

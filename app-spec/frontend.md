@@ -117,8 +117,9 @@ rules follow:
     "Share", and the first person to use it could not find care-team management at all. `share`
     redirects to `care-team`.
   - **Settings** (⚙, **labelled**, sitting with its sibling tabs rather than exiled to the far
-    right) — the v1 patient-detail content: the edit form, code status card, accent colour, delete.
-    An unlabelled glyph is how patient editing became unfindable after the v1 page was split.
+    right) — the v1 patient-detail content: the edit form, code status card, accent colour, care
+    documents card, delete. An unlabelled glyph is how patient editing became unfindable after the
+    v1 page was split.
     Landing a caregiver on an edit form (v1 behavior) is the wrong default; editing is a
     deliberate act, not the resting state of a patient page.
 - Route map (existing detail routes — `/episodes/:id`, `/conditions/:id`, `/schedules/:id`,
@@ -288,6 +289,18 @@ derives from existing payloads:
     `codeStatusSetAt` — a stale code status should visibly look stale. An "Update" action opens an
     inline editor that `PATCH`es `/api/patients/:id/code-status`; the card always reflects the
     latest attribution after saving.
+  - **Care documents card (§4.1)**, directly under the code status card: three fixed rows —
+    living will, advance directive, medical power of attorney — each rendering its tri-state:
+    "not recorded" (nothing on file, nothing stated), "none — stated by ⟨name⟩, ⟨age⟩", or the
+    file's `originalName` with upload attribution and age (and, on the PoA row, the holder's
+    name/phone when recorded). Ages are formatted client-side from `setAt`, same
+    stale-should-look-stale rule as code status. "Upload"/"Replace" reuses the two-path document
+    attach flow ("Documents" below — upload new via `POST /api/files`, or attach an existing
+    file), then `PUT`s `/api/patients/:id/care-documents/:kind`. **"Record as none" is a
+    deliberate act behind its own confirm — never a default, never a checkbox.** Downstream
+    readers (the ER Brief at triage) will trust it as a family statement, so it must be
+    impossible to record by accident; the whole value of the tri-state collapses if "none" can
+    happen incidentally.
   - **Condition list**: linked Conditions for this patient, each showing `name`, `status`, and a
     link into `condition-detail.page.ts`; an "Add condition" action routes to
     `new-condition.page.ts`.
@@ -427,8 +440,8 @@ Adverse reactions drive the `reaction_warning` inline banner and the `reaction_d
 interstitial at dose entry (see "Dose entry" above) — the single most safety-critical input in the
 app. They therefore need somewhere to be entered.
 
-- **Placement**: a read-only `Reactions` card on `patient-detail.page.ts`, directly under the code
-  status card and **above** Conditions. Reactions are header material on the ER Brief (F-7.3,
+- **Placement**: a read-only `Reactions` card on `patient-detail.page.ts`, directly under the care
+  documents card and **above** Conditions. Reactions are header material on the ER Brief (F-7.3,
   "allergies belong in the header"), and the patient page should mirror that priority. Same card +
   dedicated-create-page shape Conditions already uses, so it introduces no new interaction
   vocabulary.
@@ -509,6 +522,13 @@ Both pages label their scope from the response's own `body.eventScope`, never fr
 that an episode exists — including the frozen `since`/`generatedAt` on a shared snapshot, which is
 what keeps a brief read three days later from claiming to show "the last 72 hours". See
 `er-brief.md` → Web for the headings, empty states, and the phone-width table rule.
+
+The header renders the three care-document tri-state lines (living will / advance directive /
+medical PoA — er-brief.md → Web), included in flash mode. Both pages' print stylesheets end with
+the "Generated ⟨date⟩ — verify documents are current" footer, and the public page additionally
+carries the frozen-value "may have been superseded" caveat on each document line, with files
+fetched through the token file route. There is no live supersession check anywhere — the caveat is
+unconditional by design (er-brief.md → Formats).
 
 ## While You Were Asleep
 > **Superseded and removed.** The dedicated page is gone; the diff is read as the Journal's

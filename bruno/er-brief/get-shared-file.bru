@@ -1,0 +1,25 @@
+meta {
+  name: Get Shared Care Document (no auth)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}er-brief/shared/{{token}}/files/{{fileId}}
+  body: none
+  auth: none
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Unauthenticated, like Get Shared Brief — a clinician opening a shared link has no account. Valid
+  only for file ids frozen into this snapshot's `fileIds` at creation: an unknown token, an expired
+  one, and a file that was not frozen into this snapshot all answer the identical 404
+  SNAPSHOT_NOT_FOUND, so a valid token gives no signal to probe other files with.
+
+  Run "Create Snapshot" first (on a patient with a care document on file) to populate {{token}}.
+}

@@ -84,7 +84,9 @@ login (in progress)" for why this ships in stages rather than as one atomic cuto
 
 ## ER Brief snapshot tokens
 
-See `er-brief.md` for the full feature. The one deliberately unauthenticated route in the API:
+See `er-brief.md` for the full feature. The deliberately unauthenticated routes in the API —
+`GET /api/er-brief/shared/:token`, and its sibling `GET /api/er-brief/shared/:token/files/:fileId`
+for care-document files frozen into the snapshot:
 
 - Token is 32 bytes from a CSPRNG (`crypto.randomBytes(32)`), base64url-encoded, stored unique in
   `er_brief_snapshots.token`. The token **is** the capability — anyone holding the link can read
@@ -97,10 +99,20 @@ See `er-brief.md` for the full feature. The one deliberately unauthenticated rou
   standing access grant (P4 — no read-only tiers).
 - The payload is frozen at creation time and never recomputed — reading the link later cannot leak
   data that entered the record after the snapshot was taken, even if the token is still valid.
+  - The same holds for file bytes: the snapshot records the care-document `FileAsset` ids as
+    `fileIds` at creation, the token file route serves only those ids, and `FileAsset` blobs are
+    immutable (data-model.md → Data integrity rules) — so a document uploaded after the freeze is
+    a different id, unreachable through an old token. There is also deliberately no read-time
+    "has this been superseded" lookup (er-brief.md → Formats): the shared page carries an
+    unconditional may-have-been-superseded caveat instead, because a conditional warning's silence
+    would assert a currency the app cannot promise, and the check itself would leak a bit of live
+    record state through the frozen link.
 - Missing and expired tokens return the identical 404 `SNAPSHOT_NOT_FOUND` — no signal to
   distinguish "never existed" from "existed and lapsed," matching the `PATIENT_NOT_FOUND`
   non-disclosure pattern used everywhere else in the API (api.md → "Resource shape and access
-  control").
+  control"). The file route answers the same single code for *every* failure — unknown token,
+  expired token, or a `fileId` not frozen into this snapshot — so even a valid-token holder gets
+  no probing signal for other files.
 - Revocation is deletion (`DELETE /api/er-brief/snapshots/:id`, authenticated + patient-scoped) —
   there is no separate "revoked" state to track; a deleted row 404s identically to an expired one.
 - **The link's scheme and host are derived server-side and never from a client-supplied `Origin`
@@ -110,15 +122,19 @@ See `er-brief.md` for the full feature. The one deliberately unauthenticated rou
   code status, conditions, medications and allergies, and it is copied, pasted and texted, so HSTS
   protecting a browser that has been here before is not enough. And because `Origin` is a header the
   requester chooses, honouring it would let a request decide where the capability link points.
-- Because the token route bypasses `JwtAuthGuard` entirely, it must never be added to a controller
-  that also serves authenticated routes without an explicit, reviewed exception — keep it in its
-  own controller (`ErBriefPublicController`), the same isolation pattern already used for
-  `auth/login` and `auth/register`.
+- Because the token routes bypass `JwtAuthGuard` entirely, they must never be added to a controller
+  that also serves authenticated routes without an explicit, reviewed exception — keep them (the
+  payload route and the frozen-file route both) in their own controller
+  (`ErBriefPublicController`), the same isolation pattern already used for `auth/login` and
+  `auth/register`.
+- The frozen-file route serves caregiver-uploaded bytes to an unauthenticated reader, so it applies
+  the same hardened CSP as `GET /api/files/:id` (deployment.md → "Security headers") — a malicious
+  upload must be exactly as neutralized on the share path as on the authenticated one.
 - **Known gap, in progress:** on the deployed instance this route is not actually reachable by its
   intended audience. Authelia gates the whole `salud.bpd.sh` host with `group:admins`, so a share
   link handed to an ER clinician hits the login portal, not the brief. The application-level
   design above is unchanged and correct. Rather than a scoped Authelia `bypass` rule for just these
-  two paths, the fix in progress is broader: the OIDC login cutover (`deployment.md` → "Access
+  paths, the fix in progress is broader: the OIDC login cutover (`deployment.md` → "Access
   control" → "OIDC login (in progress)") removes the whole-host forward-auth perimeter once the
   app's own OIDC login is the real gate, which resolves this as a side effect. Until that cutover's
   final step lands, treat the feature as internal-only.

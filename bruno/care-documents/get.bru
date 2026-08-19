@@ -1,11 +1,11 @@
 meta {
-  name: List Snapshots
+  name: Get Care Documents
   type: http
-  seq: 5
+  seq: 1
 }
 
 get {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/er-brief/snapshots
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/care-documents
   body: none
   auth: inherit
 }
@@ -20,13 +20,16 @@ script:pre-request {
   bru.setVar('patientId', pid);
 }
 
-script:post-response {
-  if (Array.isArray(res.body) && res.body.length) {
-    bru.setVar('snapshotId', res.body[0].id);
-  }
+assert {
+  res.status: eq 200
 }
 
 settings {
   encodeUrl: true
   timeout: 0
+}
+
+docs {
+  All three keys are always present. `null` means "never recorded" and is deliberately different
+  from a statement with `status: "none"` — see api.md → Care documents.
 }

@@ -962,6 +962,13 @@ export interface ErBriefHeader {
   patient: ErBriefHeaderPatient;
   latestWeight: ErBriefWeight | null;
   codeStatus: ErBriefCodeStatus | null;
+  /**
+   * Living will / advance directive / medical PoA (§4.1). All three keys always present; `null`
+   * means never recorded and must render as exactly that, distinctly from a `status: 'none'`
+   * statement — the same make-the-gap-impossible-to-miss rule `latestWeight` and `codeStatus`
+   * follow by being null-not-omitted.
+   */
+  careDocuments: CareDocumentsMap;
   dangerReactions: AdverseReaction[];
   activeConditions: Condition[];
   protocolFiredReason: ErBriefProtocolFiredReason | null;
@@ -1067,6 +1074,55 @@ export interface Revision {
   snapshot: Record<string, any>;
   editedByUserId: string;
   editedAt: number; // epoch seconds
+}
+
+// Care documents — see app-spec/data-model.md "CareDocumentStatement" and api.md "Care documents".
+//
+// Each kind is a TRI-STATE, and the type is what enforces it: `null` on the map means "never
+// recorded" (nobody has told the app anything), while a statement with `status: 'none'` is an
+// affirmative caregiver statement that no such document exists. Those are different facts — the
+// second is a stored statement with attribution, the first is the absence of one — and rendering
+// them the same way is the failure mode this shape exists to prevent (P6: "the family stated none
+// exists" is a stored fact; inferring it from absence would not be).
+export type CareDocumentKind = 'living_will' | 'advance_directive' | 'medical_poa';
+
+export const CARE_DOCUMENT_KINDS: CareDocumentKind[] = [
+  'living_will',
+  'advance_directive',
+  'medical_poa',
+];
+
+export type CareDocumentStatus = 'on_file' | 'none';
+
+export interface CareDocumentStatement {
+  id: string;
+  kind: CareDocumentKind;
+  status: CareDocumentStatus;
+  /** Set only when status='on_file'. */
+  fileId: string | null;
+  originalName: string | null;
+  contentType: string | null;
+  /** Only ever populated on kind='medical_poa' — a PoA is a person as well as a document. */
+  holderName: string | null;
+  holderPhone: string | null;
+  setByUserId: string;
+  setByName: string;
+  setAt: number; // epoch seconds
+}
+
+/** All three keys always present; `null` means never recorded — see the tri-state note above. */
+export interface CareDocumentsMap {
+  livingWill: CareDocumentStatement | null;
+  advanceDirective: CareDocumentStatement | null;
+  medicalPoa: CareDocumentStatement | null;
+}
+
+export interface SetCareDocumentDto {
+  status: CareDocumentStatus;
+  /** Required when status='on_file', forbidden when 'none'. */
+  fileId?: string;
+  holderName?: string;
+  holderPhone?: string;
 }
 
 // Files — see app-spec/api.md "Files"

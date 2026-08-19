@@ -4,6 +4,7 @@ import { ActivatedRoute } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { describeEvent } from '../core/event-display';
 import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/shared/types';
+import { BriefCareDocumentsComponent } from './brief-care-documents.component';
 
 // Public route — no authGuard (er-brief.md → "Frozen snapshot"). Renders exactly what the
 // caregiver saw at the moment the link was created; a 404 renders as one plain message, with no
@@ -11,7 +12,7 @@ import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/
 @Component({
   selector: 'app-shared-brief-page',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, BriefCareDocumentsComponent],
   template: `
     <div class="page">
       <p class="error" *ngIf="notFound()">This link has expired or doesn't exist.</p>
@@ -41,6 +42,12 @@ import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/
             </span>
             <span *ngIf="!s.payload.header.codeStatus" class="missing">NOT SET</span>
           </div>
+          <app-brief-care-documents
+            [documents]="s.payload.header.careDocuments"
+            [frozenAt]="s.frozenAt"
+            [shareToken]="token"
+          ></app-brief-care-documents>
+
           <div class="protocol-banner" *ngIf="s.payload.header.protocolFiredReason as pr">
             <strong>Reason for visit:</strong> {{ pr.protocolName }} — {{ pr.instructionText }}
           </div>
@@ -112,6 +119,12 @@ import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/
           </table>
           </div>
         </section>
+
+        <!-- Print only, same reasoning as the authenticated page: paper is a snapshot with no
+             expiry. Dated from the freeze, not from now — this copy has been frozen all along. -->
+        <footer class="print-footer">
+          Frozen {{ s.frozenAt * 1000 | date: 'medium' }} — verify documents are current.
+        </footer>
       </ng-container>
     </div>
   `,
@@ -213,6 +226,9 @@ import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/
       }
       /* This page had no print styles at all. It needs them now that the table scrolls -- and it
          is the copy most likely to be printed, being the one handed to a clinician. */
+      .print-footer {
+        display: none;
+      }
       @media print {
         .table-scroll {
           overflow: visible;
@@ -222,6 +238,14 @@ import { ErBriefEventScope, SharedErBriefResponse, TimelineEntry } from '@salud/
         }
         .section {
           break-inside: avoid;
+        }
+        .print-footer {
+          display: block;
+          margin-top: 0.75rem;
+          padding-top: 0.5rem;
+          border-top: 1px solid #999;
+          font-size: 0.75rem;
+          font-style: italic;
         }
       }
     `,
@@ -239,9 +263,12 @@ export class SharedBriefPage implements OnInit {
 
   snapshot = signal<SharedErBriefResponse | null>(null);
   notFound = signal(false);
+  /** Held so care-document files can be fetched through this snapshot's own token-scoped route. */
+  token = '';
 
   ngOnInit(): void {
     const token = this.route.snapshot.paramMap.get('token') ?? '';
+    this.token = token;
     this.api.get<SharedErBriefResponse>(`/er-brief/shared/${token}`).subscribe({
       next: (res) => this.snapshot.set(res),
       error: () => this.notFound.set(true),

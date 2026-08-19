@@ -6,10 +6,13 @@ import {
   adverseReactions,
   advisories,
   erBriefSnapshots,
+  fileAssets,
   interventions,
   medications,
   users,
 } from '../../db/schema';
+import { CareDocumentsService } from '../care-documents/care-documents.service';
+import { StorageService } from '../storage/storage.service';
 import { PatientsService } from '../patients/patients.service';
 import { EpisodesService } from '../episodes/episodes.service';
 import { ConditionsService } from '../conditions/conditions.service';
@@ -41,6 +44,18 @@ const RECENT_WINDOW_HOURS = 72;
 const DEFAULT_SNAPSHOT_HOURS = 72;
 const MAX_SNAPSHOT_HOURS = 168;
 
+/**
+ * The care-document files a snapshot must keep readable through its token.
+ *
+ * Pinned at freeze time, so the link serves what was on file at handoff: `FileAsset` blobs are
+ * immutable, which makes an id a stable reference to bytes, and a later superseding upload is a
+ * different id the old token can never reach (security.md → ER Brief snapshot tokens).
+ */
+function collectCareDocumentFileIds(payload: ErBrief): string[] {
+  const statements = Object.values(payload.header.careDocuments ?? {});
+  return [...new Set(statements.map((s) => s?.fileId).filter((id): id is string => !!id))];
+}
+
 function ageFromDob(dateOfBirth: string): { ageYears: number; ageMonths: number } {
   const dob = new Date(dateOfBirth);
   const now = new Date();
@@ -59,6 +74,8 @@ export class ErBriefService {
     private readonly conditionsService: ConditionsService,
     private readonly schedulesService: SchedulesService,
     private readonly timelineService: TimelineService,
+    private readonly careDocumentsService: CareDocumentsService,
+    private readonly storage: StorageService,
   ) {}
 
   async build(patientId: string, userId: string, episodeId?: string): Promise<ErBrief> {
@@ -100,6 +117,10 @@ export class ErBriefService {
       createdAt: normalizeTs(r.createdAt),
       updatedAt: normalizeTs(r.updatedAt),
     }));
+
+    // All three keys always present; a `null` means never recorded and must stay distinguishable
+    // from a stored `status: 'none'` all the way to the page (er-brief.md → Header).
+    const careDocuments = await this.careDocumentsService.getMap(patientId, userId);
 
     const activeConditions = await this.conditionsService.listForPatient(patientId, userId, 'active');
 
@@ -224,6 +245,7 @@ export class ErBriefService {
         },
         latestWeight,
         codeStatus,
+        careDocuments,
         dangerReactions,
         activeConditions,
         protocolFiredReason,
@@ -306,6 +328,7 @@ export class ErBriefService {
       episodeId: dto.episodeId ?? null,
       token,
       payload: JSON.stringify(payload),
+      fileIds: JSON.stringify(collectCareDocumentFileIds(payload)),
       createdByUserId: userId,
       expiresAt,
     });
@@ -353,6 +376,37 @@ export class ErBriefService {
       payload: this.backfillEventScope(JSON.parse(row.payload), frozenAt),
       frozenAt,
       expiresAt,
+    };
+  }
+
+  /**
+   * Streams one care-document file frozen into a snapshot — unauthenticated, the token is the only
+   * capability (security.md → "ER Brief snapshot tokens").
+   *
+   * Every failure answers the same 404 `SNAPSHOT_NOT_FOUND`: bad token, expired token, and a
+   * `fileId` that exists but was not frozen into *this* snapshot are indistinguishable, so holding
+   * a valid token gives no signal to probe for other patients' files with. The authorization is
+   * the frozen `fileIds` list, never a care-team lookup — the reader has no account by design.
+   */
+  async getSharedFile(token: string, fileId: string) {
+    const db = this.db.db as any;
+    const rows = await db.select().from(erBriefSnapshots).where(eq(erBriefSnapshots.token, token)).limit(1);
+    if (!rows.length) throw new NotFoundException('SNAPSHOT_NOT_FOUND');
+    const row = rows[0];
+    if (normalizeTs(row.expiresAt)! < Math.floor(Date.now() / 1000)) {
+      throw new NotFoundException('SNAPSHOT_NOT_FOUND');
+    }
+
+    // Snapshots frozen before this column existed carry null and simply have no readable files.
+    const frozenIds: string[] = row.fileIds ? JSON.parse(row.fileIds) : [];
+    if (!frozenIds.includes(fileId)) throw new NotFoundException('SNAPSHOT_NOT_FOUND');
+
+    const fileRows = await db.select().from(fileAssets).where(eq(fileAssets.id, fileId)).limit(1);
+    if (!fileRows.length) throw new NotFoundException('SNAPSHOT_NOT_FOUND');
+
+    return {
+      stream: await this.storage.createReadStream(fileRows[0].path),
+      contentType: fileRows[0].contentType,
     };
   }
 

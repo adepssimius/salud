@@ -493,6 +493,51 @@ concept instead of three.
 - Linked to `photo` and `document` observation entries via `metadata.fileId` (data-model.md →
   "Observation entry structured metadata").
 
+### CareDocumentStatement
+
+Care documents (§4.1): the patient's living will, advance directive, and medical power of
+attorney — the documentary backing for the goals-of-care surface that `codeStatus` opened. These
+are patient-level standing state, not timeline events: a directive uploaded as a `document`
+observation entry would scroll away into history, which is why this entity exists separately.
+
+Each of the three kinds is a **tri-state**: never recorded (no row), affirmatively stated absent
+(`status: 'none'`), or on file (`status: 'on_file'` plus a `FileAsset`). "None" and "not recorded"
+are different facts — "the family has stated no living will exists" is a stored caregiver
+statement; "the app was never told" is the absence of one — and conflating them is the failure
+mode this shape exists to prevent (the same distinction `latestWeight` and `codeStatus` draw on
+the ER Brief by being null-not-omitted).
+
+- `id: uuid`
+- `patientId: uuid`
+- `kind: enum('living_will','advance_directive','medical_poa')`
+- `status: enum('on_file','none')`
+- `fileId: uuid | null` — references `FileAsset`; required when `status = 'on_file'`, must be
+  absent when `'none'`. Validated at write time against the patient (400
+  `CARE_DOCUMENT_FILE_NOT_FOUND` — same stored-broken-reference guard as `photo`/`document` entry
+  `metadata.fileId`).
+- `holderName: string | null`, `holderPhone: string | null` — who holds the power of attorney and
+  how to reach them; accepted only on `kind = 'medical_poa'` (a PoA is a person as well as a
+  document — the same reasoning that puts contacts inline on Conditions). Free text, no directory
+  linkage: the app records what the caregiver states, nothing more (P6).
+- `setByUserId: uuid`, `setAt: datetime` — stamped server-side from the actor, never
+  client-supplied (P3), same as the `codeStatus` trio. Displayed with its computed age wherever
+  shown ("uploaded 14 months ago", "none — stated 2 years ago") — a stale directive should
+  visibly look stale, for exactly the stale-code-status reason.
+- `seq: integer` — append ordinal within `(patientId, kind)`, 1-based, assigned server-side as
+  `max(seq) + 1`. **The current statement is the highest `seq`, not the newest `setAt`.** SQLite
+  stores timestamps as integer *seconds* (persistence.md), so two statements recorded in the same
+  second — a caregiver correcting a mis-click straight away — carry an identical `setAt`, and
+  ordering on the clock would decide between a document and the statement superseding it by row
+  order. Postgres's microsecond precision hides that, which is exactly why the ordering is an
+  explicit counter rather than a timestamp: the dialect a household deploys on must not change
+  which directive the ER Brief shows.
+- **Append-only; the current statement per `(patientId, kind)` is the last one appended.** Replacing
+  a directive, or recording "none" after a revocation, appends a row rather than updating one — what
+  the household stated, and when, is never destroyed. This is deliberately *not* a `Revision`:
+  like `PATCH .../code-status` (api.md → "Corrections"), the entity carries its own purpose-built
+  attribution trail — here the history rows themselves — and a second generic snapshot would
+  duplicate it.
+
 ### Advisory
 
 See `advisories.md` for the concept, producer catalog, and lifecycle. Fields:
@@ -523,6 +568,12 @@ model. A frozen, time-limited, unauthenticated export of one `GET .../er-brief` 
 - `episodeId: uuid | null` — the episode the snapshot was scoped to, if any.
 - `token: string` (unique) — 32 bytes from a CSPRNG, base64url-encoded; the capability itself.
 - `payload: jsonb` — the full brief response, computed once at creation and never recomputed.
+- `fileIds: jsonb string[] | null` — the `FileAsset` ids referenced by the frozen
+  `header.careDocuments`, recorded at creation so `GET /api/er-brief/shared/:token/files/:fileId`
+  can authorize by membership without parsing `payload`. `null` on snapshots frozen before the
+  column existed — those simply have no token-readable files. Because `FileAsset` blobs are
+  immutable (Data integrity rules), pinning ids at freeze time pins bytes: the link serves what
+  was on file at handoff even if the document is later superseded.
 - `createdByUserId: uuid`
 - `createdAt: datetime`
 - `expiresAt: datetime` (**not nullable** — every snapshot expires; capped at creation, 168h max).
@@ -623,7 +674,8 @@ the snapshot's contents do.
   one. Nothing may ever filter reactions to "recent" ones — §4.9 is "remembered forever".
 - **Deleting a patient deletes everything that belongs to them**, in one operation: conditions and
   their protocols, episodes and their pivot rows, observations and their entries, interventions,
-  intervention schedules, adverse reactions, advisories, ER Brief snapshots, revisions, care team
+  intervention schedules, adverse reactions, care document statements, advisories, ER Brief
+  snapshots, revisions, care team
   memberships, and file assets — including the stored blobs, since a clinical photo of a child that
   nothing will ever garbage-collect is a privacy problem. Two of those are polymorphic and carry no
   foreign key — `EpisodeEventPivot.eventId` and `Revision.entityId` — so no database cascade can
@@ -640,3 +692,15 @@ the snapshot's contents do.
 - `Patient.codeStatus`/`codeStatusSetByUserId`/`codeStatusSetAt` are only ever written together, and
   only via `PATCH /api/patients/:id/code-status` — never through the general patient `PATCH`, so the
   attribution stamp can't be bypassed (P3).
+- `CareDocumentStatement` rows are append-only and only ever written via
+  `PUT /api/patients/:patientId/care-documents/:kind`, which stamps `setByUserId`/`setAt`
+  server-side — same no-bypass rule as `codeStatus` above (P3). There is no update or delete
+  endpoint: correcting a statement means appending the correct one, and the current statement per
+  kind is the newest row.
+- An `'on_file'` care-document statement's `fileId` is validated at write time — the file must
+  exist and belong to this patient (400 `CARE_DOCUMENT_FILE_NOT_FOUND`) — so a broken reference is
+  stopped from being *stored*, the same guard `photo`/`document` entries apply.
+- **`FileAsset` blobs are immutable once written**: no endpoint rewrites the bytes behind an
+  existing `path`; replacing a document means a new upload with a new id. Load-bearing for ER
+  Brief snapshots, which freeze `fileIds` at creation and rely on those ids meaning the same bytes
+  for the life of the link.
