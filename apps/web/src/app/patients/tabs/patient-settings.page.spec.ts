@@ -13,6 +13,7 @@ const patient: any = {
   sexAtBirth: 'female',
   notes: 'note',
   ownedById: 'u1',
+  accentColor: 'teal',
   latestWeightKg: 20,
   latestWeightRecordedAt: null,
   myRole: 'parent',
@@ -67,6 +68,68 @@ describe('PatientSettingsPage', () => {
     // The shell already fetched it; a second GET here would be the duplication the store exists
     // to prevent.
     expect(apiMock.get).not.toHaveBeenCalledWith('/patients/p1');
+  });
+
+  it('offers every palette token by name, not by color alone', () => {
+    const fixture = build();
+    const swatches = fixture.nativeElement.querySelectorAll('.swatch');
+    expect(swatches.length).toBe(8);
+    // A disc has no accessible name and says nothing to a color-blind caregiver; the word does.
+    expect(swatches[0].textContent).toContain('Teal');
+    // These sit inside the form whose submit saves — a default-type button would PATCH on click.
+    expect(swatches[0].getAttribute('type')).toBe('button');
+  });
+
+  it('shows the stored color as the pressed swatch', () => {
+    const fixture = build({ ...patient, accentColor: 'violet' });
+    expect(fixture.componentInstance.form.getRawValue().accentColor).toBe('violet');
+    const pressed = fixture.nativeElement.querySelectorAll('.swatch[aria-pressed="true"]');
+    expect(pressed.length).toBe(1);
+    expect(pressed[0].classList).toContain('accent-violet');
+  });
+
+  it('marks the form dirty when a swatch is clicked, so Save is a real edit', () => {
+    const fixture = build();
+    const swatch = Array.from<HTMLButtonElement>(
+      fixture.nativeElement.querySelectorAll('.swatch'),
+    ).find((b) => b.textContent?.includes('Rose'))!;
+    swatch.click();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.form.getRawValue().accentColor).toBe('rose');
+    expect(fixture.componentInstance.form.pristine).toBe(false);
+    expect(swatch.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('sends the chosen token on save and repaints the hub through the store', () => {
+    apiMock.patch.mockReturnValue(of({ ...patient, accentColor: 'rose' }));
+    const fixture = build();
+    const component = fixture.componentInstance;
+    component.selectAccent('rose');
+    component.savePatient();
+    expect(apiMock.patch).toHaveBeenCalledWith(
+      '/patients/p1',
+      expect.objectContaining({ accentColor: 'rose' }),
+    );
+    // The hub header reads store.patient()?.accentColor — this is what recolors the rail.
+    expect(store.patient()?.accentColor).toBe('rose');
+  });
+
+  it('keeps an unsaved pick when the hub refetches the patient', () => {
+    // The pristine guard is the only thing between a background reload and a lost edit.
+    const fixture = build();
+    fixture.componentInstance.selectAccent('lime');
+    store.patient.set({ ...patient, fullName: 'Jamie Doe' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.form.getRawValue().accentColor).toBe('lime');
+  });
+
+  it('omits the color entirely when the patient carries none', () => {
+    // A legacy payload without the field must not turn into accentColor: '' — the API 400s that.
+    const { accentColor: _omitted, ...noColor } = patient;
+    apiMock.patch.mockReturnValue(of(patient));
+    const fixture = build(noColor);
+    fixture.componentInstance.savePatient();
+    expect(apiMock.patch.mock.calls[0][1]).not.toHaveProperty('accentColor');
   });
 
   it('saves edits and pushes the result back into the store', () => {

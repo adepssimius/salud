@@ -749,11 +749,26 @@ export interface CreateReactionDto {
 }
 
 // Timeline — see app-spec/api.md "Timeline & dashboard"
+/**
+ * Who recorded a timeline entry, resolved server-side so the journal feed can attribute every row
+ * by name without fanning out to map user ids (api.md → Timeline & dashboard; product.md → P3).
+ */
+export interface TimelineRecordedBy {
+  id: string;
+  displayName: string;
+}
+
 export interface TimelineEntry {
   id: string;
   kind: 'observation' | 'intervention' | 'advisory';
   type: string;
   timestamp: number; // epoch seconds
+  /**
+   * Resolved from the `users` row, not from care team membership — a caregiver who has left the
+   * team keeps their name on the rows they wrote. `null` only for advisories, which the engine
+   * fires with no recording user at all.
+   */
+  recordedBy: TimelineRecordedBy | null;
   display: Observation | Intervention | Advisory;
 }
 

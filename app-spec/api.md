@@ -581,10 +581,17 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     advisories list already return — no separate summarization shape to keep in sync (P6: the
     timeline presents raw data, never a derived summary).
   - `recordedBy` is resolved server-side from the recording user (`recordedByUserId` on
-    observations/interventions, `createdByUserId` on advisories) so the journal can render the
-    attributed feed ("Dana — 240 mg ibuprofen · 2:15 AM", P3) without fanning out to map user ids.
-    It resolves even for a user who has since left the care team — attribution outlives membership
-    (P3); a row must never degrade to a bare id because its author was removed.
+    observations/interventions) so the journal can render the attributed feed ("Dana — 240 mg
+    ibuprofen · 2:15 AM", P3) without fanning out to map user ids. Resolved from the `users` row
+    and never joined through `care_team_memberships`: it resolves even for a user who has since
+    left the care team — attribution outlives membership (P3); a row must never degrade to a bare
+    id because its author was removed. One batched lookup per response, not one per row.
+  - **`recordedBy` is `null` on advisory entries.** Advisories are fired by the engine, not written
+    by a caregiver: the `advisories` table has no author column at all (its only user reference is
+    `acknowledgedByUserId`, which answers a different question). `null` is the honest answer here —
+    the alternative, attributing a firing to whoever's write triggered it, would put a caregiver's
+    name on a judgment the app made (P6). If a protocol firing ever gains a human author, that is a
+    schema change and this line changes with it.
 - `GET /api/dashboard`
   - Aggregates **every patient the caller is on the care team for** — not only patients with an
     active episode. Episodes are an optional frame over the timeline (data-model.md → "Episode

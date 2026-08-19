@@ -225,8 +225,9 @@ describe('DashboardPage', () => {
       expect(text).toContain('Has News');
       expect(text).not.toContain('Nothing New');
 
-      comp.goToWhatsNew('p1');
-      expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'whats-new']);
+      // The row deep-links to the journal, where the since-you-last-looked marker now lives.
+      comp.goToJournal('p1');
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'journal']);
     });
 
     // The regression guard for ISSUES.md #10: the counts used to cost GET /patients plus one
