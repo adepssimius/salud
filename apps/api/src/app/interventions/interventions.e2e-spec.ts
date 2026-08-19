@@ -255,6 +255,100 @@ describe('Interventions (e2e)', () => {
     expect(listMedA.body[0].metadata.medicationId).toBe(MED_A);
   });
 
+  // Read-time enrichment from the catalog, never stored on the dose (api.md → Interventions).
+  // CURRENT tags: retagging a medication re-classifies its past doses everywhere at once, which is
+  // what lets a chart overlay default apply retroactively without a backfill.
+  it('enriches a dose with its medication\'s current tags, and follows a retag', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const medication = (
+      await request(app.getHttpServer())
+        .post('/api/medications')
+        .set(auth)
+        .send({ name: `tag-enrichment-med-${Date.now()}`, tags: ['antipyretic', 'analgesic'] })
+        .expect(201)
+    ).body;
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set(auth)
+      .send({
+        performedAt: '2026-01-05T10:00:00.000Z',
+        type: 'medication_dose',
+        medicationId: medication.id,
+        doseSource: 'override',
+        amountMg: 200,
+      })
+      .expect(201);
+
+    const fetched = await request(app.getHttpServer())
+      .get(`/api/interventions/${created.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(fetched.body.medicationTags).toEqual(['antipyretic', 'analgesic']);
+
+    const listed = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/interventions`)
+      .set(auth)
+      .expect(200);
+    expect(listed.body[0].medicationTags).toEqual(['antipyretic', 'analgesic']);
+
+    // Retagging the catalog row changes what the existing dose reports — the whole point of
+    // resolving at read time rather than copying tags onto the event.
+    await request(app.getHttpServer())
+      .patch(`/api/medications/${medication.id}`)
+      .set(auth)
+      .send({ tags: ['nsaid'] })
+      .expect(200);
+    const retagged = await request(app.getHttpServer())
+      .get(`/api/interventions/${created.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(retagged.body.medicationTags).toEqual(['nsaid']);
+  });
+
+  it('reports no tags for a dose whose medication is not in the catalog, and none at all on a dressing change', async () => {
+    const { token } = await registerAndLogin(app);
+    const patientId = await createPatient(app, token);
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const orphanDose = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set(auth)
+      .send({
+        performedAt: '2026-01-05T10:00:00.000Z',
+        type: 'medication_dose',
+        medicationId: MED_1,
+        doseSource: 'override',
+        amountMg: 100,
+      })
+      .expect(201);
+    const fetchedDose = await request(app.getHttpServer())
+      .get(`/api/interventions/${orphanDose.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(fetchedDose.body.medicationTags).toEqual([]);
+
+    const dressing = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set(auth)
+      .send({
+        performedAt: '2026-01-05T11:00:00.000Z',
+        type: 'dressing_change',
+        bodyLocation: 'Left knee',
+        side: 'left',
+        dressingType: 'sterile gauze',
+      })
+      .expect(201);
+    const fetchedDressing = await request(app.getHttpServer())
+      .get(`/api/interventions/${dressing.body.id}`)
+      .set(auth)
+      .expect(200);
+    expect(fetchedDressing.body.medicationTags).toBeUndefined();
+  });
+
   it('validates resolves subset on update while allowing updates without resending episodeIds', async () => {
     const { token } = await registerAndLogin(app);
     const patientId = await createPatient(app, token);

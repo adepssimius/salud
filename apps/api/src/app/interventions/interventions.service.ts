@@ -17,6 +17,7 @@ import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
+import { medicationTagsByIds } from '../medications/medication-tags';
 import { DoseSource } from '@salud/shared/types';
 
 /** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
@@ -71,6 +72,30 @@ export class InterventionsService {
       createdAt: normalizeTs(row.createdAt),
       updatedAt: normalizeTs(row.updatedAt),
     };
+  }
+
+  /**
+   * Attach each dose's medication tags, read from the catalog at read time and never stored on the
+   * intervention (api.md → Interventions; the same split as `ObservationEntry.labContext`).
+   *
+   * CURRENT tags, deliberately: retagging a medication re-classifies its past doses everywhere at
+   * once, which is exactly what lets a chart overlay default apply retroactively without a
+   * backfill. One batched catalog lookup per response, never one per dose.
+   */
+  private async withMedicationTags(rows: any[]): Promise<any[]> {
+    const ids = rows
+      .filter((row) => row.type === 'medication_dose')
+      .map((row) => row.metadata?.medicationId)
+      .filter((id: unknown): id is string => typeof id === 'string');
+    if (!ids.length) return rows;
+    const tagsById = await medicationTagsByIds(this.db.db as any, ids);
+    for (const row of rows) {
+      if (row.type !== 'medication_dose') continue;
+      const medicationId = row.metadata?.medicationId;
+      if (typeof medicationId !== 'string') continue;
+      row.medicationTags = tagsById.get(medicationId) ?? [];
+    }
+    return rows;
   }
 
   private async persistDoseAdvisories(
@@ -310,7 +335,7 @@ export class InterventionsService {
     if (params.episodeId) {
       result = result.filter((intervention) => intervention.episodeIds.includes(params.episodeId!));
     }
-    return result;
+    return await this.withMedicationTags(result);
   }
 
   async get(id: string, userId: string, patientId?: string) {
@@ -328,7 +353,8 @@ export class InterventionsService {
       .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'intervention')));
     const episodeIds = pivots.filter((p: any) => !p.resolvesEpisode).map((p: any) => p.episodeId);
     const resolvesEpisodeIds = pivots.filter((p: any) => !!p.resolvesEpisode).map((p: any) => p.episodeId);
-    return this.mapIntervention(row, episodeIds, resolvesEpisodeIds);
+    const [enriched] = await this.withMedicationTags([this.mapIntervention(row, episodeIds, resolvesEpisodeIds)]);
+    return enriched;
   }
 
   async update(id: string, userId: string, dto: UpdateInterventionDto) {

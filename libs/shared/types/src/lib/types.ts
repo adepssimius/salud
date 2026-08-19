@@ -245,6 +245,12 @@ export interface Intervention {
   resolvesEpisodeIds: string[];
   notes: string | null;
   metadata: Record<string, any> | null;
+  // Read-only enrichment on medication_dose interventions — the medication's CURRENT tags from
+  // the catalog, resolved at read time and never stored on the intervention (the same split as
+  // ObservationEntry.labContext: classification belongs to the catalog). Current, deliberately:
+  // retagging a medication re-classifies its past doses everywhere at once, which is what lets a
+  // chart overlay default apply retroactively. Never accepted on write.
+  medicationTags?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -831,6 +837,14 @@ export interface TimelineResponse {
    * household has recorded none; the chart then draws a scale and no shading.
    */
   temperatureRanges: ResolvedRange[];
+  /**
+   * The household's chart overlay defaults for the `temperature` vital, reduced to their tag
+   * strings — which dose markers the journal chart shows by default (data-model.md →
+   * ChartOverlayDefault). A display default only, never a claim that the doses relate to the
+   * readings (P6). Empty when the household has cleared them; the chart then opens with no
+   * markers until the reader filters.
+   */
+  temperatureOverlayTags: string[];
 }
 
 // Dashboard
@@ -1350,10 +1364,49 @@ export interface AnalyteHistoryPoint {
   flag: 'L' | 'H' | null;
 }
 
+/**
+ * A dose the history chart may draw as a marker, because its medication carries one of this
+ * metric's chart overlay defaults. Presence data only — never an annotation about what the dose
+ * did (P6).
+ */
+export interface AnalyteHistoryDose {
+  interventionId: string;
+  performedAt: number; // epoch seconds
+  medicationId: string;
+  medicationName: string;
+  amountMg: number | null;
+  medicationTags: string[];
+}
+
 export interface AnalyteHistory {
   analyte: Analyte;
   ranges: AnalyteRange[]; // this patient's rows, all lineages, ascending by effectiveFrom
   points: AnalyteHistoryPoint[]; // ascending by observedAt
+  /** Empty when the analyte has no chart overlay defaults, or nothing matched them. */
+  doses: AnalyteHistoryDose[]; // ascending by performedAt
+}
+
+// Chart overlay defaults — see app-spec/data-model.md "ChartOverlayDefault" and api.md
+// "Chart overlay defaults". Which dose markers a metric's chart shows BY DEFAULT: display config
+// the household owns, never a recorded claim that the doses relate to the readings (P6).
+// Household-global like the analyte catalog itself.
+export type ChartOverlayKind = 'medication_tag';
+export const CHART_OVERLAY_KINDS: readonly ChartOverlayKind[] = ['medication_tag'];
+
+export interface ChartOverlayDefault {
+  id: string;
+  kind: ChartOverlayKind;
+  /** A medication tag, matched exactly against Medication.tags. */
+  value: string;
+}
+
+export interface ChartOverlayDefaultsResponse {
+  overlays: ChartOverlayDefault[];
+}
+
+/** Edited whole: the submitted list replaces the stored one, and an empty list clears it. */
+export interface SetChartOverlayDefaultsDto {
+  overlays: Array<{ kind: ChartOverlayKind; value: string }>;
 }
 
 // Lab imports — see app-spec/api.md "Lab imports" and data-model.md "Lab report import".

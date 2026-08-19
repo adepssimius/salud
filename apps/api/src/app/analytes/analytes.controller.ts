@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Request,
   UseGuards,
@@ -20,6 +21,7 @@ import { UpdateAnalyteDto } from './dto/update-analyte.dto';
 import { CreateAnalyteRangeDto } from './dto/create-analyte-range.dto';
 import { UpdateAnalyteRangeDto } from './dto/update-analyte-range.dto';
 import { ResolveAnalytesDto } from './dto/resolve-analytes.dto';
+import { SetChartOverlayDefaultsBodyDto } from './dto/set-chart-overlay-defaults.dto';
 
 // Paths written out in full (medications-controller style) so the by-id range routes sit at their
 // natural top level rather than nested under a controller prefix. The analyte routes themselves
@@ -62,6 +64,22 @@ export class AnalytesController {
   @Delete('analytes/:id')
   async remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return await this.analytes.remove(id);
+  }
+
+  // Household-global like the analyte itself: which dose markers this metric's chart shows by
+  // default. Declared before the patient-scoped range routes to keep the analyte-global surface
+  // together.
+  @Get('analytes/:id/chart-defaults')
+  async chartDefaults(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return await this.analytes.listChartDefaults(id);
+  }
+
+  @Put('analytes/:id/chart-defaults')
+  async setChartDefaults(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: SetChartOverlayDefaultsBodyDto,
+  ) {
+    return await this.analytes.setChartDefaults(id, dto);
   }
 
   @Post('patients/:patientId/analytes/:analyteId/ranges')
