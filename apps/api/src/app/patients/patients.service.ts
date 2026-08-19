@@ -23,6 +23,7 @@ import {
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { UpdateCodeStatusDto } from './dto/update-code-status.dto';
+import { leastUsedAccentColor, resolveAccentColor } from './accent-colors';
 import { RevisionsService } from '../revisions/revisions.service';
 import { StorageService } from '../storage/storage.service';
 import { normalizeTs } from '../persistence/time';
@@ -46,6 +47,7 @@ export class PatientsService {
       dateOfBirth: dto.dateOfBirth,
       sexAtBirth: dto.sexAtBirth,
       notes: dto.notes,
+      accentColor: dto.accentColor ?? (await this.nextAccentColor(userId)),
       ownedByUserId: userId,
     }).returning();
 
@@ -59,6 +61,22 @@ export class PatientsService {
 
     const patientRow = inserted && inserted[0] ? inserted[0] : await this.getRawPatient(id);
     return this.pickPatient(patientRow, role);
+  }
+
+  // Least-used token across the patients this caller can already see (api.md → Patients), so a
+  // household's second patient never lands on the same color as its first. Legacy rows count via
+  // their resolved fallback, not as "no color" — otherwise the tokens those rows already display
+  // would look free and get handed out again.
+  private async nextAccentColor(userId: string) {
+    const db = this.db.db as any;
+    const rows = await db
+      .select({ id: patients.id, accentColor: patients.accentColor })
+      .from(patients)
+      .innerJoin(careTeamMemberships, eq(careTeamMemberships.patientId, patients.id))
+      .where(eq(careTeamMemberships.userId, userId));
+    return leastUsedAccentColor(
+      rows.map((row: any) => resolveAccentColor(row.accentColor, row.id)),
+    );
   }
 
   private async getRawPatient(id: string) {
@@ -188,6 +206,7 @@ export class PatientsService {
     if (dto.dateOfBirth) updates.dateOfBirth = dto.dateOfBirth;
     if (dto.sexAtBirth) updates.sexAtBirth = dto.sexAtBirth;
     if (dto.notes !== undefined) updates.notes = dto.notes;
+    if (dto.accentColor) updates.accentColor = dto.accentColor;
     let newOwnerId: string | undefined;
     if (dto.ownedById) {
       const userRow = await db.select().from(users).where(eq(users.id, dto.ownedById)).limit(1);
@@ -232,6 +251,7 @@ export class PatientsService {
       sexAtBirth: patient.sexAtBirth,
       notes: patient.notes,
       ownedById: patient.ownedByUserId,
+      accentColor: resolveAccentColor(patient.accentColor, patient.id),
       latestWeightKg: patient.latestWeightKg,
       latestWeightRecordedAt: normalizeTs(patient.latestWeightRecordedAt),
       myRole: myRole ?? null,
