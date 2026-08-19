@@ -7,7 +7,8 @@ Base stack: NestJS REST API. All routes require authenticated user (email/passwo
 **Timestamps in responses are integers of epoch seconds** (UTC), or `null`. This holds for stored
 columns (`createdAt`, `updatedAt`, `acknowledgedAt`, `lastSeenAt`), for derived fields (`startedAt`,
 `endedAt`, `lastDoseAt`, `nextDueAt`, `frozenAt`, `expiresAt`, `since`), and for timestamps nested
-inside a composite response — `TimelineEntry.display`, `ErBrief.body.events`, `WhatsNewResponse.events`,
+inside a composite response — `TimelineEntry.display`, `ErBrief.body.events`,
+`ErBrief.header.careDocuments`, `WhatsNewResponse.events`,
 `Revision.snapshot`, and the intervention returned by `POST /api/schedules/:scheduleId/log`.
 **No endpoint returns an ISO string in a response body.**
 
@@ -122,7 +123,8 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
     owner, so removing one caregiver was protected while destroying the entire record was not.
   - **Deletes everything belonging to the patient**, not just the care team memberships: conditions
     and their protocols, episodes and their pivot rows, observations and their entries,
-    interventions, intervention schedules, adverse reactions, advisories, ER Brief snapshots,
+    interventions, intervention schedules, adverse reactions, care document statements, advisories,
+    ER Brief snapshots,
     revisions, and file assets — including the stored blobs on disk, since an orphaned clinical photo
     of a child that nothing will ever garbage-collect is a privacy problem, not housekeeping.
   - Two of those tables are polymorphic and carry no foreign key — `episodes_events_pivot.event_id`
@@ -783,6 +785,12 @@ security model — also in `security.md`). API surface:
   creation, and isn't re-surfaced later (same one-time-reveal spirit as an API key).
 - `GET /api/er-brief/shared/:token` — **unauthenticated**. Returns `{ payload, frozenAt, expiresAt }`
   or 404 `SNAPSHOT_NOT_FOUND` (missing and expired are indistinguishable).
+- `GET /api/er-brief/shared/:token/files/:fileId` — **unauthenticated**; streams a care-document
+  file frozen into the snapshot. Valid only for ids recorded in the snapshot's `fileIds` at
+  creation (data-model.md → `ErBriefSnapshot`). Every failure — unknown token, expired token, a
+  `fileId` not frozen into this snapshot — answers the identical 404 `SNAPSHOT_NOT_FOUND`, one
+  code for the whole route, so a valid-token holder cannot probe for other files. Served with the
+  same hardened CSP as `GET /api/files/:id`. See er-brief.md → "Formats" and security.md.
 - `DELETE /api/er-brief/snapshots/:id` — authenticated, patient-scoped; revokes by deleting.
 
 ## While You Were Asleep
@@ -877,6 +885,36 @@ deliberate later decision rather than a config toggle.
   (photo) / `DOCUMENT_FILE_NOT_FOUND` (document) otherwise. Read-side access control is unchanged;
   this stops a broken reference from being *stored* rather than discovering it when the ER Brief
   tries to render the image.
+
+## Care documents
+
+Living will, advance directive, medical power of attorney (§4.1; data-model.md →
+`CareDocumentStatement`). Patient-level standing state, not timeline events — a directive uploaded
+as a `document` observation entry would scroll away into history, which is why this surface exists
+separately. The files themselves ride the Files surface above (`POST /api/files` to upload,
+`GET /api/files/:id` to read); this surface records what the current statement *is*, per kind, as
+a tri-state: never recorded, affirmatively "none", or on file.
+
+- `GET /api/patients/:patientId/care-documents`
+  - Response: `{ "livingWill": ..., "advanceDirective": ..., "medicalPoa": ... }` — all three keys
+    always present, each `null` (never recorded) or the current statement:
+    `{ kind, status: 'on_file' | 'none', fileId, originalName, contentType, holderName,
+    holderPhone, setByUserId, setByName, setAt }`. `fileId`/`originalName`/`contentType` are
+    `null` unless `'on_file'`; `holderName`/`holderPhone` are `null` except on `medical_poa`.
+    `null` vs `status: 'none'` is the tri-state and is the point — see data-model.md.
+- `PUT /api/patients/:patientId/care-documents/:kind` — `kind` ∈
+  `living_will | advance_directive | medical_poa` (an unknown kind is a standard validation 400).
+  - Body: `{ status: 'on_file', fileId, holderName?, holderPhone? }` or `{ status: 'none' }`.
+  - Appends a new current statement — never updates in place — and stamps `setByUserId`/`setAt`
+    from the requester server-side, the same deliberate-act shape as `PATCH .../code-status`.
+    `holderName`/`holderPhone` are accepted only when `kind` is `medical_poa`; `fileId` is
+    required with `'on_file'` and forbidden with `'none'` — violations are standard validation
+    400s (array form). The `fileId` must exist and belong to this patient: 400
+    `CARE_DOCUMENT_FILE_NOT_FOUND` otherwise (same write-side guard as `PHOTO_FILE_NOT_FOUND`).
+  - Response: the same full three-key map `GET` returns, so the card re-renders from the response.
+- `GET /api/patients/:patientId/care-documents/:kind/history` — every statement ever recorded for
+  the kind, newest first (the append-only trail; reconstructability, N-2). Same statement shape as
+  above.
 
 ## Lab imports
 
@@ -1045,7 +1083,8 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-49 codes are thrown today, all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
+49 codes are thrown today (50 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
+implementation), all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
 sentence silently falls back to that call site's generic message rather than reaching the user.
@@ -1101,6 +1140,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `ANALYTE_IN_USE` | 409 | `DELETE /api/analytes/:id` with `lab_result` entries referencing it; body carries `dependents` |
 | `ANALYTE_RANGE_NOT_FOUND` | 404 | analyte-range patch/delete — unknown id, or a row belonging to a patient the caller is not on the care team for |
 | `ANALYTE_RANGE_EMPTY` | 400 | an analyte range with none of `low`, `high`, `refText` |
+| `CARE_DOCUMENT_FILE_NOT_FOUND` | 400 | `PUT .../care-documents/:kind` with `status: 'on_file'` and a `fileId` naming a file that does not exist or does not belong to this patient — same semantics as `PHOTO_FILE_NOT_FOUND` |
 
 ### Dosing warnings are not error codes
 `atypical_dose` is an advisory `type`, not an error — see "Dosing engine" above. A dose that exceeds

@@ -86,6 +86,12 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
 - `apps/api/src/app/api.spec.ts` is a 30-entry `test.todo` plan mirroring the spec — a useful
   checklist of what "done" means per area, and still largely unconverted.
 - `medications.brandNames` exists in `schema.ts` and is searched by `GET /api/medications?q=`.
+- **Care documents are spec'd but not built** — living will / advance directive / medical PoA as
+  tri-state patient standing state, surfaced in the ER Brief header and frozen (with file bytes,
+  via `ErBriefSnapshot.fileIds` + a token-scoped public file route) into shared snapshots. Spec in
+  `app-spec/data-model.md` → `CareDocumentStatement`, `api.md` → "Care documents", `er-brief.md`,
+  `security.md`, `frontend.md`. No schema, endpoints, or UI exist yet; the error-codes table
+  already lists `CARE_DOCUMENT_FILE_NOT_FOUND` ahead of the implementation.
 
 ## Conventions to match
 
