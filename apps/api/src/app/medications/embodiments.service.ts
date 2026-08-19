@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
@@ -18,6 +18,8 @@ export class EmbodimentsService {
       medicationId: row.medicationId,
       label: row.label,
       concentrationMgPerMl: row.concentrationMgPerMl,
+      concentrationMg: row.concentrationMg ?? null,
+      concentrationVolumeMl: row.concentrationVolumeMl ?? null,
       strengthMgPerUnit: row.strengthMgPerUnit,
       unitType: row.unitType,
       notes: row.notes ?? null,
@@ -46,6 +48,71 @@ export class EmbodimentsService {
     };
   }
 
+  // The one place the three concentration columns are decided, shared by create and update so they
+  // cannot drift. Returns the exact column values to write, or {} when the request says nothing
+  // about concentration at all.
+  //
+  // Why the pair exists: a caregiver holding a bottle that reads "160 mg per 5 mL" should type
+  // those two numbers, not 32. That division is a dosing calculation, so the server does it —
+  // api.md -> "Concentration: the label pair vs. mg/mL". `existing` is the stored row on update
+  // (null on create), because a PATCH sending one half of the pair is only meaningful against the
+  // other half already on file.
+  private resolveConcentration(
+    dto: CreateEmbodimentDto | UpdateEmbodimentDto,
+    existing: {
+      concentrationMgPerMl: number | null;
+      concentrationMg: number | null;
+      concentrationVolumeMl: number | null;
+    } | null,
+  ): Record<string, number | null> {
+    const perMlGiven = 'concentrationMgPerMl' in dto && dto.concentrationMgPerMl !== undefined;
+    const mgGiven = 'concentrationMg' in dto && dto.concentrationMg !== undefined;
+    const mlGiven = 'concentrationVolumeMl' in dto && dto.concentrationVolumeMl !== undefined;
+    if (!perMlGiven && !mgGiven && !mlGiven) return {};
+
+    const perMl = perMlGiven ? (dto.concentrationMgPerMl ?? null) : null;
+    const mg = mgGiven ? (dto.concentrationMg ?? null) : null;
+    const ml = mlGiven ? (dto.concentrationVolumeMl ?? null) : null;
+
+    // Two sources for one number. Don't guess which the caller meant.
+    if (perMl != null && (mg != null || ml != null)) {
+      throw new BadRequestException('CONCENTRATION_INPUT_CONFLICT');
+    }
+
+    // A per-mL figure given on its own wins outright, and clears the pair: the printed figures on
+    // file would no longer describe the stored concentration.
+    if (perMl != null) {
+      return { concentrationMgPerMl: perMl, concentrationMg: null, concentrationVolumeMl: null };
+    }
+
+    // Clearing either half clears the pair *and* the figure derived from it — the derived value has
+    // no independent existence once its inputs are gone.
+    if ((mgGiven && mg == null) || (mlGiven && ml == null)) {
+      return { concentrationMgPerMl: null, concentrationMg: null, concentrationVolumeMl: null };
+    }
+
+    if (mg == null && ml == null) {
+      // Only `concentrationMgPerMl: null` was sent — clear everything.
+      return { concentrationMgPerMl: null, concentrationMg: null, concentrationVolumeMl: null };
+    }
+
+    // Merge against the stored row so `PATCH { concentrationMg: 200 }` re-derives from the volume
+    // already on file rather than rejecting a request that is perfectly well-defined.
+    const mergedMg = mg ?? existing?.concentrationMg ?? null;
+    const mergedMl = ml ?? existing?.concentrationVolumeMl ?? null;
+    // "160 mg per ?" has no meaning, and defaulting the missing half to 1 would invent a dosing
+    // error of exactly the size this feature exists to prevent.
+    if (mergedMg == null || mergedMl == null) {
+      throw new BadRequestException('CONCENTRATION_PAIR_INCOMPLETE');
+    }
+
+    const derived = Math.round((mergedMg / mergedMl) * 1e6) / 1e6;
+    if (!Number.isFinite(derived) || derived < 0.001 || derived > 10000) {
+      throw new BadRequestException('CONCENTRATION_OUT_OF_RANGE');
+    }
+    return { concentrationMgPerMl: derived, concentrationMg: mergedMg, concentrationVolumeMl: mergedMl };
+  }
+
   async create(medicationId: string, userId: string, dto: CreateEmbodimentDto) {
     await this.ensureMedicationExists(medicationId);
     const db = this.db.db as any;
@@ -54,7 +121,10 @@ export class EmbodimentsService {
       id,
       medicationId,
       label: dto.label,
-      concentrationMgPerMl: dto.concentrationMgPerMl ?? null,
+      concentrationMgPerMl: null,
+      concentrationMg: null,
+      concentrationVolumeMl: null,
+      ...this.resolveConcentration(dto, null),
       strengthMgPerUnit: dto.strengthMgPerUnit ?? null,
       unitType: dto.unitType,
       notes: dto.notes ?? null,
@@ -83,11 +153,11 @@ export class EmbodimentsService {
   }
 
   async update(id: string, userId: string, dto: UpdateEmbodimentDto) {
-    await this.get(id);
+    const existing = await this.get(id);
     const db = this.db.db as any;
     const updates: Record<string, any> = {};
     if (dto.label !== undefined) updates.label = dto.label;
-    if (dto.concentrationMgPerMl !== undefined) updates.concentrationMgPerMl = dto.concentrationMgPerMl;
+    Object.assign(updates, this.resolveConcentration(dto, existing));
     if (dto.strengthMgPerUnit !== undefined) updates.strengthMgPerUnit = dto.strengthMgPerUnit;
     if (dto.unitType !== undefined) updates.unitType = dto.unitType;
     if (dto.notes !== undefined) updates.notes = dto.notes;

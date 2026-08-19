@@ -445,7 +445,15 @@ became catalog rows (above) instead of a second table.
   - `id: uuid`
   - `medicationId: uuid`
   - `label: string` (e.g., "500mg tablet", "5mg/mL syrup")
-  - `concentrationMgPerMl: decimal | null`
+  - `concentrationMgPerMl: decimal | null` — the derived per-mL figure. Everything that computes a
+    dose reads **only** this field.
+  - `concentrationMg: decimal | null`, `concentrationVolumeMl: decimal | null` — the concentration
+    **as printed on the bottle** ("160 mg per 5 mL"). Set together or not at all; the server derives
+    `concentrationMgPerMl` from them and stores all three. This exists so a caregiver never has to
+    divide: entering 32 mg/mL from a label that reads "160 mg / 5 mL" is exactly the arithmetic
+    error the pair prevents, and keeping the printed figures means the catalog can show the label
+    back for verification instead of a number no bottle carries. Null on an embodiment whose
+    concentration was entered directly as mg/mL — that path stays supported and stays authoritative.
   - `strengthMgPerUnit: decimal | null`
   - `unitType: enum('tablet','capsule','ml','drop','other')`
   - `notes: text`

@@ -696,6 +696,22 @@ unconditional by design (er-brief.md → Formats).
   last step leaves catalog rows created but no observation: harmless, and retrying is safe because
   resolve and range-create are both idempotent.
 
+## Medication catalog
+- `/medications` (list) and `/medications/:id` (detail, holding the medication's embodiments and
+  guidelines). Household-global, like the analyte catalog.
+- **Concentration is entered as the bottle prints it.** The embodiment form's concentration field is
+  a pair — *[ mg ] per [ mL ]* — not a single mg/mL box, and the derived per-mL figure is shown
+  live beneath it as the caregiver types ("160 mg per 5 mL = 32 mg/mL"). The volume box defaults to
+  `1`, so a label that genuinely reads "20 mg/mL" is still one number and a default. The app never
+  asks a caregiver to do dosing arithmetic it can do itself, and it never *hides* the result of the
+  arithmetic it did (P6): the derived figure is on screen before saving, not just afterwards.
+- Where an embodiment's concentration is displayed — the detail page's embodiment list, and the
+  embodiment picker on reaction entry — it reads back **as printed**, with the derived figure in
+  parentheses: `160 mg / 5 mL (32 mg/mL)`. An embodiment recorded directly as mg/mL, or printed per
+  single mL, shows just `32 mg/mL`; the app neither invents printed figures it was never given nor
+  pads the line with a parenthetical that repeats it. (Dose entry's picker deliberately shows
+  cabinet status rather than concentration — the number that matters there is the computed dose.)
+
 ## Analyte catalog
 - `/analytes` (list) and `/analytes/:id` (detail), reached from the dashboard beside the medication
   catalog. The analyte itself is global to the household, like medications — populated by importing

@@ -362,7 +362,13 @@ export interface MedicationEmbodiment {
   id: string;
   medicationId: string;
   label: string;
+  // The derived per-mL figure — the only concentration the dosing engine reads.
   concentrationMgPerMl: number | null;
+  // The concentration as printed on the bottle ("160 mg per 5 mL"), when it was entered that way.
+  // Set together or both null; the server derives concentrationMgPerMl from them so no caregiver
+  // has to divide (data-model.md → MedicationEmbodiment).
+  concentrationMg: number | null;
+  concentrationVolumeMl: number | null;
   strengthMgPerUnit: number | null;
   unitType: MedicationUnitType;
   notes: string | null;
@@ -376,7 +382,12 @@ export interface MedicationEmbodiment {
 
 export interface CreateEmbodimentDto {
   label: string;
+  // Either give the printed pair (concentrationMg + concentrationVolumeMl) and let the server
+  // derive the per-mL figure, or give concentrationMgPerMl directly — never both
+  // (400 CONCENTRATION_INPUT_CONFLICT). See api.md → "Concentration: the label pair vs. mg/mL".
   concentrationMgPerMl?: number | null;
+  concentrationMg?: number | null;
+  concentrationVolumeMl?: number | null;
   strengthMgPerUnit?: number | null;
   unitType: MedicationUnitType;
   notes?: string;
@@ -389,7 +400,12 @@ export interface CreateEmbodimentDto {
 
 export interface UpdateEmbodimentDto {
   label?: string;
+  // Same two ways in as create, checked against the merged row: patching one half of the pair is
+  // validated against the stored other half, and nulling either half clears the pair and the
+  // derived figure together.
   concentrationMgPerMl?: number | null;
+  concentrationMg?: number | null;
+  concentrationVolumeMl?: number | null;
   strengthMgPerUnit?: number | null;
   unitType?: MedicationUnitType;
   notes?: string;

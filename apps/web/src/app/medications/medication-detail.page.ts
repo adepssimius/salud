@@ -5,6 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { Medication, MedicationEmbodiment, MedicationGuideline } from '@salud/shared/types';
 import { errorText } from '../core/error-display';
+import { concentrationText } from '../core/concentration-display';
 
 @Component({
   selector: 'app-medication-detail-page',
@@ -40,7 +41,7 @@ import { errorText } from '../core/error-display';
               <span class="pill">{{ e.unitType }}</span>
             </div>
             <div class="emb-details muted">
-              <span *ngIf="e.concentrationMgPerMl">{{ e.concentrationMgPerMl }} mg/mL</span>
+              <span *ngIf="concentrationText(e) as conc">{{ conc }}</span>
               <span *ngIf="e.strengthMgPerUnit">{{ e.strengthMgPerUnit }} mg/unit</span>
             </div>
             <div class="cabinet-row">
@@ -76,15 +77,44 @@ import { errorText } from '../core/error-display';
               <option value="other">Other</option>
             </select>
           </label>
-          <label class="field">
-            <span>Concentration (mg/mL, for liquids)</span>
-            <input type="number" step="0.01" formControlName="concentrationMgPerMl" />
-          </label>
+          <!-- Two boxes, not one. The bottle says "160 mg per 5 mL"; asking for 32 mg/mL asks the
+               caregiver to divide, which is where the transcription errors are. The volume box
+               defaults to 1, so a label that really does read "20 mg/mL" is still one number.
+               The derived figure is shown live because the app does not hide arithmetic it did on
+               a caregiver's behalf (frontend.md -> "Medication catalog"). -->
+          <fieldset class="field conc-field">
+            <legend>Concentration (for liquids)</legend>
+            <div class="conc-inputs">
+              <input
+                type="number"
+                step="0.01"
+                formControlName="concentrationMg"
+                aria-label="Concentration amount in mg"
+                placeholder="160"
+              />
+              <span class="conc-unit">mg per</span>
+              <input
+                type="number"
+                step="0.01"
+                formControlName="concentrationVolumeMl"
+                aria-label="Concentration volume in mL"
+              />
+              <span class="conc-unit">mL</span>
+            </div>
+            <p class="muted small conc-derived" *ngIf="derivedConcentration() as derived">= {{ derived }} mg/mL</p>
+            <p class="error small" *ngIf="concentrationPairIncomplete()">
+              Fill in both numbers — how many mg, and in how many mL.
+            </p>
+          </fieldset>
           <label class="field">
             <span>Strength (mg/unit, for tablets)</span>
             <input type="number" step="0.01" formControlName="strengthMgPerUnit" />
           </label>
-          <button type="submit" class="primary" [disabled]="embodimentForm.invalid || embodimentSaving()">
+          <button
+            type="submit"
+            class="primary"
+            [disabled]="embodimentForm.invalid || concentrationPairIncomplete() || embodimentSaving()"
+          >
             {{ embodimentSaving() ? 'Saving…' : 'Add' }}
           </button>
           <div class="error" *ngIf="embodimentError()">{{ embodimentError() }}</div>
@@ -231,6 +261,35 @@ import { errorText } from '../core/error-display';
         display: flex;
         gap: 0.75rem;
       }
+      /* A fieldset so the two boxes read as one labelled control; the global .field vocabulary
+         styles the legend and spacing, only the row layout is specific to this page. */
+      .conc-field {
+        border: none;
+        padding: 0;
+        margin: 0;
+        /* A fieldset's default min-inline-size is min-content, so it refuses to shrink and pushes
+           the trailing "mL" outside the card on a phone. Only this reset stops that. */
+        min-width: 0;
+      }
+      .conc-inputs {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .conc-inputs input {
+        /* A number input's default size is ~20 characters; without a basis of 0 the two boxes
+           together overflow a narrow screen. */
+        flex: 1 1 0;
+        min-width: 0;
+        width: 100%;
+      }
+      .conc-unit {
+        white-space: nowrap;
+        color: var(--text-muted);
+      }
+      .conc-derived {
+        margin: 0.35rem 0 0;
+      }
       .cabinet-row {
         margin-top: 0.5rem;
         display: flex;
@@ -275,7 +334,10 @@ export class MedicationDetailPage implements OnInit {
   embodimentForm = this.fb.nonNullable.group({
     label: ['', Validators.required],
     unitType: ['tablet', Validators.required],
-    concentrationMgPerMl: [null as number | null],
+    concentrationMg: [null as number | null],
+    // Defaults to 1 so the field reads "__ mg per 1 mL" out of the box: the old single-box
+    // behaviour, still one number to type, for a label already printed per mL.
+    concentrationVolumeMl: [1 as number | null],
     strengthMgPerUnit: [null as number | null],
   });
 
@@ -302,7 +364,33 @@ export class MedicationDetailPage implements OnInit {
   guidelineType = signal<'weight_based' | 'age_band'>('weight_based');
   isWeightBased = computed(() => this.guidelineType() === 'weight_based');
 
+  // Same reason the guideline type above is a signal rather than a computed() over `.value`:
+  // control values are plain properties, invisible to the reactive graph. Fed from valueChanges.
+  private concentrationPair = signal<{ mg: number | null; ml: number | null }>({ mg: null, ml: 1 });
+
+  // The mg/mL the server will derive from what is typed so far — null while the pair is unusable,
+  // so the template shows nothing rather than "= Infinity mg/mL" mid-keystroke.
+  derivedConcentration = computed(() => {
+    const { mg, ml } = this.concentrationPair();
+    if (mg == null || ml == null || !(ml > 0) || !(mg > 0)) return null;
+    return Math.round((mg / ml) * 1e6) / 1e6;
+  });
+
+  // The client-side twin of CONCENTRATION_PAIR_INCOMPLETE: say so at the field rather than letting
+  // the caregiver submit and read it back as a form-level error.
+  //
+  // Only the mg-without-volume direction is a problem. The volume box ships pre-filled with 1, so
+  // "empty mg, 1 mL" is just the untouched form -- a tablet must not be nagged about a
+  // concentration it doesn't have, and nothing is posted from that state anyway.
+  concentrationPairIncomplete = computed(() => {
+    const { mg, ml } = this.concentrationPair();
+    return mg != null && ml == null;
+  });
+
   ngOnInit(): void {
+    this.embodimentForm.valueChanges.subscribe((val) => {
+      this.concentrationPair.set({ mg: val.concentrationMg ?? null, ml: val.concentrationVolumeMl ?? null });
+    });
     this.guidelineForm.controls.type.valueChanges.subscribe((type) => {
       const next = (type === 'age_band' ? 'age_band' : 'weight_based') as 'weight_based' | 'age_band';
       this.guidelineType.set(next);
@@ -330,6 +418,8 @@ export class MedicationDetailPage implements OnInit {
     apply(weightOnly, type === 'weight_based');
     apply(ageOnly, type === 'age_band');
   }
+
+  concentrationText = concentrationText;
 
   showFieldError(name: string): boolean {
     const control = this.guidelineForm.get(name);
@@ -413,14 +503,23 @@ export class MedicationDetailPage implements OnInit {
       .post<MedicationEmbodiment, any>(`/medications/${this.medicationId}/embodiments`, {
         label: val.label,
         unitType: val.unitType,
-        concentrationMgPerMl: val.concentrationMgPerMl ?? undefined,
+        // The pair goes up as typed; the server does the division and stores all three figures.
+        // Omitted entirely for a solid form, where "1 mL" would be meaningless.
+        concentrationMg: val.concentrationMg ?? undefined,
+        concentrationVolumeMl: val.concentrationMg == null ? undefined : (val.concentrationVolumeMl ?? undefined),
         strengthMgPerUnit: val.strengthMgPerUnit ?? undefined,
       })
       .subscribe({
         next: () => {
           this.embodimentSaving.set(false);
           this.showEmbodimentForm.set(false);
-          this.embodimentForm.reset({ label: '', unitType: 'tablet', concentrationMgPerMl: null, strengthMgPerUnit: null });
+          this.embodimentForm.reset({
+            label: '',
+            unitType: 'tablet',
+            concentrationMg: null,
+            concentrationVolumeMl: 1,
+            strengthMgPerUnit: null,
+          });
           this.load();
         },
         error: (err) => {
