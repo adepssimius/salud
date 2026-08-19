@@ -40,7 +40,7 @@ interface UserSearchResult {
             <p class="muted">View and edit patient info.</p>
           </div>
           <div class="header-actions">
-            <button class="secondary" type="button" (click)="backToProfile()">Back</button>
+            <button class="secondary" type="button" (click)="backToPatients()">Patients</button>
             <button class="secondary" type="button" (click)="goToTimeline()">Timeline</button>
             <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
             <button class="secondary" type="button" (click)="goToLabImport()">Import lab report</button>
@@ -532,7 +532,7 @@ export class PatientDetailPage implements OnInit {
   ngOnInit(): void {
     this.patientId = this.route.snapshot.paramMap.get('id') ?? '';
     if (!this.patientId) {
-      this.router.navigateByUrl('/profile?tab=patients');
+      this.router.navigateByUrl('/patients');
       return;
     }
     if (!this.auth.user() && this.auth.token) {
@@ -618,7 +618,7 @@ export class PatientDetailPage implements OnInit {
         });
       },
       error: () => {
-        this.router.navigateByUrl('/profile?tab=patients');
+        this.router.navigateByUrl('/patients');
       },
     });
   }
@@ -775,8 +775,8 @@ export class PatientDetailPage implements OnInit {
       });
   }
 
-  backToProfile() {
-    this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
+  backToPatients() {
+    this.router.navigate(['/patients']);
   }
 
   goToTimeline() {
@@ -833,7 +833,7 @@ export class PatientDetailPage implements OnInit {
     this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}`).subscribe({
       next: () => {
         this.deleting.set(false);
-        this.router.navigate(['/profile'], { queryParams: { tab: 'patients' } });
+        this.router.navigate(['/patients']);
       },
       error: (err) => {
         this.deleting.set(false);

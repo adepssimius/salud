@@ -193,7 +193,7 @@ describe('PatientDetailPage', () => {
     jest.spyOn(window, 'confirm').mockReturnValue(true);
     component.deletePatient();
     expect(apiMock.delete).toHaveBeenCalledWith('/patients/p1');
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/profile'], { queryParams: { tab: 'patients' } });
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients']);
   });
 
   it('hides delete and refuses to call it for a non-owner', () => {

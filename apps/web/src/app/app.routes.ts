@@ -22,6 +22,12 @@ export const appRoutes: Route[] = [
     canActivate: [authGuard],
   },
   {
+    path: 'patients',
+    loadComponent: () => import('./patients/patients-list.page').then((m) => m.PatientsListPage),
+    canActivate: [authGuard],
+  },
+  // Before `patients/:id`: routes match top-down, so the literal has to win over the parameter.
+  {
     path: 'patients/new',
     loadComponent: () => import('./patients/new-patient.page').then((m) => m.NewPatientPage),
     canActivate: [authGuard],
