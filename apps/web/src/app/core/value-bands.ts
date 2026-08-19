@@ -122,3 +122,18 @@ export function describeBand(b: DisplayBand, unitSuffix: string): string {
   if (b.low !== null) return `${b.label} at or above ${b.low}${unitSuffix}`;
   return b.label;
 }
+
+/**
+ * A recorded range as a bare phrase — "30–400", "at or above 38" — for a list that already names
+ * the range beside it (the analyte page's range table, a lab entry's standards on observation
+ * detail). `describeBand` above is the charting sibling: it takes a converted band and prefixes the
+ * label. This one takes the stored row and falls back to the lab's printed `refText` when there is
+ * no numeric bound to phrase, which is the only thing a text-only range ("varies with time of day")
+ * has to say.
+ */
+export function describeRangeText(r: { low: number | null; high: number | null; refText: string | null }): string {
+  if (r.low !== null && r.high !== null) return `${r.low}–${r.high}`;
+  if (r.high !== null) return `at or below ${r.high}`;
+  if (r.low !== null) return `at or above ${r.low}`;
+  return r.refText ?? '—';
+}

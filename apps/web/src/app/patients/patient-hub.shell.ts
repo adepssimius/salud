@@ -52,6 +52,7 @@ import { PatientHubStore } from './patient-hub.store';
 
       <nav class="tab-bar">
         <a class="tab-link" routerLink="journal" routerLinkActive="active">Journal</a>
+        <a class="tab-link" routerLink="photos" routerLinkActive="active">Photos</a>
         <a class="tab-link" routerLink="meds" routerLinkActive="active">Meds</a>
         <a class="tab-link" routerLink="history" routerLinkActive="active">History</a>
         <a class="tab-link" routerLink="care-team" routerLinkActive="active">Care team</a>

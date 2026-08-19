@@ -12,6 +12,7 @@ import {
 } from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
+import { describeRangeText } from '../core/value-bands';
 
 interface PlottedPoint {
   x: number;
@@ -646,10 +647,7 @@ export class AnalyteDetailPage implements OnInit {
   }
 
   describeRange(r: { low: number | null; high: number | null; refText: string | null }): string {
-    if (r.low !== null && r.high !== null) return `${r.low}–${r.high}`;
-    if (r.high !== null) return `at or below ${r.high}`;
-    if (r.low !== null) return `at or above ${r.low}`;
-    return r.refText ?? '—';
+    return describeRangeText(r);
   }
 
   private loadAnalyte() {

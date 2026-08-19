@@ -95,6 +95,16 @@ describe('PatientHubShell', () => {
     expect(tabs).not.toContain('Share');
   });
 
+  it('reaches the photo progression view from the tab strip', () => {
+    // Photos live inside observations; without a tab of their own the only way to a site's
+    // progression is scrolling the journal (frontend.md → Photos → "Photos by site").
+    const fixture = build();
+    const tabs = Array.from(fixture.nativeElement.querySelectorAll('.tab-link')).map((a: any) =>
+      a.textContent.trim(),
+    );
+    expect(tabs).toContain('Photos');
+  });
+
   it('offers the ER Brief from the header, so it is reachable from every tab', () => {
     const fixture = build();
     fixture.componentInstance.goToErBrief();

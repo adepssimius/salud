@@ -9,6 +9,15 @@ const REASON_LABELS: Record<string, string> = {
   override: 'no guideline followed',
 };
 
+/**
+ * One `atypicalReason` code in the words this banner uses. Exported so intervention detail can read
+ * a stored `metadata.atypicalReason` back in the same phrasing the caregiver saw when the dose was
+ * flagged at entry time — the same flag described two ways would read as two different findings.
+ */
+export function doseReasonLabel(code: string): string {
+  return REASON_LABELS[code] ?? code.replace(/_/g, ' ');
+}
+
 // Structurally compatible with both the persisted `Advisory` (nullable fields, from the DB) and
 // the unpersisted `AdvisoryCandidate` (optional fields, from a preview) — this component only
 // ever reads type/severity/payload, so it doesn't need to care which one it was handed.
@@ -90,7 +99,7 @@ export class AdvisoryBannerComponent {
     switch (this.advisory.type) {
       case 'atypical_dose': {
         const reasons: string[] = payload['reasons'] ?? [];
-        return 'Atypical dose — ' + reasons.map((r) => REASON_LABELS[r] ?? r).join(', ');
+        return 'Atypical dose — ' + reasons.map(doseReasonLabel).join(', ');
       }
       case 'stale_weight':
         return payload['daysSince'] == null

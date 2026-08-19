@@ -126,6 +126,32 @@ export function entrySummary(
   }
 }
 
+/** Entry types as a human label — the row heading beside `entrySummary`'s value on a detail page. */
+const ENTRY_TYPE_LABELS: Record<string, string> = {
+  temperature: 'Temperature',
+  heart_rate: 'Heart rate',
+  respiratory_rate: 'Respiratory rate',
+  oxygen_saturation: 'Oxygen saturation',
+  pain_score: 'Pain score',
+  weight: 'Weight',
+  height: 'Height',
+  lesion_size: 'Lesion size',
+  symptom: 'Symptom',
+  note: 'Note',
+  tag: 'Tag',
+  photo: 'Photo',
+  lab_result: 'Lab result',
+  document: 'Document',
+};
+
+/**
+ * "Lesion size" for `lesion_size`. An unknown type falls back to its own name with the underscores
+ * opened up, so a type added to the API before this map reads as words rather than as a blank.
+ */
+export function entryTypeLabel(type: string): string {
+  return ENTRY_TYPE_LABELS[type] ?? type.replace(/_/g, ' ');
+}
+
 /**
  * One line summarizing a set of lab_result entries — "Labs: 30 results, 1 low" — from printed
  * flags only. A full panel must never render as 30 timeline lines (frontend.md → Timeline).

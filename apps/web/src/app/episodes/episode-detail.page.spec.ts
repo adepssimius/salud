@@ -142,6 +142,14 @@ describe('EpisodeDetailPage', () => {
     expect(comp.error()).toBe('Unable to load this episode’s events.');
   });
 
+  it('links an event row through to its read-only detail page', () => {
+    const fixture = TestBed.createComponent(EpisodeDetailPage);
+    fixture.detectChanges();
+
+    fixture.nativeElement.querySelector('.feed-text-link').click();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/observations', 'obs1']);
+  });
+
   it('resolveEpisode hands off to new-observation with patientId and resolveEpisodeId', () => {
     const fixture = TestBed.createComponent(EpisodeDetailPage);
     fixture.detectChanges();

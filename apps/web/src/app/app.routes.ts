@@ -153,6 +153,15 @@ export const appRoutes: Route[] = [
           import('./timeline/journal.page').then((m) => m.JournalPage),
         title: 'Journal',
       },
+      // Photos by site — the progression read of `photo` entries (frontend.md → Photos →
+      // "Photos by site"). A hub child, so it inherits `:id` and the patient header like the
+      // other tabs.
+      {
+        path: 'photos',
+        loadComponent: () =>
+          import('./photos/photos.page').then((m) => m.PhotosPage),
+        title: 'Photos',
+      },
       {
         path: 'meds',
         loadComponent: () =>
@@ -198,6 +207,16 @@ export const appRoutes: Route[] = [
     title: 'New observation',
     canActivate: [authGuard],
   },
+  // After `observations/new`: routes match top-down, so the literal has to win over the parameter.
+  {
+    path: 'observations/:id',
+    loadComponent: () =>
+      import('./observations/observation-detail.page').then(
+        (m) => m.ObservationDetailPage
+      ),
+    title: 'Observation',
+    canActivate: [authGuard],
+  },
   {
     path: 'interventions/new',
     loadComponent: () =>
@@ -205,6 +224,16 @@ export const appRoutes: Route[] = [
         (m) => m.NewInterventionPage
       ),
     title: 'New intervention',
+    canActivate: [authGuard],
+  },
+  // Same top-down rule as `observations/:id` above.
+  {
+    path: 'interventions/:id',
+    loadComponent: () =>
+      import('./interventions/intervention-detail.page').then(
+        (m) => m.InterventionDetailPage
+      ),
+    title: 'Intervention',
     canActivate: [authGuard],
   },
   {
