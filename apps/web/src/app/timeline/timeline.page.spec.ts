@@ -72,8 +72,11 @@ describe('TimelinePage', () => {
     expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/timeline', {});
     expect(apiMock.get).toHaveBeenCalledWith('/medications');
     expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/episodes');
+    // The patient's name is the hub header's job now, not this tab's — assert on what the journal
+    // itself renders.
     const text = fixture.nativeElement.textContent;
-    expect(text).toContain('Jamie Doe');
+    expect(text).toContain('Journal');
+    expect(text).toContain('Acetaminophen');
   });
 
   it('extracts temperature points in Celsius when the viewer has no preference set', () => {
@@ -134,13 +137,6 @@ describe('TimelinePage', () => {
     expect(fixture.componentInstance.selectedTag()).toBe('fever');
     expect(fixture.componentInstance.selectedMedicationId()).toBeNull();
     expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/timeline', { medicationTag: 'fever' });
-  });
-
-  it('backToPatient navigates to the patient detail page', () => {
-    const fixture = TestBed.createComponent(TimelinePage);
-    fixture.detectChanges();
-    fixture.componentInstance.backToPatient();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1']);
   });
 
   it('goToEpisode navigates to the episode detail page when a band is clicked', () => {

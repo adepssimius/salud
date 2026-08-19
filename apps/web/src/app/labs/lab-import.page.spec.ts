@@ -176,7 +176,7 @@ describe('LabImportPage', () => {
     expect(body.entries[2]).toEqual({ type: 'document', metadata: { fileId: 'f1', label: 'Quest_Labs.pdf' } });
     expect(body.text).toContain('Quest Diagnostics labs');
     expect(body.observedAt).toEqual(expect.any(String));
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'timeline']);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'journal']);
   });
 
   it('writes the report range for an accepted conflict, and only then', () => {

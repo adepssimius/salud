@@ -493,7 +493,7 @@ export class LabImportPage implements OnInit {
         }),
       )
       .subscribe({
-        next: () => this.router.navigate(['/patients', this.patientId, 'timeline']),
+        next: () => this.router.navigate(['/patients', this.patientId, 'journal']),
         error: (err) => {
           this.busy.set(false);
           this.error.set(errorText(err, 'Could not record the lab results.'));

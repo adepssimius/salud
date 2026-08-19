@@ -39,14 +39,7 @@ const DOSE_MARKER_Y = 230;
   imports: [CommonModule],
   template: `
     <div class="card">
-      <button type="button" class="link" (click)="backToPatient()">&larr; Patient</button>
-      <h1>Timeline</h1>
-      <p class="muted" *ngIf="timeline() as t">
-        {{ t.patient.fullName }}
-        <span *ngIf="t.weightPrompt.needsUpdate" class="weight-warn">
-          · weight {{ t.weightPrompt.daysSince === null ? 'never recorded' : t.weightPrompt.daysSince + ' days old' }}
-        </span>
-      </p>
+      <h2>Journal</h2>
 
       <div class="filters">
         <span class="filter-label">Medication:</span>
@@ -133,9 +126,6 @@ const DOSE_MARKER_Y = 230;
       }
       .muted {
         margin: 0;
-      }
-      .weight-warn {
-        color: #fcd34d;
       }
       .link {
         align-self: flex-start;
@@ -367,10 +357,6 @@ export class TimelinePage implements OnInit {
     this.selectedMedicationId.set(null);
     this.selectedTag.set(null);
     this.load();
-  }
-
-  backToPatient() {
-    this.router.navigate(['/patients', this.patientId]);
   }
 
   goToEpisode(episodeId: string) {

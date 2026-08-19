@@ -1,11 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
-import { PatientDetailPage } from './patient-detail.page';
-import { ApiClientService } from '../core/api-client.service';
-import { AuthService } from '../core/auth.service';
+import { PatientSettingsPage } from './patient-settings.page';
+import { ApiClientService } from '../../core/api-client.service';
+import { AuthService } from '../../core/auth.service';
 import { ActivatedRoute, Router } from '@angular/router';
 
-describe('PatientDetailPage', () => {
+describe('PatientSettingsPage', () => {
   let apiMock: any;
   let authMock: any;
   let routerMock: any;
@@ -33,7 +33,7 @@ describe('PatientDetailPage', () => {
     routerMock = { navigateByUrl: jest.fn(), navigate: jest.fn() };
 
     await TestBed.configureTestingModule({
-      imports: [PatientDetailPage],
+      imports: [PatientSettingsPage],
       providers: [
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
@@ -75,7 +75,7 @@ describe('PatientDetailPage', () => {
       });
     });
 
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
     expect(component.patient()?.fullName).toBe('Pat One');
@@ -102,7 +102,7 @@ describe('PatientDetailPage', () => {
         codeStatusSetAt: 1700000000,
       }),
     );
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
 
@@ -128,7 +128,7 @@ describe('PatientDetailPage', () => {
       }
       return of([]);
     });
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
 
@@ -140,7 +140,7 @@ describe('PatientDetailPage', () => {
 
   it('navigates to new-condition and condition-detail', () => {
     apiMock.get.mockReturnValue(of({}));
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
 
@@ -153,7 +153,7 @@ describe('PatientDetailPage', () => {
 
   it('goToErBrief navigates to the ER Brief page', () => {
     apiMock.get.mockReturnValue(of({}));
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     fixture.componentInstance.goToErBrief();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'er-brief']);
@@ -174,7 +174,7 @@ describe('PatientDetailPage', () => {
         myRole: 'parent',
       }),
     );
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
     component.form.patchValue({ fullName: 'Updated', dateOfBirth: '2010-01-01', sexAtBirth: 'female' });
@@ -187,7 +187,7 @@ describe('PatientDetailPage', () => {
     // deletePatient() re-checks rather than trusting the button being visible.
     apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'u1' }));
     apiMock.delete.mockReturnValue(of({ deleted: true }));
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
     jest.spyOn(window, 'confirm').mockReturnValue(true);
@@ -198,7 +198,7 @@ describe('PatientDetailPage', () => {
 
   it('hides delete and refuses to call it for a non-owner', () => {
     apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'someone-else' }));
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
 
@@ -213,7 +213,7 @@ describe('PatientDetailPage', () => {
   it('shows a delete failure next to the button, not in the care team card', () => {
     apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'u1' }));
     apiMock.delete.mockReturnValue(throwError(() => ({ status: 403, error: { message: 'NOT_PATIENT_OWNER' } })));
-    const fixture = TestBed.createComponent(PatientDetailPage);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
     fixture.detectChanges();
     const component = fixture.componentInstance;
     jest.spyOn(window, 'confirm').mockReturnValue(true);

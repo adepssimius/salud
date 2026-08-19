@@ -317,3 +317,40 @@ h2 {
   min-width: 90px;
   color: var(--accent-soft);
 }
+
+/* ---- tab bar (patient hub) ---------------------------------------------
+   A horizontal, route-driven strip. Deliberately not profile's `.tabs`, which is a 200px vertical
+   rail driven by a signal — different shape, different mechanism. Global rather than page-local so
+   the hub shell's inline styles stay well inside the 4 kB `anyComponentStyle` budget and a second
+   tabbed surface has something to adopt. */
+.tab-bar {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.tab-link {
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab-link:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+.tab-link.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-bright);
+}

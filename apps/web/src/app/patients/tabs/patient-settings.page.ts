@@ -15,11 +15,11 @@ import {
   UpdatePatientDto,
   UserProfile,
 } from '@salud/shared/types';
-import { ApiClientService } from '../core/api-client.service';
-import { AuthService } from '../core/auth.service';
-import { errorText } from '../core/error-display';
-import { timeAgo } from '../core/relative-time';
-import { RevisionHistoryComponent } from '../core/revision-history.component';
+import { ApiClientService } from '../../core/api-client.service';
+import { AuthService } from '../../core/auth.service';
+import { errorText } from '../../core/error-display';
+import { timeAgo } from '../../core/relative-time';
+import { RevisionHistoryComponent } from '../../core/revision-history.component';
 
 interface UserSearchResult {
   id: string;
@@ -28,7 +28,7 @@ interface UserSearchResult {
 }
 
 @Component({
-  selector: 'app-patient-detail-page',
+  selector: 'app-patient-settings-page',
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule, FormsModule, RevisionHistoryComponent],
   template: `
@@ -36,12 +36,10 @@ interface UserSearchResult {
       <div class="card">
         <div class="card-header">
           <div>
-            <h1>Patient Details</h1>
+            <h2>Patient details</h2>
             <p class="muted">View and edit patient info.</p>
           </div>
           <div class="header-actions">
-            <button class="secondary" type="button" (click)="backToPatients()">Patients</button>
-            <button class="secondary" type="button" (click)="goToTimeline()">Timeline</button>
             <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
             <button class="secondary" type="button" (click)="goToLabImport()">Import lab report</button>
             <button
@@ -461,7 +459,7 @@ interface UserSearchResult {
     `,
   ],
 })
-export class PatientDetailPage implements OnInit {
+export class PatientSettingsPage implements OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
   private readonly route = inject(ActivatedRoute);
@@ -773,14 +771,6 @@ export class PatientDetailPage implements OnInit {
           this.savingCaregiver.set(false);
         },
       });
-  }
-
-  backToPatients() {
-    this.router.navigate(['/patients']);
-  }
-
-  goToTimeline() {
-    this.router.navigate(['/patients', this.patientId, 'timeline']);
   }
 
   goToErBrief() {
