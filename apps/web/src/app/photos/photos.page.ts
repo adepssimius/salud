@@ -135,6 +135,11 @@ import { PatientHubStore } from '../patients/patient-hub.store';
           align-items: flex-start;
           gap: 1rem;
         }
+        /* A fixed image column, so every frame in the strip is the same size whatever each
+           photo's own dimensions are — the comparison is between them. */
+        .frame app-photo-thumbnail {
+          flex: 0 0 320px;
+        }
       }
       .frame-meta {
         display: flex;
