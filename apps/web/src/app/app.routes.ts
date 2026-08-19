@@ -95,6 +95,8 @@ export const appRoutes: Route[] = [
       // `now` is deferred (it needs the bimodal Home work), so a quiet and a sick patient both
       // land on the journal for the moment.
       { path: '', pathMatch: 'full', redirectTo: 'journal' },
+      // `share` was this tab's name until it turned out nobody looks for their co-parent under it.
+      { path: 'share', redirectTo: 'care-team' },
       {
         path: 'journal',
         loadComponent: () => import('./timeline/journal.page').then((m) => m.JournalPage),
@@ -109,8 +111,9 @@ export const appRoutes: Route[] = [
           import('./patients/tabs/patient-history.page').then((m) => m.PatientHistoryPage),
       },
       {
-        path: 'share',
-        loadComponent: () => import('./patients/tabs/patient-share.page').then((m) => m.PatientSharePage),
+        path: 'care-team',
+        loadComponent: () =>
+          import('./patients/tabs/patient-care-team.page').then((m) => m.PatientCareTeamPage),
       },
       {
         path: 'settings',

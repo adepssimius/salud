@@ -41,6 +41,11 @@ import { PatientHubStore } from './patient-hub.store';
             <span class="pill pill-warn" *ngIf="weightStale()">{{ weightLabel() }}</span>
           </div>
         </div>
+        <!-- The ER Brief is a handoff artifact, not an access-control screen, and it is wanted in a
+             hurry. A header action puts it one tap from every tab instead of behind one. -->
+        <div class="header-actions">
+          <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
+        </div>
       </header>
 
       <p class="error" *ngIf="store.error()">{{ store.error() }}</p>
@@ -49,8 +54,8 @@ import { PatientHubStore } from './patient-hub.store';
         <a class="tab-link" routerLink="journal" routerLinkActive="active">Journal</a>
         <a class="tab-link" routerLink="meds" routerLinkActive="active">Meds</a>
         <a class="tab-link" routerLink="history" routerLinkActive="active">History</a>
-        <a class="tab-link" routerLink="share" routerLinkActive="active">Share</a>
-        <a class="tab-link settings-tab" routerLink="settings" routerLinkActive="active" title="Settings">⚙</a>
+        <a class="tab-link" routerLink="care-team" routerLinkActive="active">Care team</a>
+        <a class="tab-link settings-tab" routerLink="settings" routerLinkActive="active">⚙ Settings</a>
       </nav>
 
       <!-- Held back until the signed-in user resolves. Tabs read preferences off the user for unit
@@ -67,6 +72,11 @@ import { PatientHubStore } from './patient-hub.store';
       }
       .hub-header {
         padding: 1rem 1.25rem;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
       }
       h1 {
         margin: 0;
@@ -92,9 +102,10 @@ import { PatientHubStore } from './patient-hub.store';
         border: 1px solid rgba(252, 211, 77, 0.4);
         color: #fcd34d;
       }
+      /* No auto left margin: an unlabelled glyph exiled to the far right is how patient editing
+         became unfindable in the first place. It sits with its siblings and says what it is. */
       .settings-tab {
-        margin-left: auto;
-        font-size: 1.05rem;
+        font-size: 0.95rem;
       }
     `,
   ],
@@ -137,6 +148,10 @@ export class PatientHubShell implements OnInit {
     } else {
       this.start(patientId);
     }
+  }
+
+  goToErBrief() {
+    this.router.navigate(['/patients', this.store.patientId(), 'er-brief']);
   }
 
   private start(patientId: string) {

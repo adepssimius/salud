@@ -97,8 +97,9 @@ rules follow:
 `/patients/:id` becomes a shell, not a page:
 
 - **Persistent header** on every tab: name, age, accent color, danger-severity reaction pills
-  (mirroring the ER Brief's allergies-in-the-header priority), active-episode pill(s), and the
-  stale-weight indicator.
+  (mirroring the ER Brief's allergies-in-the-header priority), active-episode pill(s), the
+  stale-weight indicator, and an **ER Brief action**. The brief is a handoff artifact wanted in a
+  hurry, not an access-control screen — it belongs one tap from every tab rather than inside one.
 - **Tabs: Now · Journal · Meds · History · Share**, plus a settings gear.
   - **Now** — the live state: the same content as this patient's Home sick card (below) with
     quick actions inline. The landing tab while an episode is active; a quiet patient lands on
@@ -109,9 +110,16 @@ rules follow:
     not on an edit form.
   - **History** — conditions, the episode list (active and resolved), the lab-import entry point,
     and per-analyte history links.
-  - **Share** — ER Brief (including flash mode and shareable links) and care team management.
-  - **Settings** (gear) — the v1 patient-detail content: the edit form, code status card, care
-    documents card, delete.
+  - **Care team** — who is on this patient's care team and each person's relationship to them.
+    Named for what it manages: it shipped as "Share", paired with the ER Brief on the theory that
+    standing access and a one-off clinician handoff are the same question asked twice. That was a
+    designer's abstraction, not a caregiver's — nobody adding their co-parent goes looking under
+    "Share", and the first person to use it could not find care-team management at all. `share`
+    redirects to `care-team`.
+  - **Settings** (⚙, **labelled**, sitting with its sibling tabs rather than exiled to the far
+    right) — the v1 patient-detail content: the edit form, code status card, accent colour, care
+    documents card, delete. An unlabelled glyph is how patient editing became unfindable after the
+    v1 page was split.
     Landing a caregiver on an edit form (v1 behavior) is the wrong default; editing is a
     deliberate act, not the resting state of a patient page.
 - Route map (existing detail routes — `/episodes/:id`, `/conditions/:id`, `/schedules/:id`,
@@ -124,7 +132,7 @@ rules follow:
 /patients/:id/journal        supersedes /patients/:id/timeline
 /patients/:id/meds
 /patients/:id/history
-/patients/:id/share          ER brief + care team
+/patients/:id/care-team      care team (was `share`, which redirects)
 /patients/:id/settings       v1 patient-detail content
 ```
 

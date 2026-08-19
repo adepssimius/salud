@@ -83,6 +83,24 @@ describe('PatientHubShell', () => {
     expect(fixture.nativeElement.textContent).toContain('Jamie Doe');
   });
 
+  it('names the care-team tab for what it manages and labels the settings gear', () => {
+    // The regression this fixes: "Share" and a bare glyph left patient and relationship management
+    // unfindable after the v1 page was split into tabs.
+    const fixture = build();
+    const tabs = Array.from(fixture.nativeElement.querySelectorAll('.tab-link')).map((a: any) =>
+      a.textContent.trim(),
+    );
+    expect(tabs).toContain('Care team');
+    expect(tabs.some((t: string) => t.includes('Settings'))).toBe(true);
+    expect(tabs).not.toContain('Share');
+  });
+
+  it('offers the ER Brief from the header, so it is reachable from every tab', () => {
+    const fixture = build();
+    fixture.componentInstance.goToErBrief();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'er-brief']);
+  });
+
   it('shows the age alongside the name', () => {
     const fixture = build();
     expect(fixture.componentInstance.age()).toBe('6y');

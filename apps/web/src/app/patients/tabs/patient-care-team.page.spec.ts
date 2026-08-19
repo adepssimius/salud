@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import { Router } from '@angular/router';
-import { PatientSharePage } from './patient-share.page';
+import { PatientCareTeamPage } from './patient-care-team.page';
 import { PatientHubStore } from '../patient-hub.store';
 import { ApiClientService } from '../../core/api-client.service';
 import { AuthService } from '../../core/auth.service';
@@ -11,7 +11,7 @@ const member = (id: string, name: string) => ({
   role: 'parent',
 });
 
-describe('PatientSharePage', () => {
+describe('PatientCareTeamPage', () => {
   let apiMock: any;
   let authMock: any;
   let routerMock: any;
@@ -22,7 +22,7 @@ describe('PatientSharePage', () => {
     store.patientId.set('p1');
     store.patient.set({ id: 'p1', fullName: 'Jamie', ownedById: 'u1' } as any);
     store.careTeam.set([member('u1', 'Owner'), member('u2', 'Dana')] as any);
-    const fixture = TestBed.createComponent(PatientSharePage);
+    const fixture = TestBed.createComponent(PatientCareTeamPage);
     fixture.detectChanges();
     return fixture;
   };
@@ -38,7 +38,7 @@ describe('PatientSharePage', () => {
     routerMock = { navigate: jest.fn(), navigateByUrl: jest.fn() };
 
     await TestBed.configureTestingModule({
-      imports: [PatientSharePage],
+      imports: [PatientCareTeamPage],
       providers: [
         PatientHubStore,
         { provide: ApiClientService, useValue: apiMock },
@@ -55,12 +55,6 @@ describe('PatientSharePage', () => {
     expect(text).toContain('Owner');
     // The shell loaded it; this tab must not fetch it again.
     expect(apiMock.get).not.toHaveBeenCalledWith('/patients/p1/care-team');
-  });
-
-  it('opens the ER Brief', () => {
-    const fixture = build();
-    fixture.componentInstance.goToErBrief();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'er-brief']);
   });
 
   it('adds a caregiver through the store', () => {
