@@ -2,6 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
+import { PatientNameStore } from '../core/patient-name.store';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../core/error-display';
 import { Patient } from '@salud/shared/types';
@@ -23,7 +24,9 @@ import { Patient } from '@salud/shared/types';
           <h1>Patients</h1>
           <p class="subtext">Your patients and your relationship to each.</p>
         </div>
-        <button class="secondary" type="button" (click)="startAddPatient()">Add patient</button>
+        <button class="secondary" type="button" (click)="startAddPatient()">
+          Add patient
+        </button>
       </div>
 
       <div *ngIf="loading()">Loading patients…</div>
@@ -35,13 +38,27 @@ import { Patient } from '@salud/shared/types';
         <!-- Each row carries the patient's accent color (frontend.md → "Patient identity"): this
              list is where a caregiver picks whose record to open, so it is the first place the
              color has to be learnable, and the last place two children should look alike. -->
-        <li *ngFor="let patient of patients()" class="accent-rail" [ngClass]="accentClass(patient)">
-          <button type="button" class="patient-button" (click)="goToPatient(patient.id)">
-            <div class="patient-name"><span class="accent-dot"></span>{{ patient.fullName }}</div>
+        <li
+          *ngFor="let patient of patients()"
+          class="accent-rail"
+          [ngClass]="accentClass(patient)"
+        >
+          <button
+            type="button"
+            class="patient-button"
+            (click)="goToPatient(patient.id)"
+          >
+            <div class="patient-name">
+              <span class="accent-dot"></span>{{ patient.fullName }}
+            </div>
             <div class="patient-meta">
               <span class="pill">{{ patient.myRole ?? '—' }}</span>
               <span class="muted">DOB: {{ patient.dateOfBirth }}</span>
-              <span class="pill pill-success" *ngIf="patient.ownedById === currentUserId()">Owner</span>
+              <span
+                class="pill pill-success"
+                *ngIf="patient.ownedById === currentUserId()"
+                >Owner</span
+              >
             </div>
           </button>
         </li>
@@ -110,6 +127,7 @@ import { Patient } from '@salud/shared/types';
 })
 export class PatientsListPage implements OnInit {
   private readonly api = inject(ApiClientService);
+  private readonly names = inject(PatientNameStore);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
 
@@ -151,6 +169,9 @@ export class PatientsListPage implements OnInit {
     this.api.get<{ patients?: Patient[] } | Patient[]>('/patients').subscribe({
       next: (res) => {
         this.patients.set(Array.isArray(res) ? res : res.patients ?? []);
+        // Warms the tab-title cache for every patient, so navigating from here into a hub
+        // titles the tab on the first frame rather than after a fetch.
+        this.names.rememberAll(this.patients());
         this.loading.set(false);
       },
       error: (err) => {
