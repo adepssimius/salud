@@ -797,6 +797,13 @@ export interface DashboardLastDose {
 export interface DashboardPatientLastDoses {
   patientId: string;
   patientName: string;
+  /**
+   * The patient's identity color (frontend.md → "Patient identity"). Server-resolved, so a row
+   * written before the column existed still carries a stable token rather than null. Present on
+   * every dashboard row that renders a patient name, so Home never fetches patients to color
+   * itself — that fan-out is what the single-request rule exists to prevent.
+   */
+  accentColor: PatientAccentColor;
   doses: DashboardLastDose[]; // most recent first
 }
 
@@ -813,6 +820,13 @@ export interface DashboardPatientLastDoses {
 export interface DashboardWhatsNewSummary {
   patientId: string;
   patientName: string;
+  /**
+   * The patient's identity color (frontend.md → "Patient identity"). Server-resolved, so a row
+   * written before the column existed still carries a stable token rather than null. Present on
+   * every dashboard row that renders a patient name, so Home never fetches patients to color
+   * itself — that fan-out is what the single-request rule exists to prevent.
+   */
+  accentColor: PatientAccentColor;
   /** This caller's own watermark for this patient; 24h ago when they have never acked. */
   since: number; // epoch seconds
   /** Observations + interventions since `since`, on clinical time. Advisories are counted below. */
@@ -829,6 +843,13 @@ export interface DashboardWhatsNewSummary {
 export interface DashboardActiveEpisode {
   patientId: string;
   patientName: string;
+  /**
+   * The patient's identity color (frontend.md → "Patient identity"). Server-resolved, so a row
+   * written before the column existed still carries a stable token rather than null. Present on
+   * every dashboard row that renders a patient name, so Home never fetches patients to color
+   * itself — that fan-out is what the single-request rule exists to prevent.
+   */
+  accentColor: PatientAccentColor;
   episodeId: string;
   name: string;
   startedAt: number | null;

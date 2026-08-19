@@ -464,6 +464,71 @@ describe('Dashboard (e2e)', () => {
     });
   });
 
+  describe('accentColor', () => {
+    // Home renders a patient's name in four places and the color has to be the same color in all
+    // four — that sameness is the whole point of an identity color, so it is asserted across rows
+    // rather than per row.
+    it('carries the same token on lastDoses, whatsNew and activeEpisodes', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: 'Accent Patient', dateOfBirth: '2020-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      const pid = res.body.id as string;
+      const expected = res.body.accentColor;
+      expect(typeof expected).toBe('string');
+
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date().toISOString(),
+          startEpisodeName: 'Accent Fever',
+          entries: [{ type: 'temperature', metadata: { value: 38.4, unit: 'C', method: 'oral' } }],
+        })
+        .expect(201);
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rows = [
+        dashboard.body.lastDoses.find((r: any) => r.patientId === pid),
+        dashboard.body.whatsNew.find((r: any) => r.patientId === pid),
+        dashboard.body.activeEpisodes.find((r: any) => r.patientId === pid),
+      ];
+      expect(rows.every(Boolean)).toBe(true);
+      expect(rows.map((r: any) => r.accentColor)).toEqual([expected, expected, expected]);
+    });
+
+    it('matches what GET /api/patients/:id reports, so Home and the hub cannot disagree', async () => {
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = dashboard.body.lastDoses[0];
+      expect(row).toBeDefined();
+
+      const patient = await request(app.getHttpServer())
+        .get(`/api/patients/${row.patientId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(row.accentColor).toBe(patient.body.accentColor);
+    });
+
+    it('is stable across requests — a color that moved between page loads would be worse than none', async () => {
+      const read = async () => {
+        const d = await request(app.getHttpServer())
+          .get('/api/dashboard')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return d.body.lastDoses.map((r: any) => [r.patientId, r.accentColor]);
+      };
+      expect(await read()).toEqual(await read());
+    });
+  });
+
   describe('recentTemperatures', () => {
     // Own patient per test again: this field keys off "has an active episode", and the shared
     // fixture patient picked one up in the very first test in this file.

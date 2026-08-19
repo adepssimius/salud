@@ -26,6 +26,8 @@ import {
   whatsNewSince,
 } from '../whats-new/whats-new-window';
 import { normalizeTs } from '../persistence/time';
+import { resolveAccentColor } from '../patients/accent-colors';
+import { PatientAccentColor } from '@salud/shared/types';
 
 const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
@@ -189,14 +191,17 @@ export class TimelineService {
   // watermark lives on that very row — so the whats-new counts below cost no extra query to scope.
   private async accessiblePatients(
     userId: string,
-  ): Promise<Array<{ id: string; fullName: string; lastSeenAt: number | null }>> {
+  ): Promise<Array<{ id: string; fullName: string; accentColor: PatientAccentColor; lastSeenAt: number | null }>> {
     const db = this.db.db as any;
     const rows = await db
       .select({ patient: patients, lastSeenAt: careTeamMemberships.lastSeenAt })
       .from(careTeamMemberships)
       .leftJoin(patients, eq(careTeamMemberships.patientId, patients.id))
       .where(eq(careTeamMemberships.userId, userId));
-    const byId = new Map<string, { id: string; fullName: string; lastSeenAt: number | null }>();
+    const byId = new Map<
+      string,
+      { id: string; fullName: string; accentColor: PatientAccentColor; lastSeenAt: number | null }
+    >();
     for (const r of rows) {
       // First row wins on a duplicate membership, matching WhatsNewService.getMembership's
       // arbitrary .limit(1). There's no unique index on (patient_id, user_id), so "pick the
@@ -206,6 +211,10 @@ export class TimelineService {
         byId.set(r.patient.id, {
           id: r.patient.id,
           fullName: r.patient.fullName,
+          // Resolved, never raw: a patient row written before the column existed stores null, and
+          // resolveAccentColor derives the same token from the id every time. An identity color
+          // that changed between page loads would be worse than none at all.
+          accentColor: resolveAccentColor(r.patient.accentColor, r.patient.id),
           lastSeenAt: normalizeTs(r.lastSeenAt),
         });
       }
@@ -225,7 +234,9 @@ export class TimelineService {
   // otherwise be invisible on the whole dashboard. Returns one row per patient, every time,
   // including `doses: []` — the empty array is itself the answer (api.md → GET /api/dashboard).
   // medicationName is filled in by the caller from a combined name map (see getDashboard).
-  private async buildLastDoseRows(accessible: Array<{ id: string; fullName: string }>) {
+  private async buildLastDoseRows(
+    accessible: Array<{ id: string; fullName: string; accentColor: PatientAccentColor }>,
+  ) {
     if (!accessible.length) return [];
     const db = this.db.db as any;
     const patientIds = accessible.map((p) => p.id);
@@ -273,7 +284,7 @@ export class TimelineService {
           isAtypicalLastDose: v.isAtypical,
         }))
         .sort((a, b) => b.lastDoseAt - a.lastDoseAt);
-      return { patientId: p.id, patientName: p.fullName, doses };
+      return { patientId: p.id, patientName: p.fullName, accentColor: p.accentColor, doses };
     });
   }
 
@@ -287,7 +298,7 @@ export class TimelineService {
   // inArray + one threshold: `min(since)` across patients collapses to the 24h fallback the moment
   // any one caregiver has never acked, which would fetch a whole day to answer a ten-minute question.
   private async buildWhatsNewSummaries(
-    accessible: Array<{ id: string; fullName: string; lastSeenAt: number | null }>,
+    accessible: Array<{ id: string; fullName: string; accentColor: PatientAccentColor; lastSeenAt: number | null }>,
     upcomingSchedules: Array<{ patientId: string; nextDueAt: number | null }>,
     nowTs: number,
   ) {
@@ -323,6 +334,7 @@ export class TimelineService {
     return accessible.map((p) => ({
       patientId: p.id,
       patientName: p.fullName,
+      accentColor: p.accentColor,
       since: sinceById.get(p.id)!,
       eventCount: (obsCounts.get(p.id) ?? 0) + (intCounts.get(p.id) ?? 0),
       advisoryCount: advCounts.get(p.id) ?? 0,
@@ -495,6 +507,16 @@ export class TimelineService {
     const activeEpisodes = await Promise.all(
       activeEpisodeRows.map((row: any) => this.buildActiveEpisodeSummary(row)),
     );
+
+    // The episode rows come from EpisodesService and carry patientId/patientName only, so the token
+    // is stamped on here from the one accessiblePatients read rather than re-joining patients per
+    // episode. Home renders the patient's name in four places (sick card, night-board row,
+    // last-doses row, what's-new row) and the color has to be the same color in all four — a
+    // second source for it is how two surfaces end up disagreeing about who is who.
+    const accentByPatient = new Map(accessible.map((p) => [p.id, p.accentColor]));
+    for (const ep of activeEpisodes as any[]) {
+      ep.accentColor = accentByPatient.get(ep.patientId) ?? resolveAccentColor(null, ep.patientId);
+    }
 
     const lastDoseRows = await this.buildLastDoseRows(accessible);
 
