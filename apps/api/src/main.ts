@@ -6,6 +6,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DatabaseService } from './app/persistence/database.service';
 import { applyAppSecurity } from './app/app.security';
 import { applyAppObservability } from './app/app.observability';
+import { StorageService } from './app/storage/storage.service';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -38,8 +39,13 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
+  // Which storage backend is live is worth one line at boot: a wrong FILE_STORAGE_DRIVER now
+  // refuses to start (app-spec/persistence.md), but a *right* one pointed at the wrong bucket
+  // still looks like data loss on the first download, and this is the cheapest way to catch it.
+  const storage = app.get(StorageService);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`
+    `🚀 Application is running on: http://localhost:${port}/${globalPrefix} ` +
+      `(file storage: ${storage.driver}, bucket: ${storage.bucketLabel})`
   );
 }
 
