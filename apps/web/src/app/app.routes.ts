@@ -150,6 +150,13 @@ export const appRoutes: Route[] = [
     loadComponent: () => import('./schedules/schedule-detail.page').then((m) => m.ScheduleDetailPage),
     canActivate: [authGuard],
   },
+  // Household setup, moved off Home (frontend.md → "Information architecture (v2)" → Home:
+  // "Catalog and admin actions leave Home"). Reached from the avatar menu.
+  {
+    path: 'manage',
+    loadComponent: () => import('./manage/manage.page').then((m) => m.ManagePage),
+    canActivate: [authGuard],
+  },
   {
     path: 'dashboard',
     loadComponent: () => import('./dashboard/dashboard.page').then((m) => m.DashboardPage),
