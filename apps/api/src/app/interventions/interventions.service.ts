@@ -5,6 +5,9 @@ import { DatabaseService } from '../persistence/database.service';
 import {
   careTeamMemberships,
   episodesEventsPivot,
+  interventionSchedules,
+  medicationEmbodiments,
+  medications,
   interventions,
 } from '../../db/schema';
 import { CreateInterventionDto } from './dto/create-intervention.dto';
@@ -14,6 +17,18 @@ import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
+
+/** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
+const RECENT_MEDICATIONS_WINDOW_DAYS = 14;
+
+interface RecentDose {
+  lastDoseAt: number;
+  lastAmountMg: number | null;
+  lastAmountMl: number | null;
+  lastEmbodimentId: string | null;
+  nextAllowedAt: number | null;
+  isAtypicalLastDose: boolean;
+}
 
 @Injectable()
 export class InterventionsService {
@@ -459,6 +474,119 @@ export class InterventionsService {
     }
 
     return this.get(id, userId);
+  }
+
+  /**
+   * `GET /api/patients/:patientId/recent-medications` — the Quick Log "recents first, search
+   * second" source (frontend.md → "Information architecture (v2)" → Quick Log; api.md → Timeline
+   * & dashboard).
+   *
+   * The union of two sets: medications given to THIS patient in the last 14 days, and medications
+   * on THIS patient's active schedules. One row per distinct medication, most-recent-dose-first,
+   * never-given schedule entries last.
+   *
+   * It lives here rather than in the timeline service because every `last*` field on it is dose
+   * history, which is this service's table. The per-patient scoping is not a filter that could be
+   * relaxed later: a "same as last time" prefill sourced from a sibling's dose is the wrong-chart
+   * hazard the v2 IA exists to prevent (api.md, frontend.md → "Patient identity").
+   */
+  async recentMedications(patientId: string, userId: string) {
+    await this.ensurePatientAccess(patientId, userId);
+    const db = this.db.db as any;
+
+    const cutoff = Math.floor(Date.now() / 1000) - RECENT_MEDICATIONS_WINDOW_DAYS * 86_400;
+
+    const doseRows = await db
+      .select()
+      .from(interventions)
+      .where(and(eq(interventions.patientId, patientId), eq(interventions.type, 'medication_dose')))
+      .orderBy(desc(interventions.performedAt));
+
+    // Most recent dose per medication inside the window. The rows arrive newest-first, so the
+    // first sighting of a medication is its latest dose — but performedAt is caregiver-supplied
+    // and back-datable, so compare rather than trust the order.
+    const lastByMedication = new Map<string, RecentDose>();
+    for (const row of doseRows) {
+      const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      const medicationId = metadata.medicationId;
+      if (!medicationId) continue;
+      const performedAt = normalizeTs(row.performedAt);
+      if (performedAt === null || performedAt < cutoff) continue;
+      const existing = lastByMedication.get(medicationId);
+      if (existing && existing.lastDoseAt >= performedAt) continue;
+      lastByMedication.set(medicationId, {
+        lastDoseAt: performedAt,
+        lastAmountMg: metadata.amountMg ?? null,
+        lastAmountMl: metadata.amountMl ?? null,
+        lastEmbodimentId: metadata.medicationEmbodimentId ?? null,
+        nextAllowedAt: metadata.nextAllowedAt ?? null,
+        isAtypicalLastDose: !!metadata.isAtypical,
+      });
+    }
+
+    const scheduleRows = await db
+      .select()
+      .from(interventionSchedules)
+      .where(
+        and(
+          eq(interventionSchedules.patientId, patientId),
+          eq(interventionSchedules.status, 'active'),
+          eq(interventionSchedules.type, 'medication_dose'),
+        ),
+      );
+    const scheduledMedicationIds = new Set<string>(
+      scheduleRows.map((row: any) => row.medicationId).filter((id: string | null): id is string => !!id),
+    );
+
+    const medicationIds = Array.from(new Set<string>([...lastByMedication.keys(), ...scheduledMedicationIds]));
+    if (!medicationIds.length) return [];
+
+    // A dose's metadata.medicationId is free text on a JSON blob, not a foreign key, so a
+    // medication deleted (or never in the catalog — some suites log against a bare UUID) simply
+    // has no name to show. Those rows are dropped rather than rendered nameless: the caller is a
+    // list of tappable prefill cards, and an unnamed card is not tappable material.
+    const medicationRows = await db.select().from(medications).where(inArray(medications.id, medicationIds));
+    const nameById = new Map<string, string>(medicationRows.map((row: any) => [row.id, row.name]));
+
+    const embodimentIds = Array.from(
+      new Set<string>(
+        Array.from(lastByMedication.values())
+          .map((dose) => dose.lastEmbodimentId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const embodimentRows = embodimentIds.length
+      ? await db.select().from(medicationEmbodiments).where(inArray(medicationEmbodiments.id, embodimentIds))
+      : [];
+    const embodimentLabelById = new Map<string, string>(embodimentRows.map((row: any) => [row.id, row.label]));
+
+    const entries = medicationIds
+      .filter((medicationId) => nameById.has(medicationId))
+      .map((medicationId) => {
+        const dose = lastByMedication.get(medicationId) ?? null;
+        return {
+          medicationId,
+          medicationName: nameById.get(medicationId)!,
+          lastDoseAt: dose?.lastDoseAt ?? null,
+          lastAmountMg: dose?.lastAmountMg ?? null,
+          lastAmountMl: dose?.lastAmountMl ?? null,
+          lastEmbodimentId: dose?.lastEmbodimentId ?? null,
+          lastEmbodimentLabel: dose?.lastEmbodimentId
+            ? embodimentLabelById.get(dose.lastEmbodimentId) ?? null
+            : null,
+          nextAllowedAt: dose?.nextAllowedAt ?? null,
+          isAtypicalLastDose: dose?.isAtypicalLastDose ?? false,
+          onActiveSchedule: scheduledMedicationIds.has(medicationId),
+        };
+      });
+
+    entries.sort((a, b) => {
+      if (a.lastDoseAt === null && b.lastDoseAt === null) return a.medicationName.localeCompare(b.medicationName);
+      if (a.lastDoseAt === null) return 1;
+      if (b.lastDoseAt === null) return -1;
+      return b.lastDoseAt - a.lastDoseAt;
+    });
+    return entries;
   }
 
   async getRevisions(id: string, userId: string) {

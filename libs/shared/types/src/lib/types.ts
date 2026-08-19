@@ -1204,3 +1204,34 @@ export interface DocumentMetadata {
   label?: string;
   note?: string;
 }
+
+/**
+ * One row of `GET /api/patients/:patientId/recent-medications` — the Quick Log "recents first,
+ * search second" source (frontend.md → "Information architecture (v2)" → Quick Log).
+ *
+ * The union of medications given to this patient in the last 14 days and medications on this
+ * patient's active schedules, one entry per distinct medication, ordered most-recent-dose-first
+ * with never-given schedule entries last.
+ *
+ * **Per patient by construction, never merged across patients.** Two children on the same
+ * medication at different weight-based amounts is the normal concurrent-illness case, so a
+ * "same as last time" prefill sourced from a sibling's dose is the exact wrong-chart hazard the
+ * v2 IA exists to prevent (frontend.md → "Patient identity").
+ */
+export interface RecentMedication {
+  medicationId: string;
+  medicationName: string;
+  /** Epoch seconds. Null for a scheduled medication this patient has never been given. */
+  lastDoseAt: number | null;
+  lastAmountMg: number | null;
+  lastAmountMl: number | null;
+  lastEmbodimentId: string | null;
+  lastEmbodimentLabel: string | null;
+  /**
+   * Frozen at log time on the last dose, exactly like the dashboard's — `null` means no guideline
+   * supplied an interval, which is correct rather than missing (api.md → Timeline & dashboard).
+   */
+  nextAllowedAt: number | null;
+  isAtypicalLastDose: boolean;
+  onActiveSchedule: boolean;
+}

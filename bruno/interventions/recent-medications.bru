@@ -1,0 +1,42 @@
+meta {
+  name: Recent Medications
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/recent-medications
+  body: none
+  auth: inherit
+}
+
+docs {
+  The Quick Log "recents first, search second" source (frontend.md → "Information architecture
+  (v2)" → Quick Log). Per patient by construction — never merged across patients, because a
+  "same as last time" prefill sourced from a sibling's dose is the wrong-chart hazard the v2 IA
+  exists to prevent.
+
+  Empty until this patient has a dose logged in the last 14 days or an active medication
+  schedule. `yarn seed:catalog` seeds the medications the dose guidance needs.
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) {
+      pid = patients[0].id;
+    }
+  }
+  bru.setVar('patientId', pid);
+}
+
+assert {
+  res.status: eq 200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
