@@ -523,8 +523,16 @@ the ER Brief by being null-not-omitted).
   client-supplied (P3), same as the `codeStatus` trio. Displayed with its computed age wherever
   shown ("uploaded 14 months ago", "none — stated 2 years ago") — a stale directive should
   visibly look stale, for exactly the stale-code-status reason.
-- **Append-only; the current statement per `(patientId, kind)` is the newest row.** Replacing a
-  directive, or recording "none" after a revocation, appends a row rather than updating one — what
+- `seq: integer` — append ordinal within `(patientId, kind)`, 1-based, assigned server-side as
+  `max(seq) + 1`. **The current statement is the highest `seq`, not the newest `setAt`.** SQLite
+  stores timestamps as integer *seconds* (persistence.md), so two statements recorded in the same
+  second — a caregiver correcting a mis-click straight away — carry an identical `setAt`, and
+  ordering on the clock would decide between a document and the statement superseding it by row
+  order. Postgres's microsecond precision hides that, which is exactly why the ordering is an
+  explicit counter rather than a timestamp: the dialect a household deploys on must not change
+  which directive the ER Brief shows.
+- **Append-only; the current statement per `(patientId, kind)` is the last one appended.** Replacing
+  a directive, or recording "none" after a revocation, appends a row rather than updating one — what
   the household stated, and when, is never destroyed. This is deliberately *not* a `Revision`:
   like `PATCH .../code-status` (api.md → "Corrections"), the entity carries its own purpose-built
   attribution trail — here the history rows themselves — and a second generic snapshot would

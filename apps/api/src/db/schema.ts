@@ -44,6 +44,7 @@ export const {
   adverseReactions,
   interventionSchedules,
   fileAssets,
+  careDocumentStatements,
   advisories,
   erBriefSnapshots,
   revisions,

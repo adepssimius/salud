@@ -1,0 +1,42 @@
+meta {
+  name: Record As None
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/care-documents/advance_directive
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:json {
+  {
+    "status": "none"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.advanceDirective.status: eq none
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  An affirmative statement that no advance directive exists — a stored fact with attribution, not
+  the absence of a record. Appends a new statement rather than updating one.
+}

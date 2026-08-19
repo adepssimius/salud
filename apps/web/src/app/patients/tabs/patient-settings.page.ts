@@ -10,6 +10,7 @@ import { errorText } from '../../core/error-display';
 import { timeAgo } from '../../core/relative-time';
 import { RevisionHistoryComponent } from '../../core/revision-history.component';
 import { PatientHubStore } from '../patient-hub.store';
+import { CareDocumentsCardComponent } from '../care-documents.card';
 
 /**
  * The deliberate acts: edit the record, set the code status, delete the patient.
@@ -42,7 +43,7 @@ const ACCENT_LABELS: Record<PatientAccentColor, string> = {
 @Component({
   selector: 'app-patient-settings-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, RevisionHistoryComponent],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, RevisionHistoryComponent, CareDocumentsCardComponent],
   template: `
     <div class="layout">
       <div class="card">
@@ -151,6 +152,10 @@ const ACCENT_LABELS: Record<PatientAccentColor, string> = {
           <button class="secondary" type="button" (click)="editingCodeStatus.set(false)">Cancel</button>
         </div>
       </div>
+
+      <!-- Directly under code status: these are the documentary backing for the same goals-of-care
+           question, and the ER Brief header carries them together. -->
+      <app-care-documents-card [patientId]="patientId"></app-care-documents-card>
     </div>
   `,
   styles: [

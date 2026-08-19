@@ -59,6 +59,12 @@ export class DocumentLinkComponent implements OnDestroy {
 
   @Input({ required: true }) fileId!: string;
   @Input({ required: true }) label!: string;
+  /**
+   * API path to fetch the bytes from. Defaults to the authenticated files route; the public
+   * `/brief/:token` page overrides it with the snapshot's own token-scoped route, which is the
+   * only way a clinician with no account can open a frozen care document (er-brief.md → Formats).
+   */
+  @Input() apiPath: string | null = null;
 
   loading = signal(false);
   failed = signal(false);
@@ -72,7 +78,7 @@ export class DocumentLinkComponent implements OnDestroy {
       return;
     }
     this.loading.set(true);
-    this.api.getBlob(`/files/${this.fileId}`).subscribe({
+    this.api.getBlob(this.apiPath ?? `/files/${this.fileId}`).subscribe({
       next: (blob) => {
         this.loading.set(false);
         this.objectUrl = URL.createObjectURL(blob);

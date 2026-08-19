@@ -914,14 +914,19 @@ a tri-state: never recorded, affirmatively "none", or on file.
   - Body: `{ status: 'on_file', fileId, holderName?, holderPhone? }` or `{ status: 'none' }`.
   - Appends a new current statement — never updates in place — and stamps `setByUserId`/`setAt`
     from the requester server-side, the same deliberate-act shape as `PATCH .../code-status`.
-    `holderName`/`holderPhone` are accepted only when `kind` is `medical_poa`; `fileId` is
-    required with `'on_file'` and forbidden with `'none'` — violations are standard validation
-    400s (array form). The `fileId` must exist and belong to this patient: 400
+    `holderName`/`holderPhone` are accepted only when `kind` is `medical_poa` and **rejected**
+    (400) on the other two rather than silently dropped — discarding them would leave the caller
+    believing it stored a contact nothing will ever surface. `fileId` is required with `'on_file'`
+    and forbidden with `'none'`; that pairing is a standard validation 400 (array form). Neither
+    carries an error code: the web form offers one arm or the other, so reaching either is a
+    malformed request rather than a caregiver-facing condition. The `fileId` must exist and belong
+    to this patient: 400
     `CARE_DOCUMENT_FILE_NOT_FOUND` otherwise (same write-side guard as `PHOTO_FILE_NOT_FOUND`).
   - Response: the same full three-key map `GET` returns, so the card re-renders from the response.
 - `GET /api/patients/:patientId/care-documents/:kind/history` — every statement ever recorded for
   the kind, newest first (the append-only trail; reconstructability, N-2). Same statement shape as
-  above.
+  above. "Newest" is the append ordinal, not `setAt` — see data-model.md → `CareDocumentStatement.seq`
+  for why the two differ on SQLite.
 
 ## Lab imports
 

@@ -364,6 +364,38 @@ export const fileAssets = sqliteTable('file_assets', {
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
 
+// Living will / advance directive / medical PoA as patient-level standing state
+// (data-model.md → CareDocumentStatement). Append-only: the current statement for a
+// (patient_id, kind) is the newest row by set_at, and "replacing" a document inserts rather than
+// updates, so what the household stated and when is never destroyed. Absence of any row is the
+// third state — "not recorded" — and is deliberately different from a stored status of 'none'.
+export const careDocumentStatements = sqliteTable('care_document_statements', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id')
+    .notNull()
+    .references(() => patients.id),
+  kind: text('kind', {
+    enum: ['living_will', 'advance_directive', 'medical_poa'],
+  }).notNull(),
+  status: text('status', { enum: ['on_file', 'none'] }).notNull(),
+  // Required when status='on_file', absent when 'none' — enforced in the service, not the column,
+  // since neither dialect expresses a conditional NOT NULL portably.
+  fileId: text('file_id').references(() => fileAssets.id),
+  // Accepted only on kind='medical_poa': a PoA is a person as well as a document.
+  holderName: text('holder_name'),
+  holderPhone: text('holder_phone'),
+  setByUserId: text('set_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  setAt: integer('set_at', { mode: 'timestamp' }).default(now()).notNull(),
+  // Append ordinal within (patient_id, kind), 1-based. "Current" is the highest seq, NOT the
+  // newest set_at: SQLite stores timestamps as integer *seconds*, so two statements recorded in
+  // the same second — a caregiver fixing a mis-click straight away — tie, and which one is current
+  // would come down to row order. Postgres's microsecond precision hides that, which is exactly
+  // why this is ordered on an explicit counter instead of a clock.
+  seq: integer('seq').notNull(),
+});
+
 export const advisories = sqliteTable('advisories', {
   id: text('id').primaryKey(),
   patientId: text('patient_id')
@@ -402,6 +434,10 @@ export const erBriefSnapshots = sqliteTable('er_brief_snapshots', {
   episodeId: text('episode_id').references(() => episodes.id),
   token: text('token').notNull().unique(),
   payload: text('payload').notNull(), // JSON string — frozen ErBrief response
+  // JSON string[] — the file_assets ids referenced by the frozen header.careDocuments, pinned at
+  // creation so the token file route can authorize without parsing payload. Null on snapshots
+  // frozen before this column existed; those simply have no token-readable files.
+  fileIds: text('file_ids'),
   createdByUserId: text('created_by_user_id')
     .notNull()
     .references(() => users.id),
