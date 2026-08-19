@@ -566,6 +566,30 @@ describe('Dashboard (e2e)', () => {
       return dashboard.body.recentTemperatures.find((r: any) => r.patientId === pid);
     }
 
+    it('carries the patient\'s temperature bands alongside the points, for the same patient set', async () => {
+      const pid = await newPatient('Banded Patient');
+      await logTemp(pid, 2, { value: 38.4, unit: 'C', method: 'oral' }, { startEpisodeName: 'Banded Fever' });
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const bands = dashboard.body.temperatureRanges.find((r: any) => r.patientId === pid);
+      expect(bands).toBeDefined();
+      // The band seeded at patient creation — canonical °C, so the client converts it with the
+      // points rather than drawing a °C band over °F readings.
+      expect(bands.ranges).toEqual([
+        expect.objectContaining({ kind: 'reference', label: 'Normal', low: 36.1, high: 37.2 }),
+      ]);
+
+      // Same patient set as recentTemperatures: a sparkline and its scale must never disagree
+      // about who they are for.
+      const withPoints = dashboard.body.recentTemperatures.map((r: any) => r.patientId).sort();
+      const withBands = dashboard.body.temperatureRanges.map((r: any) => r.patientId).sort();
+      expect(withBands).toEqual(withPoints);
+    });
+
     it('returns 48 hours of readings, oldest first, for a patient with an active episode', async () => {
       const pid = await newPatient();
       await logTemp(pid, 3, { value: 38.7, unit: 'C', method: 'oral' }, { startEpisodeName: 'Sparkline Fever' });

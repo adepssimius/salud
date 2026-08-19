@@ -8,6 +8,7 @@ import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relativ
 import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
 import { DashboardPayload, DashboardTemperaturePoint, PatientAccentColor } from '@salud/shared/types';
+import { DisplayBand, PlottedBand, bandedDomain, describeBand, plotBands, toDisplayBands } from '../core/value-bands';
 
 // The sparkline canvas. Small on purpose: it is a glance at the shape of the last two nights, not
 // the timeline's chart. The x-domain is the fixed 48-hour window rather than the patient's own
@@ -52,6 +53,11 @@ interface SickCard {
   points: SparkPoint[];
   polyline: string;
   latest: SparkPoint | null;
+  /** The patient's own temperature bands, shaded behind the curve. Empty when none are recorded. */
+  bands: PlottedBand[];
+  /** The y-domain's edges, labelled so the curve's amplitude is actually readable. */
+  scaleHigh: number | null;
+  scaleLow: number | null;
   /** The soonest moment this patient needs something done — the card sort key. `null` sorts last. */
   nextActionableAt: number | null;
 }
@@ -131,16 +137,45 @@ interface SickCard {
               </div>
             </div>
 
+            <!-- The curve is only readable as a measurement if it says what it is measured
+                 against: the scale labels answer "how high is it", the shaded bands answer "is that
+                 high". The bands are the household's own recorded ranges — the app never draws a
+                 normal range of its own invention (frontend.md → Home). -->
             <div class="spark-wrap">
-              <svg
-                *ngIf="c.points.length; else noTemps"
-                class="spark"
-                [attr.viewBox]="'0 0 ' + sparkWidth + ' ' + sparkHeight"
-                aria-hidden="true"
-              >
-                <polyline *ngIf="c.points.length > 1" [attr.points]="c.polyline" class="spark-line" />
-                <circle *ngFor="let p of c.points" [attr.cx]="p.x" [attr.cy]="p.y" r="2" class="spark-dot" />
-              </svg>
+              <div class="spark-plot" *ngIf="c.points.length; else noTemps">
+                <svg class="spark" [attr.viewBox]="'0 0 ' + sparkWidth + ' ' + sparkHeight" aria-hidden="true">
+                  <g *ngFor="let b of c.bands">
+                    <rect
+                      [attr.x]="0"
+                      [attr.y]="b.y"
+                      [attr.width]="sparkWidth"
+                      [attr.height]="b.height"
+                      [class.spark-band]="b.reference"
+                      [class.spark-band-custom]="!b.reference"
+                    >
+                      <title>{{ bandTitle(b) }}</title>
+                    </rect>
+                    <!-- The bound itself. "Above this line" is the question a fever chart is
+                         actually asked, and a soft fill alone leaves the threshold approximate. -->
+                    <line
+                      *ngIf="b.highY !== null"
+                      [attr.x1]="0" [attr.x2]="sparkWidth" [attr.y1]="b.highY" [attr.y2]="b.highY"
+                      class="spark-band-edge"
+                    />
+                    <line
+                      *ngIf="b.lowY !== null"
+                      [attr.x1]="0" [attr.x2]="sparkWidth" [attr.y1]="b.lowY" [attr.y2]="b.lowY"
+                      class="spark-band-edge"
+                    />
+                  </g>
+                  <polyline *ngIf="c.points.length > 1" [attr.points]="c.polyline" class="spark-line" />
+                  <circle *ngFor="let p of c.points" [attr.cx]="p.x" [attr.cy]="p.y" r="2" class="spark-dot" />
+                </svg>
+                <div class="spark-scale" *ngIf="c.scaleHigh !== null">
+                  <span>{{ c.scaleHigh }}</span>
+                  <span>{{ c.scaleLow }}</span>
+                </div>
+              </div>
               <ng-template #noTemps>
                 <p class="muted small">No temperature logged in the last 48 hours.</p>
               </ng-template>
@@ -148,6 +183,11 @@ interface SickCard {
                 {{ c.latest.valueShown }} °{{ tempUnit() }} · {{ ago(c.latest.timestamp) }}
               </span>
             </div>
+            <!-- Named in words as well as shaded: the colour alone doesn't say 36.1–37.2, and at
+                 3 AM the number is what gets repeated down a phone to a nurse. -->
+            <p class="spark-legend small muted" *ngIf="c.bands.length">
+              <span *ngFor="let b of c.bands; let i = index">{{ i ? ' · ' : '' }}{{ bandTitle(b) }}</span>
+            </p>
 
             <div class="quick-actions">
               <button type="button" class="secondary small" (click)="quickTemp(c.patientId)">Temp</button>
@@ -476,6 +516,9 @@ export class DashboardPage implements OnInit {
           points: [],
           polyline: '',
           latest: null,
+          bands: [],
+          scaleHigh: null,
+          scaleLow: null,
           nextActionableAt: null,
         } as SickCard);
       card.episodes.push({
@@ -512,6 +555,7 @@ export class DashboardPage implements OnInit {
     }
 
     const temperaturesByPatient = new Map(payload.recentTemperatures?.map((r) => [r.patientId, r.points]) ?? []);
+    const bandsByPatient = new Map(payload.temperatureRanges?.map((r) => [r.patientId, r.ranges]) ?? []);
     const displayUnit = unitsFor(this.auth.user()).temp;
 
     for (const card of byPatient.values()) {
@@ -527,10 +571,19 @@ export class DashboardPage implements OnInit {
       );
       card.nextActionableAt = candidates.length ? Math.min(...candidates) : null;
 
-      const plotted = this.plotSparkline(temperaturesByPatient.get(card.patientId) ?? [], nowSec, displayUnit);
-      card.points = plotted;
-      card.polyline = plotted.map((p) => `${p.x},${p.y}`).join(' ');
-      card.latest = plotted.length ? plotted[plotted.length - 1] : null;
+      const bands = toDisplayBands(bandsByPatient.get(card.patientId) ?? [], displayUnit);
+      const drawn = this.plotSparkline(
+        temperaturesByPatient.get(card.patientId) ?? [],
+        nowSec,
+        displayUnit,
+        bands,
+      );
+      card.points = drawn.points;
+      card.polyline = drawn.points.map((p) => `${p.x},${p.y}`).join(' ');
+      card.latest = drawn.points.length ? drawn.points[drawn.points.length - 1] : null;
+      card.bands = drawn.bands;
+      card.scaleHigh = drawn.domain ? round1(drawn.domain.hi) : null;
+      card.scaleLow = drawn.domain ? round1(drawn.domain.lo) : null;
     }
 
     // The top of the screen is the next thing to do — a "can give now" (a next-allowed already
@@ -596,25 +649,49 @@ export class DashboardPage implements OnInit {
     });
   }
 
-  private plotSparkline(points: DashboardTemperaturePoint[], nowSec: number, displayUnit: 'C' | 'F'): SparkPoint[] {
-    if (!points.length) return [];
+  /**
+   * Geometry for one card's sparkline: the readings, the patient's bands behind them, and the
+   * y-domain both share.
+   *
+   * The bands join the domain rather than being clipped to the readings' own range — a band the
+   * night never reached is precisely the reference a caregiver is checking against, and scaling it
+   * off the picture would answer "is that high" with silence (frontend.md → Home). The x-domain
+   * stays the fixed 48-hour window, so two cards side by side remain comparable.
+   */
+  private plotSparkline(
+    points: DashboardTemperaturePoint[],
+    nowSec: number,
+    displayUnit: 'C' | 'F',
+    bands: DisplayBand[],
+  ): { points: SparkPoint[]; bands: PlottedBand[]; domain: { lo: number; hi: number } | null } {
+    if (!points.length) return { points: [], bands: [], domain: null };
     const shown = points.map((p) => ({ timestamp: p.timestamp, valueShown: convertTemp(p.valueC, 'C', displayUnit) }));
-    const values = shown.map((p) => p.valueShown);
-    let lo = Math.min(...values);
-    let hi = Math.max(...values);
     const minSpan = displayUnit === 'F' ? (SPARK_MIN_SPAN_C * 9) / 5 : SPARK_MIN_SPAN_C;
-    const pad = Math.max(0, (minSpan - (hi - lo)) / 2);
-    lo -= pad;
-    hi += pad;
+    const domain = bandedDomain(shown.map((p) => p.valueShown), bands, minSpan);
+    if (!domain) return { points: [], bands: [], domain: null };
+
     const usableW = SPARK_WIDTH - 2 * SPARK_PAD;
     const usableH = SPARK_HEIGHT - 2 * SPARK_PAD;
     const from = nowSec - SPARK_WINDOW_SECONDS;
-    return shown.map((p) => ({
-      ...p,
-      x: SPARK_PAD + clamp01((p.timestamp - from) / SPARK_WINDOW_SECONDS) * usableW,
-      // A single reading, or a flat run, sits on the middle line rather than at an arbitrary edge.
-      y: SPARK_PAD + usableH - (hi === lo ? 0.5 : (p.valueShown - lo) / (hi - lo)) * usableH,
-    }));
+    const span = domain.hi - domain.lo;
+    // A single reading, or a flat run, sits on the middle line rather than at an arbitrary edge.
+    const yFor = (value: number) =>
+      SPARK_PAD + usableH - (span === 0 ? 0.5 : (value - domain.lo) / span) * usableH;
+
+    return {
+      points: shown.map((p) => ({
+        ...p,
+        x: SPARK_PAD + clamp01((p.timestamp - from) / SPARK_WINDOW_SECONDS) * usableW,
+        y: yFor(p.valueShown),
+      })),
+      bands: plotBands(bands, domain, yFor),
+      domain,
+    };
+  }
+
+  /** The band's own words, for the shaded region's tooltip. */
+  bandTitle(band: DisplayBand): string {
+    return describeBand(band, ` °${this.tempUnit()}`);
   }
 
   // The since-you-last-looked marker lives inside the journal feed now, so a summary row deep-links
@@ -716,4 +793,10 @@ function nullsLast(ts: number | null): number {
 
 function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
+}
+
+// The scale labels are read, not computed against — one decimal is the precision a thermometer
+// reports and the precision the rest of the card already shows.
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

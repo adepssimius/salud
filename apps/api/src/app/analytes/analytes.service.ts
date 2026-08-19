@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import {
   Analyte,
   AnalyteHistory,
@@ -9,6 +9,7 @@ import {
   ResolveAnalyteInput,
   ResolveAnalytesResult,
   ResolvedRange,
+  VitalMetric,
 } from '@salud/shared/types';
 import { DatabaseService } from '../persistence/database.service';
 import {
@@ -20,6 +21,7 @@ import {
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
 import { analyteDependencies } from './analyte-dependencies';
+import { ensureVitalAnalytes } from './vital-analytes';
 import { CreateAnalyteDto } from './dto/create-analyte.dto';
 import { UpdateAnalyteDto } from './dto/update-analyte.dto';
 import { CreateAnalyteRangeDto } from './dto/create-analyte-range.dto';
@@ -60,6 +62,7 @@ export class AnalytesService {
       displayName: row.displayName,
       unit: row.unit ?? null,
       panel: row.panel ?? null,
+      vitalMetric: (row.vitalMetric ?? null) as VitalMetric | null,
       createdAt: normalizeTs(row.createdAt),
       updatedAt: normalizeTs(row.updatedAt),
     };
@@ -100,9 +103,20 @@ export class AnalytesService {
   private async assertNameAvailable(name: string, excludeId?: string) {
     const db = this.db.db as any;
     const target = normalizeName(name);
-    const rows = await db.select().from(analytes);
+    // Scoped to lab rows. The seeded vitals are a separate namespace of exactly five, and a report
+    // printing "TEMPERATURE" has to be able to create its own analyte: it is excluded from
+    // matching the vital (see resolve), so a catalog-wide check would leave it with nowhere to go
+    // (data-model.md → "Analyte catalog").
+    const rows = await db.select().from(analytes).where(isNull(analytes.vitalMetric));
     const clash = rows.some((r: any) => r.id !== excludeId && normalizeName(String(r.name ?? '')) === target);
     if (clash) throw new ConflictException('ANALYTE_NAME_TAKEN');
+  }
+
+  private async getRaw(id: string) {
+    const db = this.db.db as any;
+    const rows = await db.select().from(analytes).where(eq(analytes.id, id)).limit(1);
+    if (!rows.length) throw new NotFoundException('ANALYTE_NOT_FOUND');
+    return rows[0];
   }
 
   async create(dto: CreateAnalyteDto): Promise<Analyte> {
@@ -119,9 +133,19 @@ export class AnalytesService {
     return this.get(id);
   }
 
-  async list(params: { q?: string } = {}): Promise<Analyte[]> {
+  /**
+   * `kind` defaults to `lab`, which excludes the seeded vitals. Every existing caller of this
+   * endpoint is lab-facing (the catalog page, the import resolver's review step), so the default
+   * keeps their results exactly as they were when vitals joined the table.
+   */
+  async list(params: { q?: string; kind?: 'lab' | 'vital' | 'all' } = {}): Promise<Analyte[]> {
     const db = this.db.db as any;
-    const rows = await db.select().from(analytes).orderBy(asc(analytes.displayName));
+    await ensureVitalAnalytes(db);
+    const kind = params.kind ?? 'lab';
+    const where =
+      kind === 'lab' ? isNull(analytes.vitalMetric) : kind === 'vital' ? isNotNull(analytes.vitalMetric) : undefined;
+    const query = db.select().from(analytes);
+    const rows = await (where ? query.where(where) : query).orderBy(asc(analytes.displayName));
     const mapped: Analyte[] = rows.map((r: any) => this.pickAnalyte(r));
     if (!params.q) return mapped;
     const q = params.q.toLowerCase();
@@ -150,9 +174,13 @@ export class AnalytesService {
 
   async update(id: string, dto: UpdateAnalyteDto): Promise<Analyte> {
     const db = this.db.db as any;
-    await this.get(id);
+    const row = await this.getRaw(id);
     const updates: Record<string, any> = {};
     if (dto.name !== undefined) {
+      // A vital's `name` is fixed: the five are seeded, and uniqueness is only checked among lab
+      // rows, so a rename here could walk a vital into a collision nothing would catch. Its
+      // displayName and unit are ordinary labels and stay editable.
+      if (row.vitalMetric) throw new ConflictException('ANALYTE_IS_VITAL');
       // excludeId so renaming an analyte to the name it already has is a no-op, not a conflict.
       await this.assertNameAvailable(dto.name, id);
       updates.name = dto.name;
@@ -168,8 +196,12 @@ export class AnalytesService {
   }
 
   async remove(id: string) {
-    await this.get(id);
+    const row = await this.getRaw(id);
     const db = this.db.db as any;
+    // Checked BEFORE the dependency count, which is structurally zero for a vital: its
+    // measurements are `temperature` entries, not `lab_result` ones, so the guard below would read
+    // it as unreferenced and cascade away every patient's temperature bands with it.
+    if (row.vitalMetric) throw new ConflictException('ANALYTE_IS_VITAL');
     const dependents = await analyteDependencies(db, id);
     if (Object.keys(dependents).length) {
       throw new ConflictException({ message: 'ANALYTE_IN_USE', dependents });
@@ -194,7 +226,11 @@ export class AnalytesService {
    */
   async resolve(inputs: ResolveAnalyteInput[]): Promise<ResolveAnalytesResult[]> {
     const db = this.db.db as any;
-    const existing = await db.select().from(analytes);
+    // Lab rows only. A printed "TEMPERATURE" line must never resolve onto the seeded vital, whose
+    // ranges are the household's fever thresholds — a lab's printed reference range is not theirs
+    // to overwrite (data-model.md → "Analyte catalog"). It creates its own lab analyte instead,
+    // which the scoped uniqueness check in assertNameAvailable leaves room for.
+    const existing = await db.select().from(analytes).where(isNull(analytes.vitalMetric));
     const byNormalized = new Map<string, any>(existing.map((r: any) => [normalizeName(String(r.name ?? '')), r]));
 
     for (const input of inputs) {
@@ -262,6 +298,39 @@ export class AnalytesService {
       a.kind === b.kind ? a.label.localeCompare(b.label) : a.kind === 'reference' ? -1 : 1,
     );
     return out;
+  }
+
+  /**
+   * Every listed patient's bands for one vital, each lineage resolved to `atTs`, reference first.
+   *
+   * Batched deliberately — one query for the whole sick-card set, in the `labContextSources` shape
+   * rather than the N+1 one. Home is a single request, and resolving ranges per card is exactly the
+   * fan-out that rule exists to prevent (api.md → GET /api/dashboard).
+   */
+  async vitalRangesForPatients(
+    metric: VitalMetric,
+    patientIds: string[],
+    atTs: number,
+  ): Promise<Array<{ patientId: string; ranges: ResolvedRange[] }>> {
+    if (!patientIds.length) return [];
+    const db = this.db.db as any;
+    const analyteId = (await ensureVitalAnalytes(db)).get(metric);
+    if (!analyteId) return patientIds.map((patientId) => ({ patientId, ranges: [] }));
+
+    const rows = await db
+      .select()
+      .from(analyteRanges)
+      .where(and(eq(analyteRanges.analyteId, analyteId), inArray(analyteRanges.patientId, patientIds)));
+
+    const byPatient = new Map<string, AnalyteRange[]>(patientIds.map((id) => [id, []]));
+    for (const row of rows) byPatient.get(row.patientId)?.push(this.pickRange(row));
+
+    return patientIds.map((patientId) => ({
+      patientId,
+      ranges: AnalytesService.resolveLineagesAt(byPatient.get(patientId) ?? [], atTs).map((r) =>
+        AnalytesService.rangeContext(r),
+      ),
+    }));
   }
 
   /** A resolved row as it appears on a read: its identity and bounds, nothing else. */

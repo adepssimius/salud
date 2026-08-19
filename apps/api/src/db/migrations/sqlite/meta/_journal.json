@@ -64,6 +64,13 @@
       "when": 1787113055187,
       "tag": "0008_colorful_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787130212036,
+      "tag": "0009_eager_apocalypse",
+      "breakpoints": true
     }
   ]
 }

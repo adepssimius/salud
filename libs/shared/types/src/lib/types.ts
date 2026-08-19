@@ -673,13 +673,28 @@ export interface UpdateConditionDto {
   contacts?: ConditionContact[];
 }
 
-// Protocols — see app-spec/data-model.md "Protocol"
-export type ProtocolTriggerMetric =
+// The numeric-measurement observation types: the things that have a value you can threshold on or
+// read against a range. Named for the vital signs they are, since two features now key off the set
+// — a Protocol's trigger metric and the seeded vital rows in the analyte catalog
+// (data-model.md → "Analyte catalog").
+export type VitalMetric =
   | 'temperature'
   | 'heart_rate'
   | 'respiratory_rate'
   | 'oxygen_saturation'
   | 'pain_score';
+
+export const VITAL_METRICS: readonly VitalMetric[] = [
+  'temperature',
+  'heart_rate',
+  'respiratory_rate',
+  'oxygen_saturation',
+  'pain_score',
+];
+
+// Protocols — see app-spec/data-model.md "Protocol"
+// The same set, under the name the Protocol spec uses for it.
+export type ProtocolTriggerMetric = VitalMetric;
 export type ProtocolTriggerOperator = 'gte' | 'lte';
 
 export interface Protocol {
@@ -782,6 +797,12 @@ export interface TimelineResponse {
   patient: Patient;
   entries: TimelineEntry[];
   weightPrompt: WeightPrompt;
+  /**
+   * This patient's temperature bands, one per lineage resolved to now, in canonical °C — the
+   * standards the journal's curve is drawn against (data-model.md → AnalyteRange). Empty when the
+   * household has recorded none; the chart then draws a scale and no shading.
+   */
+  temperatureRanges: ResolvedRange[];
 }
 
 // Dashboard
@@ -907,6 +928,20 @@ export interface DashboardPatientTemperatures {
   points: DashboardTemperaturePoint[];
 }
 
+/**
+ * The patient's temperature bands, one per lineage resolved to now, reference first — the
+ * household's own AnalyteRange rows on the seeded `temperature` vital.
+ *
+ * Rides along on the dashboard for the same reason `recentTemperatures` does: the sparkline is
+ * unreadable without something to scale against, and resolving ranges per sick card is exactly the
+ * fan-out the single-request rule exists to prevent. Bounds are canonical °C, converted client-side
+ * alongside the points.
+ */
+export interface DashboardPatientTemperatureRanges {
+  patientId: string;
+  ranges: ResolvedRange[];
+}
+
 export interface DashboardPayload {
   lastDoses: DashboardPatientLastDoses[];
   whatsNew: DashboardWhatsNewSummary[];
@@ -922,6 +957,12 @@ export interface DashboardPayload {
    * sick patient.
    */
   recentTemperatures: DashboardPatientTemperatures[];
+  /**
+   * Same patient set as `recentTemperatures`. A patient who has deleted every band gets
+   * `ranges: []`, and the card draws a scale with no shading — the app never substitutes its own
+   * idea of normal at render time (P6).
+   */
+  temperatureRanges: DashboardPatientTemperatureRanges[];
 }
 
 // ER Brief — see app-spec/er-brief.md. P6 is enforced by this shape: no summary/assessment/
@@ -1150,6 +1191,11 @@ export interface Analyte {
   // The panel it was first reported under. "% Saturation" alone is meaningless; "% Saturation
   // (Iron and Total Iron Binding Capacity)" is not.
   panel: string | null;
+  // Null for an ordinary lab analyte. When set, this catalog row IS that vital sign — the five are
+  // seeded, never ingested, and carry the household's normal ranges through the same AnalyteRange
+  // rows a lab analyte uses. They are excluded from the importer's list/resolve paths and cannot
+  // be deleted (api.md → Analytes).
+  vitalMetric: VitalMetric | null;
   createdAt: number; // epoch seconds
   updatedAt: number;
 }

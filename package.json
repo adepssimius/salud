@@ -16,6 +16,7 @@
     "e2e:web": "nx e2e web-e2e",
     "seed:test-user": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/seed-test-user.ts",
     "seed:catalog": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/seed-catalog.ts",
+    "backfill:vital-ranges": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/backfill-vital-ranges.ts",
     "migrate:sqlite-to-postgres": "NODE_ENV=development ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' tools/sqlite-to-postgres.ts",
     "migrate:attachments": "ts-node --transpile-only --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' apps/api/src/tools/migrate-attachments.ts"
   },

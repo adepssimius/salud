@@ -660,10 +660,54 @@ h2 {
   flex-wrap: wrap;
 }
 
+/* The curve, its scale and its bands are one unit — the numbers have to sit against the plot they
+   label, not wrap away from it on a narrow screen. */
+.spark-plot {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+
 .spark {
   width: 180px;
   height: 44px;
   overflow: visible;
+}
+
+/* The y-domain's edges. Without them the same drawing serves a 0.2° wobble and a 3° spike. */
+.spark-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  line-height: 1;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The patient's own recorded range reads as the ground the curve sits on — same relationship, and
+   the same restraint, as .range-band on the analyte history chart. Kept faint on purpose: it is
+   the backdrop the reading is judged against, never a thing competing with the reading. */
+.spark-band {
+  fill: rgba(148, 163, 184, 0.1);
+}
+
+.spark-band-custom {
+  fill: rgba(148, 163, 184, 0.05);
+}
+
+/* The bound itself, which is what actually gets read off the chart. */
+.spark-band-edge {
+  stroke: rgba(148, 163, 184, 0.45);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.spark-legend {
+  margin: 0;
+  opacity: 0.85;
 }
 
 .spark-line {

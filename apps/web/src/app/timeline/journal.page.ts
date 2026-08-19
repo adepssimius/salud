@@ -108,6 +108,7 @@ function prefersChartOpen(): boolean {
           *ngIf="chartOpen()"
           [entries]="entries()"
           [episodes]="episodes()"
+          [temperatureRanges]="temperatureRanges()"
           (episodeSelected)="goToEpisode($event)"
         ></app-journal-chart>
       </section>
@@ -205,6 +206,8 @@ export class JournalPage implements OnInit {
   acked = signal(false);
 
   entries = computed<TimelineEntry[]>(() => this.timeline()?.entries ?? []);
+  /** The patient's temperature bands, straight from the timeline payload to the chart. */
+  temperatureRanges = computed(() => this.timeline()?.temperatureRanges ?? []);
 
   allTags = computed<string[]>(() => {
     const tags = new Set<string>();

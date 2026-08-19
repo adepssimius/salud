@@ -202,6 +202,13 @@ export const analytes = pgTable('analytes', {
   // The panel the analyte was first seen under, e.g. "IRON AND TOTAL IRON BINDING CAPACITY".
   // Context, not classification: "% Saturation" on its own says nothing about what is saturated.
   panel: text('panel'),
+  // Null for an ordinary lab analyte; set makes this row the catalog entry FOR that vital sign.
+  // Vitals are seeded rather than ingested, and reuse analyte_ranges for the household's normal
+  // ranges — a temperature band is the same row shape as a ferritin reference range, so vitals
+  // live here instead of in a parallel table (data-model.md -> "Analyte catalog").
+  vitalMetric: text('vital_metric', {
+    enum: ['temperature', 'heart_rate', 'respiratory_rate', 'oxygen_saturation', 'pain_score'],
+  }),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
 });

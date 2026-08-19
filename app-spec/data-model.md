@@ -292,22 +292,56 @@ point); there is no seed. Matching is always **case-insensitive** on `name`.
 - `unit` and `panel` are set from the report **only when the analyte is created**. A later import
   never rewrites them — same rule as ranges, minus the prompt, since these are labels rather than
   the standard a result is judged against.
+- `vitalMetric: enum('temperature','heart_rate','respiratory_rate','oxygen_saturation','pain_score') | null`
+  — `null` for an ordinary lab analyte. When set, this catalog row **is** that vital sign, and the
+  same five values as `Protocol.triggerMetric`: the numeric-measurement observation types. Unique
+  when set (one catalog row per vital).
+
+  A vital is a measured quantity read against a named band, which is precisely what an analyte is —
+  so rather than a parallel "vital range" table with its own endpoints and its own management
+  screen, the five vitals are seeded as catalog rows and `AnalyteRange` carries their bands
+  unchanged. One concept, one table, one UI. What differs is only provenance: a lab analyte is
+  created by ingestion, a vital is seeded, and the sections below name the four places that
+  distinction has to be enforced.
+- **Vital rows are seeded, not ingested.** The five exist from the first boot; nothing creates or
+  removes them at runtime. Their `unit` is the **canonical** unit for that metric (°C, bpm,
+  breaths/min, %, 0–10 — the canonical-units rule), so their ranges are stored canonically and
+  converted for display like every other consumer.
+- **Vital rows are invisible to the importer.** `POST /api/analytes/resolve` never matches or
+  creates one, and `GET /api/analytes?q=` excludes them unless asked for. A report printing a
+  "TEMPERATURE" line must create its own ordinary lab analyte rather than binding onto the vital
+  catalog row and writing into the household's temperature lineage.
+- **`name` uniqueness is scoped to lab rows**, i.e. checked among `vitalMetric IS NULL` only. The
+  two are separate namespaces — one holds the names labs print, the other holds exactly five seeded
+  rows — and a lab that prints "TEMPERATURE" would otherwise be unresolvable: excluded from
+  matching the vital by the rule above, and blocked from creating its own row by a collision with
+  it. So a `TEMPERATURE` lab analyte and the `temperature` vital can coexist, which is correct:
+  they are different things that happen to share a word. A vital's `name` is not editable (`PATCH`
+  changes its `displayName`/`unit` only), so the five cannot be renamed into a collision either.
 - `createdAt`, `updatedAt`
 - Deletion is guarded: 409 `ANALYTE_IN_USE` with `dependents: { labResults: n }` when any
   `lab_result` entry references it. When unreferenced, deleting the analyte also deletes every
   patient's ranges for it — a deliberate divergence from the medication catalog's
   block-on-own-children rule: ranges have no independent referents, so a two-step delete of an
   auto-created analyte would be pure ceremony.
+- **A vital row is never deletable** — 409 `ANALYTE_IS_VITAL`. The `labResults` dependency count is
+  structurally zero for a vital (its measurements are `temperature` entries, not `lab_result`
+  ones), so the guard above would read it as unreferenced and delete the household's every
+  temperature band along with it.
 
 #### AnalyteRange
 
 One table for every named band a value is read against — the lab's reference range, a clinical
-interpretation segment, a personal target. They differ in **name**, not in kind of thing, and
-collapsing them means the chart, the read-time context, and the management UI each handle one
-concept instead of three.
+interpretation segment, a personal target, **and a vital sign's normal range**. They differ in
+**name**, not in kind of thing, and collapsing them means the chart, the read-time context, and the
+management UI each handle one concept instead of four.
+
+Nothing in this table is lab-specific: it is keyed on (patient, analyte) and carries a label and
+bounds. A temperature band is the same row shape as a ferritin reference range, which is why vitals
+became catalog rows (above) instead of a second table.
 
 - `id: uuid`
-- `analyteId: uuid`
+- `analyteId: uuid` — a lab analyte or a seeded vital row; the column does not distinguish them.
 - `patientId: uuid` — **required**. Every range belongs to a patient (see the section intro).
   Patient-scoped access control: care-team membership, 404 `PATIENT_NOT_FOUND` to a non-member.
 - `kind: enum('reference','custom')` — `reference` is the one lineage the importer maintains and
@@ -334,6 +368,15 @@ concept instead of three.
 - `createdAt`, `updatedAt`
 - Create is retry-safe: posting values identical to the row already effective in that lineage at
   that `effectiveFrom` returns the existing row instead of inserting a duplicate.
+- **A patient is created with one seeded `reference` range for `temperature`**, so a fever chart
+  has something to read against before anyone configures anything — the app otherwise draws a curve
+  with no indication of what is normal or how high it is. The row is ordinary data from the moment
+  it exists: editable, and **deletable for good** (nothing re-seeds it, so removing it is a
+  decision that sticks). Its `source` names it as a seeded default, so a reader can tell it apart
+  from a number the care team chose. This is the one place the app supplies a clinical number
+  rather than a caregiver, and it stays P6-compatible only because it is seeded *as data the
+  household owns and overrides* — not asserted at render time. Other metrics seed nothing: no
+  chart reads them yet, and rows nobody asked for are noise.
 - **Ranges are entered manually or seeded from a report's printed reference range — never parsed
   from a report's freeform advice text** (P6). A Quest vitamin-D report prints
   "Deficiency: <20 / Insufficiency: 20-29 / Optimal: ≥30" as prose; the parser surfaces those lines

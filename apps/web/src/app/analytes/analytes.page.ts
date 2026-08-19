@@ -26,6 +26,21 @@ import { Analyte } from '@salud/shared/types';
         (input)="onQueryChange($event)"
       />
 
+      <!-- Vitals live in this same catalog, because a vital sign is a measured thing read against a
+           named range — exactly what an analyte is. A household with a big lab catalog would
+           otherwise have to hunt for the row that drives its fever charts. -->
+      <div class="kind-filter">
+        <button type="button" class="pill" [class.pill-success]="kind() === 'lab'" (click)="setKind('lab')">
+          Lab analytes
+        </button>
+        <button type="button" class="pill" [class.pill-success]="kind() === 'vital'" (click)="setKind('vital')">
+          Vital signs
+        </button>
+        <button type="button" class="pill" [class.pill-success]="kind() === 'all'" (click)="setKind('all')">
+          All
+        </button>
+      </div>
+
       <div class="error" *ngIf="loadError()">{{ loadError() }}</div>
 
       <ul class="analyte-list" *ngIf="analytes().length; else empty">
@@ -34,6 +49,7 @@ import { Analyte } from '@salud/shared/types';
             <div class="analyte-name">
               {{ a.displayName }}
               <span class="pill pill-neutral" *ngIf="a.unit">{{ a.unit }}</span>
+              <span class="pill" *ngIf="a.vitalMetric">vital</span>
             </div>
             <!-- Without the panel, "% Saturation" says nothing about what is saturated. -->
             <div class="muted small" *ngIf="a.panel">{{ a.panel }}</div>
@@ -43,7 +59,7 @@ import { Analyte } from '@salud/shared/types';
       </ul>
       <ng-template #empty>
         <p class="muted" *ngIf="!loadError()">
-          {{ query() ? 'No analytes match that search.' : 'Nothing here yet — import a lab report to fill the catalog.' }}
+          {{ emptyMessage() }}
         </p>
       </ng-template>
 
@@ -112,6 +128,20 @@ import { Analyte } from '@salud/shared/types';
         align-items: center;
         gap: 0.5rem;
       }
+      .kind-filter {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        margin: 0.6rem 0;
+      }
+      .kind-filter .pill {
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-size: 0.8rem;
+      }
       .new-analyte {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.75rem;
@@ -132,6 +162,7 @@ export class AnalytesPage implements OnInit {
 
   analytes = signal<Analyte[]>([]);
   query = signal('');
+  kind = signal<'lab' | 'vital' | 'all'>('lab');
   showNewForm = signal(false);
   saving = signal(false);
   error = signal<string | null>(null);
@@ -150,10 +181,27 @@ export class AnalytesPage implements OnInit {
 
   private load() {
     this.loadError.set(null);
-    this.api.get<Analyte[]>('/analytes', this.query() ? { q: this.query() } : undefined).subscribe({
+    const params: Record<string, string> = { kind: this.kind() };
+    if (this.query()) params['q'] = this.query();
+    this.api.get<Analyte[]>('/analytes', params).subscribe({
       next: (rows) => this.analytes.set(rows),
       error: (err) => this.loadError.set(errorText(err, 'Could not load the analyte catalog.')),
     });
+  }
+
+  setKind(kind: 'lab' | 'vital' | 'all') {
+    this.kind.set(kind);
+    this.load();
+  }
+
+  /**
+   * The lab catalog is empty until the first import, which is normal and worth saying. The vitals
+   * list is never empty — if it looks empty, something is wrong rather than merely unstarted.
+   */
+  emptyMessage(): string {
+    if (this.query()) return 'No analytes match that search.';
+    if (this.kind() === 'vital') return 'Vital signs are missing from the catalog — this is unexpected.';
+    return 'Nothing here yet — import a lab report to fill the catalog.';
   }
 
   onQueryChange(event: Event) {

@@ -1,0 +1,58 @@
+meta {
+  name: Create Temperature Band
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/analytes/{{temperatureAnalyteId}}/ranges
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "label": "Call the clinic",
+    "kind": "custom",
+    "low": 38.5,
+    "effectiveFrom": "2026-01-01T00:00:00.000Z",
+    "source": "Dr. Okafor, Jan 2026"
+  }
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients && patients.length) {
+      bru.setVar('patientId', patients[0].id);
+    } else {
+      console.log('No patients found. Create one first.');
+    }
+  }
+  if (!bru.getVar('temperatureAnalyteId')) {
+    await bru.runRequest("analytes/list-vitals");
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Records a temperature band for one patient — the same `AnalyteRange` endpoint a lab reference
+  range uses, pointed at the seeded `temperature` vital.
+
+  This is what the fever charts read against: Home's sparkline and the journal's curve shade these
+  bands behind the readings and fold their bounds into the y-axis, so a band the night never
+  reached still renders (it is precisely the reference the reader is checking).
+
+  Note `low` with no `high` — **one-sided ranges are normal**, not a degenerate case. Bounds are in
+  canonical °C regardless of the caregiver's display preference; the clients convert.
+
+  A patient is created with a `reference` band labelled "Normal" already in place. That row is
+  ordinary data: edit it, or delete it for good — nothing re-seeds it, and the charts then draw a
+  scale with no shading rather than substituting a normal range of the app's own invention.
+}

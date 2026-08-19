@@ -18,6 +18,7 @@ describe('DashboardPage', () => {
     shoppingList: [],
     unacknowledgedAdvisories: [],
     recentTemperatures: [],
+    temperatureRanges: [],
   };
 
   beforeEach(async () => {
@@ -466,6 +467,76 @@ describe('DashboardPage', () => {
         const without = render({ activeEpisodes: [episode({ medications: [dose()] })] });
         expect(without.nativeElement.querySelector('.spark')).toBeNull();
         expect(without.nativeElement.textContent).toContain('No temperature logged in the last 48 hours.');
+      });
+
+      it('scales the sparkline to include the bands, so a band the night never reached still shows', () => {
+        // Every reading sits well above the band. Scaled to the readings alone the band would be
+        // clipped off the chart entirely — which is the one reference the reader is checking
+        // against (frontend.md → Home).
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [
+            {
+              patientId: 'p1',
+              points: [
+                { timestamp: nowSec() - 4 * 3600, valueC: 39.0 },
+                { timestamp: nowSec() - 3600, valueC: 39.4 },
+              ],
+            },
+          ],
+          temperatureRanges: [
+            {
+              patientId: 'p1',
+              ranges: [
+                { id: 'r1', kind: 'reference', label: 'Normal', low: 36.1, high: 37.2, refText: null, effectiveFrom: 0 },
+              ],
+            },
+          ],
+        });
+
+        const card = fixture.componentInstance.sickCards()[0];
+        expect(card.scaleLow).toBeLessThanOrEqual(36.1);
+        expect(card.scaleHigh).toBeGreaterThanOrEqual(39.4);
+        expect(card.bands.length).toBe(1);
+        // Drawn, and named in words — the shading alone does not say 36.1–37.2.
+        expect(fixture.nativeElement.querySelector('.spark-band')).not.toBeNull();
+        expect(fixture.nativeElement.textContent).toContain('Normal 36.1–37.2 °C');
+        expect(fixture.nativeElement.querySelector('.spark-scale').textContent).toContain(String(card.scaleHigh));
+      });
+
+      it('draws a scale but no band when the household has recorded none', () => {
+        // The app never substitutes its own idea of normal at render time (P6).
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', points: [{ timestamp: nowSec() - 3600, valueC: 39.4 }] }],
+          temperatureRanges: [{ patientId: 'p1', ranges: [] }],
+        });
+
+        const card = fixture.componentInstance.sickCards()[0];
+        expect(card.bands).toEqual([]);
+        expect(card.scaleHigh).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.spark-band')).toBeNull();
+        expect(fixture.nativeElement.querySelector('.spark-scale')).not.toBeNull();
+      });
+
+      it('converts bands to the viewer\'s unit, so a °C band never draws over °F readings', () => {
+        authMock.user.mockReturnValue({ id: 'u1', displayName: 'Tester', email: 't@example.com', preferredTempUnit: 'F' });
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', points: [{ timestamp: nowSec() - 3600, valueC: 39.4 }] }],
+          temperatureRanges: [
+            {
+              patientId: 'p1',
+              ranges: [
+                { id: 'r1', kind: 'reference', label: 'Normal', low: 36.1, high: 37.2, refText: null, effectiveFrom: 0 },
+              ],
+            },
+          ],
+        });
+
+        const card = fixture.componentInstance.sickCards()[0];
+        expect(card.bands[0].low).toBeCloseTo(97, 0);
+        expect(card.bands[0].high).toBeCloseTo(99, 0);
       });
 
       it('offers Temp and Dose quick actions scoped to that patient', () => {

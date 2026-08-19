@@ -1,0 +1,1 @@
+ALTER TABLE `analytes` ADD `vital_metric` text;

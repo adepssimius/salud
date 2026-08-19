@@ -19,6 +19,8 @@ export const ERROR_SENTENCES = {
   ADVISORY_NOT_FOUND: 'That alert is no longer showing. Refresh the page to see the current ones.',
   ANALYTE_IN_USE:
     "This analyte still has recorded lab results pointing at it, so it can't be deleted. Remove or re-map those results first.",
+  ANALYTE_IS_VITAL:
+    "Vital signs are built in and can't be deleted or renamed. You can still edit their display name, unit and ranges.",
   ANALYTE_NAME_TAKEN:
     'An analyte with that name is already in the catalog. Open that one instead, or choose a different name.',
   ANALYTE_NOT_FOUND: 'That analyte is no longer in the catalog. Search for it again.',

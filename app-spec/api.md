@@ -576,9 +576,18 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
           "display": { ...the full observation/intervention/advisory object... }
         }
       ],
-      "weightPrompt": { "needsUpdate": true, "lastRecordedAt": "...", "daysSince": 75 }
+      "weightPrompt": { "needsUpdate": true, "lastRecordedAt": "...", "daysSince": 75 },
+      "temperatureRanges": [
+        { "id": "...", "kind": "reference", "label": "Normal", "low": 36.1, "high": 37.2,
+          "refText": null, "effectiveFrom": 0 }
+      ]
     }
     ```
+    `temperatureRanges` carries this patient's temperature bands (data-model.md → AnalyteRange, on
+    the seeded `temperature` vital), one per lineage resolved to now, reference first, in canonical
+    °C. It rides along for the same reason the dashboard's copy does: the journal's chart draws its
+    curve against these, and fetching them otherwise means resolving the vital's analyte id and then
+    its ranges — two round trips to draw one chart. Empty when the household has recorded none.
     `display` is the same object `GET .../observations/:id` / `.../interventions/:id` / the
     advisories list already return — no separate summarization shape to keep in sync (P6: the
     timeline presents raw data, never a derived summary).
@@ -665,6 +674,12 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       other consumer. Exists so the bimodal Home's sick cards (frontend.md → "Information
       architecture (v2)" → Home) render from the one dashboard request instead of fanning out a
       timeline query per sick patient.
+    - `temperatureRanges`: `[ { patientId, ranges: ResolvedRange[] } ]` — the patient's temperature
+      bands (data-model.md → AnalyteRange, on the seeded `temperature` vital), one row per lineage
+      resolved to now, reference first. Same patient set and same reason as `recentTemperatures`:
+      the sparkline needs the bands to draw the scale against, and fetching them per sick card is
+      the fan-out this endpoint exists to avoid. Bounds are canonical °C; the client converts with
+      the points. A patient whose bands were all deleted gets `ranges: []` and a scale-only chart.
 - `GET /api/patients/:patientId/recent-medications`
   - The quick-log "recents first, search second" source (frontend.md → "Information architecture
     (v2)" → Quick Log): the union of medications given to this patient **in the last 14 days** and
@@ -1004,23 +1019,38 @@ The lab-analyte catalog (data-model.md → "Analyte catalog"). The **analyte** i
 medication catalog, populated by ingestion rather than a seed; its **ranges are per-patient**, since
 what a value should be depends on who was measured.
 
+The catalog also carries the **five vital signs** as seeded rows seen by `vitalMetric`
+(`temperature`, `heart_rate`, `respiratory_rate`, `oxygen_saturation`, `pain_score`). A vital is a
+measured quantity read against a named band, so it reuses this whole surface — the range endpoints
+below are how a household configures what counts as a normal temperature, with no vital-specific
+endpoint anywhere. Vital rows are seeded, never created or deleted through the API, and are hidden
+from the importer's paths so a printed "TEMPERATURE" line can never bind onto one.
+
 - `POST /api/analytes` — `{ name, displayName?, unit?, panel? }`. `displayName` defaults to Title
   Case of `name`. 409 `ANALYTE_NAME_TAKEN` on a case-insensitive collision with an existing `name`.
-- `GET /api/analytes?q=` — case-insensitive substring over `name`, `displayName` **and `panel`**
-  (searching "iron" finds `% Saturation`, whose own name never mentions it).
+- `GET /api/analytes?q=&kind=` — case-insensitive substring over `name`, `displayName` **and
+  `panel`** (searching "iron" finds `% Saturation`, whose own name never mentions it). `kind` is
+  `lab` (default — `vitalMetric IS NULL`), `vital`, or `all`. The default excludes vitals so every
+  existing caller, all of which are lab-facing, keeps its current results.
 - `GET /api/analytes/:id` — 404 `ANALYTE_NOT_FOUND`.
 - `PATCH /api/analytes/:id` — `{ name?, displayName?, unit?, panel? }`; a rename re-checks
   availability (renaming to its own current name is a no-op, not a conflict).
 - `DELETE /api/analytes/:id` — 409 `ANALYTE_IN_USE` with `{ dependents: { labResults: n } }` when
   any `lab_result` entry references it. Otherwise deletes the analyte together with every patient's
-  ranges for it (data-model.md explains the divergence from the medication catalog).
+  ranges for it (data-model.md explains the divergence from the medication catalog). A seeded vital
+  row is **never** deletable — 409 `ANALYTE_IS_VITAL`, checked before the dependency count, which
+  for a vital is structurally zero and would otherwise green-light deleting every patient's bands.
+- `POST /api/analytes` and `PATCH /api/analytes/:id` do not accept `vitalMetric`; it is set by
+  seeding alone. A `PATCH` may still edit a vital's `displayName`/`unit`, which are labels.
 - `POST /api/analytes/resolve` — `{ analytes: [{ name, unit?, panel? }] }` (≤ 200 entries) →
   `[{ name, analyteId, displayName, created }]` **in input order**. Case-insensitive match on
   `name`; missing analytes are created with a title-cased `displayName` and the submitted
   `unit`/`panel`. Idempotent: calling it twice returns the same ids with `created: false` the
   second time, and the second call's `unit`/`panel` are **ignored** — an import never rewrites
   what the catalog already says. This is how a client turns printed names into `analyteId`s before
-  writing `lab_result` entries.
+  writing `lab_result` entries. **Seeded vital rows are excluded from the match set**: a report
+  printing "TEMPERATURE" creates an ordinary lab analyte of that name rather than resolving onto
+  the vital, whose ranges are the household's fever thresholds and are not a lab's to overwrite.
 
 ### Analyte ranges
 
@@ -1037,7 +1067,11 @@ patient. Rows sharing (patient, analyte, `kind`, case-insensitive `label`) form 
   the row already effective in that lineage at that `effectiveFrom` carries identical values, the
   existing row is returned and nothing is inserted.
 - `GET /api/patients/:patientId/analytes/:analyteId/ranges` — all lineages, newest `effectiveFrom`
-  first.
+  first. This is also the vital-range surface: `:analyteId` is the seeded `temperature` row and the
+  response is the household's temperature bands.
+- A patient is created carrying one seeded `reference` range on the `temperature` vital
+  (data-model.md → AnalyteRange). It is an ordinary row: `PATCH` and `DELETE` behave normally, and
+  a delete is permanent — nothing re-seeds it.
 - `PATCH /api/analyte-ranges/:id`, `DELETE /api/analyte-ranges/:id` — 404
   `ANALYTE_RANGE_NOT_FOUND`. Membership is checked against the row's own `patientId`; a non-member
   gets the same 404, which is also what a caller with a bad id gets.
@@ -1150,6 +1184,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `ANALYTE_NAME_TAKEN` | 409 | analyte create/rename colliding case-insensitively with an existing `name` |
 | `ANALYTE_NOT_FOUND` | 404, or 400 (array form) | unknown analyte id on an analyte route; 400 from an observation write whose `lab_result` entry names an analyte that does not exist |
 | `ANALYTE_IN_USE` | 409 | `DELETE /api/analytes/:id` with `lab_result` entries referencing it; body carries `dependents` |
+| `ANALYTE_IS_VITAL` | 409 | `DELETE /api/analytes/:id` naming a seeded vital row — vitals are seeded, never removed |
 | `ANALYTE_RANGE_NOT_FOUND` | 404 | analyte-range patch/delete — unknown id, or a row belonging to a patient the caller is not on the care team for |
 | `ANALYTE_RANGE_EMPTY` | 400 | an analyte range with none of `low`, `high`, `refText` |
 | `CARE_DOCUMENT_FILE_NOT_FOUND` | 400 | `PUT .../care-documents/:kind` with `status: 'on_file'` and a `fileId` naming a file that does not exist or does not belong to this patient — same semantics as `PHOTO_FILE_NOT_FOUND` |

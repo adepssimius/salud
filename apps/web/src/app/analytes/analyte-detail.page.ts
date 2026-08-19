@@ -200,11 +200,20 @@ const PAD = 8;
         </ng-container>
       </section>
 
-      <section>
+      <!-- A vital is seeded and permanent (the API refuses with ANALYTE_IS_VITAL). Offering a
+           button that can only fail would be worse than not offering one. Its ranges above are
+           fully editable — that is the part a household actually configures. -->
+      <section *ngIf="!analyte()?.vitalMetric">
         <button type="button" class="danger" (click)="deleteAnalyte()" [disabled]="deleting()">
           {{ deleting() ? 'Deleting…' : 'Delete analyte' }}
         </button>
         <div class="error" *ngIf="deleteError()">{{ deleteError() }}</div>
+      </section>
+      <section *ngIf="analyte()?.vitalMetric">
+        <p class="muted small">
+          This is a built-in vital sign, so it stays in the catalog. Its ranges above are what decide
+          how this patient's charts are read.
+        </p>
       </section>
     </div>
 
