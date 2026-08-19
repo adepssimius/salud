@@ -354,3 +354,67 @@ h2 {
   border-color: var(--accent-border);
   color: var(--accent-bright);
 }
+
+/* ---- patient accent colors ---------------------------------------------
+   A patient's stable identity color (frontend.md → "Patient identity"). Identity and nothing
+   else: never severity, never status — a color that sometimes meant "sick" would stop being
+   readable as "this is Ana's record", which is the one thing it has to say at 3 AM with two
+   children sick at once.
+
+   The server stores a palette token (`teal`, `amber`, …), so the hexes live here and only here:
+   retuning the palette is this block, not a data migration. Templates emit `accent-{{ token }}`
+   and read the value through the utilities below; an unknown token simply matches no rule and the
+   `var(..., …)` fallbacks render a neutral chip rather than an invisible one. Global rather than
+   page-local because the same color has to be the same color on every surface the patient appears
+   on — a per-page copy is exactly how two surfaces end up disagreeing about who is who. */
+.accent-teal {
+  --patient-accent: #2dd4bf;
+  --patient-accent-bg: rgba(45, 212, 191, 0.16);
+}
+.accent-amber {
+  --patient-accent: #fbbf24;
+  --patient-accent-bg: rgba(251, 191, 36, 0.16);
+}
+.accent-violet {
+  --patient-accent: #a78bfa;
+  --patient-accent-bg: rgba(167, 139, 250, 0.16);
+}
+.accent-rose {
+  --patient-accent: #fb7185;
+  --patient-accent-bg: rgba(251, 113, 133, 0.16);
+}
+.accent-lime {
+  --patient-accent: #a3e635;
+  --patient-accent-bg: rgba(163, 230, 53, 0.16);
+}
+.accent-sky {
+  --patient-accent: #38bdf8;
+  --patient-accent-bg: rgba(56, 189, 248, 0.16);
+}
+.accent-fuchsia {
+  --patient-accent: #e879f9;
+  --patient-accent-bg: rgba(232, 121, 249, 0.16);
+}
+.accent-indigo {
+  --patient-accent: #818cf8;
+  --patient-accent-bg: rgba(129, 140, 248, 0.16);
+}
+
+/* A filled disc beside the patient's name. Sized in em so it tracks whatever text it sits next
+   to — a hub header's h1 and a list row's label are five points apart. */
+.accent-dot {
+  display: inline-block;
+  flex: none;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: var(--radius-pill);
+  background: var(--patient-accent, var(--text-dim));
+}
+
+/* The always-on version: a stripe down the leading edge of any surface that belongs to exactly one
+   patient (hub header, list row, and — for whoever adopts it next — sick cards and journal
+   headers). Visible without being read, which is the point of a guard against acting on the wrong
+   record. */
+.accent-rail {
+  border-left: 4px solid var(--patient-accent, var(--border-strong));
+}
