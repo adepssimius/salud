@@ -158,19 +158,52 @@ describe('App', () => {
     });
   });
 
-  it('fills the rail patient list from GET /patients when a session already exists', async () => {
-    TestBed.resetTestingModule();
-    await configure('a-token');
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
+  describe('the rail patient list', () => {
+    it('fills from GET /patients for the signed-in caregiver', () => {
+      const fixture = TestBed.createComponent(App);
+      fixture.detectChanges();
 
-    const http = TestBed.inject(HttpTestingController);
-    http.expectOne((req) => req.url.endsWith('/patients')).flush([{ id: 'p1', fullName: 'Ada' }]);
-    fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectOne((req) => req.url.endsWith('/patients')).flush([{ id: 'p1', fullName: 'Ada' }]);
+      fixture.detectChanges();
 
-    const railNames = Array.from(
-      (fixture.nativeElement as HTMLElement).querySelectorAll('.rail-section .rail-link'),
-    ).map((a) => a.textContent?.trim());
-    expect(railNames).toContain('Ada');
+      const railNames = Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('.rail-section .rail-link'),
+      ).map((a) => a.textContent?.trim());
+      expect(railNames).toContain('Ada');
+    });
+
+    // The shell is constructed on the login screen, where there is no session yet. Fetching only
+    // in ngOnInit left the rail empty for the whole first visit, until a full page reload.
+    it('fetches when the session arrives, not only when one already existed at construction', () => {
+      user.set(null);
+      const fixture = TestBed.createComponent(App);
+      fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectNone((req) => req.url.endsWith('/patients'));
+
+      user.set({ id: 'u1', displayName: 'Dana' });
+      fixture.detectChanges();
+      http.expectOne((req) => req.url.endsWith('/patients')).flush([{ id: 'p1', fullName: 'Ada' }]);
+      fixture.detectChanges();
+      expect((fixture.nativeElement as HTMLElement).textContent).toContain('Ada');
+    });
+
+    it('empties on logout and does not refetch for the same user twice', () => {
+      const fixture = TestBed.createComponent(App);
+      fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      http.expectOne((req) => req.url.endsWith('/patients')).flush([{ id: 'p1', fullName: 'Ada' }]);
+      fixture.detectChanges();
+
+      // Same user re-emitted (a profile save) — no second request.
+      user.set({ id: 'u1', displayName: 'Dana Renamed' });
+      fixture.detectChanges();
+      http.expectNone((req) => req.url.endsWith('/patients'));
+
+      user.set(null);
+      fixture.detectChanges();
+      expect(fixture.componentInstance['patients']()).toEqual([]);
+    });
   });
 });

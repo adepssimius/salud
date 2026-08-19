@@ -1,4 +1,4 @@
-import { Component, HostListener, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, HostListener, OnInit, effect, inject, signal, computed } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from './core/auth.service';
@@ -38,17 +38,35 @@ export class App implements OnInit {
    */
   protected hubPatientId = computed(() => HUB_PATH.exec(this.currentPath())?.[1] ?? null);
 
+  private loadedPatientsFor: string | null = null;
+
+  constructor() {
+    // The rail's patient list follows the *session*, not the page load. The shell is constructed
+    // on the login screen, where there is no session yet, so fetching only in ngOnInit left the
+    // rail empty for the whole of the first visit — until a full reload. Keyed on the user id so
+    // a profile edit (which re-emits the same user) doesn't refetch.
+    effect(() => {
+      const user = this.user();
+      if (!user) {
+        this.patients.set([]);
+        this.loadedPatientsFor = null;
+        return;
+      }
+      if (this.loadedPatientsFor === user.id) return;
+      this.loadedPatientsFor = user.id;
+      this.loadPatients();
+    });
+  }
+
   ngOnInit(): void {
     if (this.auth.token && !this.user()) {
       this.auth.me().subscribe({
-        next: () => this.loadPatients(),
+        // The effect above picks the patient list up once `user` lands.
         error: () => {
           // If token invalid, log out silently
           this.auth.logout();
         },
       });
-    } else if (this.auth.token) {
-      this.loadPatients();
     }
     this.currentPath.set(this.router.url ?? '');
     this.router.events.subscribe((evt: any) => {
@@ -96,7 +114,6 @@ export class App implements OnInit {
 
   logout() {
     this.auth.logout();
-    this.patients.set([]);
     this.menuOpen.set(false);
     this.quickLogOpen.set(false);
   }
