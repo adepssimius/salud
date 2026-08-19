@@ -18,6 +18,7 @@ import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
 import { medicationTagsByIds } from '../medications/medication-tags';
+import { assertNoReservedMetadataKeys } from './reserved-metadata';
 import { DoseSource } from '@salud/shared/types';
 
 /** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
@@ -152,6 +153,7 @@ export class InterventionsService {
   async create(patientId: string, userId: string, dto: CreateInterventionDto) {
     await this.ensurePatientAccess(patientId, userId);
     this.assertRequiredForType(dto.type, dto);
+    assertNoReservedMetadataKeys(dto.metadata);
     const db = this.db.db as any;
     const id = randomUUID();
     const performedAtDate = new Date(dto.performedAt);
@@ -214,6 +216,8 @@ export class InterventionsService {
       isAtypical: reasons.length > 0,
       atypicalReason: reasons.length ? reasons.join(',') : null,
       nextAllowedAt: resolvedNextAllowedAt,
+      // Extra client keys are welcome; the ones this service owns are not (ISSUES.md #28). The
+      // guard above makes the spread order harmless — it can no longer reach a resolved field.
       ...dto.metadata,
     };
 
@@ -358,6 +362,7 @@ export class InterventionsService {
   }
 
   async update(id: string, userId: string, dto: UpdateInterventionDto) {
+    assertNoReservedMetadataKeys(dto.metadata);
     const db = this.db.db as any;
     const rows = await db.select().from(interventions).where(eq(interventions.id, id)).limit(1);
     if (!rows.length) throw new NotFoundException('INTERVENTION_NOT_FOUND');

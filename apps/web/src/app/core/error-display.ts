@@ -63,6 +63,10 @@ export const ERROR_SENTENCES = {
   LAB_PDF_UNPARSEABLE:
     'That file could not be read as a lab report. Upload the original document from the lab, not a photo or scan.',
   MEDICATION_ID_REQUIRED: 'Choose a medication for this dose.',
+  // The app itself never sends these keys; this reaches a caregiver only if a client is
+  // out of date or hand-rolled, so the sentence points at the app rather than at them.
+  RESERVED_METADATA_KEY:
+    'This entry tried to set values the app calculates itself. Nothing was saved — please try again, or update the app if this keeps happening.',
   MEDICATION_IN_USE:
     'This medication is still in use. Remove its forms, guidelines and schedules first, or mark it inactive instead.',
   MEDICATION_NAME_TAKEN:
