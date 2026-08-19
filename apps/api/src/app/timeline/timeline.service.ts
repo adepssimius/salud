@@ -255,6 +255,10 @@ export class TimelineService {
       temperatureRanges: (
         await this.analytesService.vitalRangesForPatients('temperature', [patient.id], nowTs)
       )[0]?.ranges ?? [],
+      // Which dose markers the chart shows before the reader filters anything — a display default
+      // the household configures, never a claim that the doses relate to the readings (P6). Rides
+      // along for the same one-request reason as the bands above.
+      temperatureOverlayTags: await this.analytesService.vitalOverlayTags('temperature'),
     };
   }
 

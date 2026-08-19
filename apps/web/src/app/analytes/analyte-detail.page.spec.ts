@@ -219,4 +219,124 @@ describe('AnalyteDetailPage', () => {
       'For 8 a.m. specimens',
     );
   });
+
+  // Which dose markers this metric's chart shows first — display config the household owns
+  // (data-model.md → ChartOverlayDefault), never a recorded relationship.
+  describe('chart defaults', () => {
+    const withDefaults = (overlays: Array<{ id: string; kind: string; value: string }>) => (url: string) =>
+      url === '/analytes/a1/chart-defaults' ? of({ overlays }) : routeGets(url);
+
+    it('lists the configured defaults, worded as display rather than as a relationship', () => {
+      apiMock.get = jest.fn(withDefaults([{ id: 'c1', kind: 'medication_tag', value: 'antipyretic' }]));
+      const fixture = TestBed.createComponent(AnalyteDetailPage);
+      fixture.detectChanges();
+      const text: string = fixture.nativeElement.textContent;
+      expect(text).toContain('Doses shown on this chart by default');
+      expect(text).toContain('antipyretic');
+      // P6: the page never claims the doses do anything to the readings.
+      expect(text.toLowerCase()).not.toContain('affect');
+      expect(text.toLowerCase()).not.toContain('related to');
+    });
+
+    it('says so plainly when a chart has no defaults', () => {
+      apiMock.get = jest.fn(withDefaults([]));
+      const fixture = TestBed.createComponent(AnalyteDetailPage);
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('No doses shown by default');
+    });
+
+    it('adds a tag by sending the whole list, and refreshes the history the markers come from', () => {
+      apiMock.get = jest.fn(withDefaults([{ id: 'c1', kind: 'medication_tag', value: 'antipyretic' }]));
+      apiMock.put = jest.fn(() =>
+        of({
+          overlays: [
+            { id: 'c1', kind: 'medication_tag', value: 'antipyretic' },
+            { id: 'c2', kind: 'medication_tag', value: 'analgesic' },
+          ],
+        }),
+      );
+      const fixture = TestBed.createComponent(AnalyteDetailPage);
+      fixture.detectChanges();
+      fixture.componentInstance.selectPatient('p1');
+      fixture.detectChanges();
+      apiMock.get.mockClear();
+
+      fixture.componentInstance.newChartDefault = 'analgesic';
+      fixture.componentInstance.addChartDefault();
+      fixture.detectChanges();
+
+      expect(apiMock.put).toHaveBeenCalledWith('/analytes/a1/chart-defaults', {
+        overlays: [
+          { kind: 'medication_tag', value: 'antipyretic' },
+          { kind: 'medication_tag', value: 'analgesic' },
+        ],
+      });
+      expect(fixture.componentInstance.chartDefaults().map((o: any) => o.value)).toEqual([
+        'antipyretic',
+        'analgesic',
+      ]);
+      // The history payload carries the markers, so it has to be refetched after a change.
+      expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/analytes/a1/history');
+    });
+
+    it('removes a tag by sending the remaining list, empty included', () => {
+      apiMock.get = jest.fn(withDefaults([{ id: 'c1', kind: 'medication_tag', value: 'antipyretic' }]));
+      apiMock.put = jest.fn(() => of({ overlays: [] }));
+      const fixture = TestBed.createComponent(AnalyteDetailPage);
+      fixture.detectChanges();
+
+      fixture.componentInstance.removeChartDefault('antipyretic');
+      fixture.detectChanges();
+
+      expect(apiMock.put).toHaveBeenCalledWith('/analytes/a1/chart-defaults', { overlays: [] });
+      expect(fixture.componentInstance.chartDefaults()).toEqual([]);
+    });
+
+    it('plots the history payload\'s doses as markers, dropping any outside the plotted span', () => {
+      apiMock.get = jest.fn((url: string) => {
+        if (url === '/analytes/a1/chart-defaults') {
+          return of({ overlays: [{ id: 'c1', kind: 'medication_tag', value: 'antipyretic' }] });
+        }
+        if (url === '/patients/p1/analytes/a1/history') {
+          return of({
+            ...HISTORY,
+            doses: [
+              // Inside the span between the two results.
+              {
+                interventionId: 'i1',
+                performedAt: 1660000000,
+                medicationId: 'm1',
+                medicationName: 'ibuprofen',
+                amountMg: 100,
+                medicationTags: ['antipyretic'],
+              },
+              // Years before the first result — off the axis, so it is dropped rather than clamped
+              // onto the edge where it would read as having happened then.
+              {
+                interventionId: 'i2',
+                performedAt: 1500000000,
+                medicationId: 'm1',
+                medicationName: 'ibuprofen',
+                amountMg: 100,
+                medicationTags: ['antipyretic'],
+              },
+            ],
+          });
+        }
+        return routeGets(url);
+      });
+
+      const fixture = TestBed.createComponent(AnalyteDetailPage);
+      fixture.detectChanges();
+      fixture.componentInstance.selectPatient('p1');
+      fixture.detectChanges();
+
+      const doses = fixture.componentInstance.plottedDoses();
+      expect(doses).toHaveLength(1);
+      expect(doses[0].title).toContain('ibuprofen');
+      expect(doses[0].title).toContain('100 mg');
+      expect(fixture.componentInstance.chartDefaultLegend()).toBe('antipyretic doses');
+      expect(fixture.nativeElement.textContent).toContain('Showing antipyretic doses by default');
+    });
+  });
 });

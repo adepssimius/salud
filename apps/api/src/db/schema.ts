@@ -38,6 +38,7 @@ export const {
   episodesEventsPivot,
   analytes,
   analyteRanges,
+  chartOverlayDefaults,
   medications,
   medicationEmbodiments,
   medicationGuidelines,

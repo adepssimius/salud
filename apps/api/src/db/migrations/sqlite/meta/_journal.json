@@ -78,6 +78,13 @@
       "when": 1787151720740,
       "tag": "0010_conscious_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787160104200,
+      "tag": "0011_loose_night_thrasher",
+      "breakpoints": true
     }
   ]
 }

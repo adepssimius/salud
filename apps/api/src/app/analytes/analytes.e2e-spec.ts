@@ -486,6 +486,206 @@ describe('Analytes (e2e)', () => {
       .expect(404);
   });
 
+  // Which dose markers a metric's chart shows by default (api.md → "Chart overlay defaults").
+  // Household-global display config — never a recorded relationship between the doses and the
+  // readings, which is why nothing here writes to an intervention or an observation.
+  describe('chart overlay defaults', () => {
+    let analyteId: string;
+
+    beforeAll(async () => {
+      const analyte = (
+        await request(app.getHttpServer())
+          .post('/api/analytes')
+          .set(auth())
+          .send({ name: 'OVERLAY SUBJECT' })
+          .expect(201)
+      ).body;
+      analyteId = analyte.id;
+    });
+
+    it('starts empty, and edits whole — duplicates collapse, an empty list clears', async () => {
+      const initial = await request(app.getHttpServer())
+        .get(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .expect(200);
+      expect(initial.body.overlays).toEqual([]);
+
+      const set = await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({
+          overlays: [
+            { kind: 'medication_tag', value: 'antipyretic' },
+            { kind: 'medication_tag', value: 'antipyretic' }, // duplicate collapses
+            { kind: 'medication_tag', value: 'analgesic' },
+          ],
+        })
+        .expect(200);
+      expect(set.body.overlays.map((o: any) => o.value)).toEqual(['analgesic', 'antipyretic']);
+      expect(set.body.overlays.every((o: any) => o.kind === 'medication_tag')).toBe(true);
+
+      // Whole-list replacement, not a merge.
+      const replaced = await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'antipyretic' }] })
+        .expect(200);
+      expect(replaced.body.overlays.map((o: any) => o.value)).toEqual(['antipyretic']);
+
+      // An empty list is a valid, respected choice: it opts the chart out of default markers.
+      const cleared = await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [] })
+        .expect(200);
+      expect(cleared.body.overlays).toEqual([]);
+    });
+
+    it('accepts a tag no medication carries, and rejects an unknown kind', async () => {
+      // Not an error: it matches nothing today and starts working the day a medication gains it.
+      const ahead = await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'not-a-tag-anyone-uses' }] })
+        .expect(200);
+      expect(ahead.body.overlays.map((o: any) => o.value)).toEqual(['not-a-tag-anyone-uses']);
+
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'intervention_type', value: 'dressing_change' }] })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [] })
+        .expect(200);
+    });
+
+    it('404s on an unknown analyte, and requires authentication', async () => {
+      const missing = '11111111-1111-4111-8111-111111111111';
+      const notFound = await request(app.getHttpServer())
+        .get(`/api/analytes/${missing}/chart-defaults`)
+        .set(auth())
+        .expect(404);
+      expect(notFound.body.message).toBe('ANALYTE_NOT_FOUND');
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${missing}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [] })
+        .expect(404);
+      await request(app.getHttpServer()).get(`/api/analytes/${analyteId}/chart-defaults`).expect(401);
+    });
+
+    it('works on a seeded vital, and drives the temperature chart default on the timeline', async () => {
+      const vitals = await request(app.getHttpServer()).get('/api/analytes?kind=vital').set(auth()).expect(200);
+      const temperature = vitals.body.find((a: any) => a.vitalMetric === 'temperature');
+      expect(temperature).toBeDefined();
+
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${temperature.id}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'antipyretic' }] })
+        .expect(200);
+
+      const timeline = await request(app.getHttpServer())
+        .get(`/api/patients/${patientId}/timeline`)
+        .set(auth())
+        .expect(200);
+      expect(timeline.body.temperatureOverlayTags).toEqual(['antipyretic']);
+
+      // Cleared defaults reach the timeline too — the chart then opens with no markers.
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${temperature.id}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [] })
+        .expect(200);
+      const after = await request(app.getHttpServer())
+        .get(`/api/patients/${patientId}/timeline`)
+        .set(auth())
+        .expect(200);
+      expect(after.body.temperatureOverlayTags).toEqual([]);
+    });
+
+    it('carries matching doses on the history payload, and none once the defaults are cleared', async () => {
+      const medication = (
+        await request(app.getHttpServer())
+          .post('/api/medications')
+          .set(auth())
+          .send({ name: `overlay-med-${Date.now()}`, tags: ['antipyretic'] })
+          .expect(201)
+      ).body;
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth())
+        .send({
+          performedAt: '2026-01-02T09:00:00.000Z',
+          type: 'medication_dose',
+          medicationId: medication.id,
+          doseSource: 'override',
+          amountMg: 250,
+        })
+        .expect(201);
+
+      // No defaults on this analyte yet, so no markers — the chart shows readings alone.
+      const bare = await request(app.getHttpServer())
+        .get(`/api/patients/${patientId}/analytes/${analyteId}/history`)
+        .set(auth())
+        .expect(200);
+      expect(bare.body.doses).toEqual([]);
+
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'antipyretic' }] })
+        .expect(200);
+
+      const withDoses = await request(app.getHttpServer())
+        .get(`/api/patients/${patientId}/analytes/${analyteId}/history`)
+        .set(auth())
+        .expect(200);
+      expect(withDoses.body.doses).toHaveLength(1);
+      expect(withDoses.body.doses[0]).toMatchObject({
+        medicationId: medication.id,
+        amountMg: 250,
+        medicationTags: ['antipyretic'],
+      });
+      // Epoch seconds, like every other timestamp the API returns (ISSUES #20).
+      expect(typeof withDoses.body.doses[0].performedAt).toBe('number');
+
+      // A default naming a tag this medication doesn't carry matches nothing.
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${analyteId}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'antibiotic' }] })
+        .expect(200);
+      const unmatched = await request(app.getHttpServer())
+        .get(`/api/patients/${patientId}/analytes/${analyteId}/history`)
+        .set(auth())
+        .expect(200);
+      expect(unmatched.body.doses).toEqual([]);
+    });
+
+    it('goes with the analyte when it is deleted', async () => {
+      const doomed = (
+        await request(app.getHttpServer())
+          .post('/api/analytes')
+          .set(auth())
+          .send({ name: `OVERLAY DOOMED ${Date.now()}` })
+          .expect(201)
+      ).body;
+      await request(app.getHttpServer())
+        .put(`/api/analytes/${doomed.id}/chart-defaults`)
+        .set(auth())
+        .send({ overlays: [{ kind: 'medication_tag', value: 'antipyretic' }] })
+        .expect(200);
+
+      await request(app.getHttpServer()).delete(`/api/analytes/${doomed.id}`).set(auth()).expect(200);
+      await request(app.getHttpServer()).get(`/api/analytes/${doomed.id}/chart-defaults`).set(auth()).expect(404);
+    });
+  });
+
   it('requires authentication', async () => {
     await request(app.getHttpServer()).get('/api/analytes').expect(401);
     await request(app.getHttpServer()).post('/api/analytes').send({ name: 'X' }).expect(401);

@@ -86,8 +86,113 @@ describe('JournalChartComponent', () => {
   it('extracts dose markers from medication_dose interventions', () => {
     const fixture = render();
     expect(fixture.componentInstance.doseMarkers()).toEqual([
-      { timestamp: 1700003600, amountMg: 160, medicationId: 'm1', isAtypical: false },
+      {
+        timestamp: 1700003600,
+        amountMg: 160,
+        medicationId: 'm1',
+        medicationName: null,
+        tags: [],
+        isAtypical: false,
+      },
     ]);
+  });
+
+  // Which markers show first is configured (data-model.md → ChartOverlayDefault): a display
+  // default the household owns, never a claim that the doses did anything to the readings.
+  describe('default marker selection', () => {
+    const taggedEntries = [
+      ...entries,
+      {
+        id: 'int-2',
+        kind: 'intervention',
+        type: 'medication_dose',
+        timestamp: 1700007200,
+        recordedBy: { id: 'u1', displayName: 'Dana' },
+        display: {
+          id: 'int-2',
+          performedAt: 1700007200,
+          createdAt: 1700007200,
+          metadata: { medicationId: 'm2', amountMg: 250, isAtypical: false },
+          medicationTags: ['antibiotic'],
+        },
+      },
+      {
+        id: 'int-3',
+        kind: 'intervention',
+        type: 'medication_dose',
+        timestamp: 1700010800,
+        recordedBy: { id: 'u1', displayName: 'Dana' },
+        display: {
+          id: 'int-3',
+          performedAt: 1700010800,
+          createdAt: 1700010800,
+          metadata: { medicationId: 'm3', amountMg: 100, isAtypical: false },
+          medicationTags: ['antipyretic'],
+        },
+      },
+    ] as any;
+
+    function renderTagged(overlayTags: string[], showAllDoses = false) {
+      const fixture = TestBed.createComponent(JournalChartComponent);
+      fixture.componentInstance.entries = taggedEntries;
+      fixture.componentInstance.episodes = [] as any;
+      fixture.componentInstance.temperatureRanges = [];
+      fixture.componentInstance.overlayTags = overlayTags;
+      fixture.componentInstance.showAllDoses = showAllDoses;
+      fixture.componentInstance.medicationNames = new Map([['m3', 'ibuprofen']]);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    it('draws only doses carrying a defaulted tag', () => {
+      const fixture = renderTagged(['antipyretic']);
+      expect(fixture.componentInstance.doseMarkers().map((d: any) => d.medicationId)).toEqual(['m3']);
+      expect(fixture.componentInstance.dosesHiddenByDefault()).toBe(true);
+    });
+
+    it('draws every dose when no defaults are configured', () => {
+      const fixture = renderTagged([]);
+      expect(fixture.componentInstance.doseMarkers()).toHaveLength(3);
+      expect(fixture.componentInstance.overlayLegend()).toBeNull();
+    });
+
+    it('widens back to every dose on the reader override', () => {
+      const fixture = renderTagged(['antipyretic'], true);
+      expect(fixture.componentInstance.doseMarkers()).toHaveLength(3);
+      expect(fixture.componentInstance.overlayLegend()).toBeNull();
+    });
+
+    it('names the default in display terms, never as a relationship', () => {
+      const fixture = renderTagged(['antipyretic']);
+      expect(fixture.componentInstance.overlayLegend()).toBe('antipyretic doses');
+      const text: string = fixture.nativeElement.textContent;
+      expect(text).toContain('Showing antipyretic doses by default');
+      expect(text).toContain('Show all doses');
+      // P6: the chart never says a dose did anything to the readings.
+      expect(text.toLowerCase()).not.toContain('affect');
+      expect(text.toLowerCase()).not.toContain('responsive');
+      expect(text.toLowerCase()).not.toContain('related');
+    });
+
+    it('reads several defaults as a list', () => {
+      const fixture = renderTagged(['antipyretic', 'analgesic']);
+      expect(fixture.componentInstance.overlayLegend()).toBe('antipyretic and analgesic doses');
+    });
+
+    it('names the medication and amount in a marker tooltip, with no effect language', () => {
+      const fixture = renderTagged(['antipyretic']);
+      const marker = fixture.componentInstance.doseMarkers()[0];
+      const title = fixture.componentInstance.doseTitle(marker);
+      expect(title).toContain('ibuprofen');
+      expect(title).toContain('100 mg');
+    });
+
+    it('still renders the plot when the default selects nothing, so the override stays reachable', () => {
+      const fixture = renderTagged(['nothing-matches-this']);
+      expect(fixture.componentInstance.doseMarkers()).toHaveLength(0);
+      expect(fixture.nativeElement.querySelector('svg')).not.toBeNull();
+      expect(fixture.nativeElement.textContent).toContain('Show all doses');
+    });
   });
 
   it('computes episode bands clamped to the visible time range', () => {

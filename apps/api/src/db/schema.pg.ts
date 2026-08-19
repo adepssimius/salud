@@ -247,6 +247,29 @@ export const analyteRanges = pgTable('analyte_ranges', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
 });
 
+// Which dose markers a metric's chart shows BY DEFAULT (data-model.md → ChartOverlayDefault).
+// A row says "doses tagged antipyretic show on the temperature chart unless the reader says
+// otherwise" — a display default, never a recorded claim that the two are related. Keeping it
+// config rather than a field on each dose is what makes it retroactive: retagging a medication
+// re-classifies its past doses on every chart at once, with no backfill.
+export const chartOverlayDefaults = pgTable('chart_overlay_defaults', {
+  id: text('id').primaryKey(),
+  // A vital or a lab analyte alike — a vital IS an analyte row, so one mechanism serves the fever
+  // chart and a ferritin history chart.
+  analyteId: text('analyte_id')
+    .notNull()
+    .references(() => analytes.id),
+  // Only 'medication_tag' ships in Phase 1; the enum widens when a second kind earns a render rule.
+  kind: text('kind', { enum: ['medication_tag'] })
+    .notNull()
+    .default('medication_tag'),
+  // Matched exactly against medications.tags, same rule as GET .../timeline?medicationTag=.
+  // A value no medication carries is not an error: it matches nothing until one gains the tag.
+  value: text('value').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+});
+
 export const medications = pgTable('medications', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

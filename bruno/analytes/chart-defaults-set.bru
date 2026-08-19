@@ -1,0 +1,50 @@
+meta {
+  name: Set Chart Defaults
+  type: http
+  seq: 24
+}
+
+put {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{temperatureAnalyteId}}/chart-defaults
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "overlays": [
+      { "kind": "medication_tag", "value": "antipyretic" }
+    ]
+  }
+}
+
+script:pre-request {
+  if (!bru.getVar('temperatureAnalyteId')) {
+    await bru.runRequest("analytes/list-vitals");
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Replaces this metric's chart overlay defaults **whole** — the same edit-whole shape as a
+  patient's `devices` list. The submitted array becomes the stored one, duplicate
+  (`kind`, `value`) pairs collapse to a single row, and `{"overlays": []}` clears the metric's
+  defaults, which is how a household opts a chart out of default markers entirely.
+
+  `kind` accepts only `medication_tag` in Phase 1 (anything else is a 400). The shape deliberately
+  admits more kinds later — `intervention_type`, e.g. dressing changes on a lesion-size chart — but
+  a kind ships only once it has a render rule.
+
+  `value` is matched **exactly** against `medications.tags`, the same rule
+  `GET /timeline?medicationTag=` uses. A tag no medication currently carries is accepted rather
+  than rejected: it matches nothing today and starts working the day a medication gains it.
+  Conversely, retagging a medication re-classifies its past doses on every chart at once — that
+  retroactivity is the point of keeping this as config rather than a field on each dose.
+
+  Verify the effect with `Timeline → Get Timeline` (its `temperatureOverlayTags` mirrors what you
+  set here) and with `Analytes → History` (its `doses` array carries the matching doses).
+}

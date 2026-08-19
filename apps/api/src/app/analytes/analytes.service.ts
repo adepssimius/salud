@@ -4,11 +4,15 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import {
   Analyte,
   AnalyteHistory,
+  AnalyteHistoryDose,
   AnalyteHistoryPoint,
   AnalyteRange,
+  ChartOverlayDefault,
+  ChartOverlayDefaultsResponse,
   ResolveAnalyteInput,
   ResolveAnalytesResult,
   ResolvedRange,
+  SetChartOverlayDefaultsDto,
   VitalMetric,
 } from '@salud/shared/types';
 import { DatabaseService } from '../persistence/database.service';
@@ -16,10 +20,14 @@ import {
   analyteRanges,
   analytes,
   careTeamMemberships,
+  chartOverlayDefaults,
+  interventions,
+  medications,
   observationEntries,
   observations,
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
+import { matchesOverlayTags, parseMedicationTags } from '../medications/medication-tags';
 import { analyteDependencies } from './analyte-dependencies';
 import { ensureVitalAnalytes } from './vital-analytes';
 import { CreateAnalyteDto } from './dto/create-analyte.dto';
@@ -207,10 +215,83 @@ export class AnalytesService {
       throw new ConflictException({ message: 'ANALYTE_IN_USE', dependents });
     }
     // Every patient's ranges go with it — see analyte-dependencies.ts for why this cascades where
-    // the medication catalog refuses to.
+    // the medication catalog refuses to. Chart overlay defaults follow the same rule: rows about
+    // a chart have no independent referents either.
     await db.delete(analyteRanges).where(eq(analyteRanges.analyteId, id));
+    await db.delete(chartOverlayDefaults).where(eq(chartOverlayDefaults.analyteId, id));
     await db.delete(analytes).where(eq(analytes.id, id));
     return { deleted: true };
+  }
+
+  /**
+   * Which dose markers this metric's chart shows by default (api.md → "Chart overlay defaults").
+   *
+   * Household-global like the catalog itself — no patient scoping, authentication only. A display
+   * default and nothing more: the row never claims the doses relate to the readings (P6).
+   */
+  async listChartDefaults(analyteId: string): Promise<ChartOverlayDefaultsResponse> {
+    // getRaw, not assertExists: these are ordinary by-id routes answering 404, where assertExists
+    // carries the observation-write path's 400 (api.md → Error codes, ANALYTE_NOT_FOUND).
+    await this.getRaw(analyteId);
+    const db = this.db.db as any;
+    const rows = await db
+      .select()
+      .from(chartOverlayDefaults)
+      .where(eq(chartOverlayDefaults.analyteId, analyteId))
+      .orderBy(asc(chartOverlayDefaults.value));
+    return { overlays: rows.map((row: any) => this.mapOverlay(row)) };
+  }
+
+  private mapOverlay(row: any): ChartOverlayDefault {
+    return { id: row.id, kind: row.kind, value: row.value };
+  }
+
+  /**
+   * Replace this metric's overlay defaults wholesale (the `patients.devices` edit-whole shape).
+   *
+   * Duplicate (kind, value) pairs collapse rather than conflict, and an empty list is a valid,
+   * respected choice — it clears the metric's defaults, which is how a household opts a chart out
+   * of markers entirely. A tag no medication currently carries is accepted: it matches nothing
+   * today and starts working the day a medication gains it.
+   */
+  async setChartDefaults(analyteId: string, dto: SetChartOverlayDefaultsDto): Promise<ChartOverlayDefaultsResponse> {
+    await this.getRaw(analyteId);
+    const db = this.db.db as any;
+    const seen = new Set<string>();
+    const rows: Array<{ id: string; analyteId: string; kind: string; value: string }> = [];
+    for (const overlay of dto.overlays ?? []) {
+      const value = overlay.value.trim();
+      if (!value) continue;
+      const key = `${overlay.kind} ${value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ id: randomUUID(), analyteId, kind: overlay.kind, value });
+    }
+    // Replace rather than diff: the list is tiny, and a wholesale swap is what makes the endpoint's
+    // contract ("the submitted list replaces the stored one") true by construction.
+    await db.delete(chartOverlayDefaults).where(eq(chartOverlayDefaults.analyteId, analyteId));
+    if (rows.length) await db.insert(chartOverlayDefaults).values(rows);
+    return this.listChartDefaults(analyteId);
+  }
+
+  /**
+   * The overlay tags for a vital metric, for callers holding a metric name rather than an analyte
+   * id — the timeline's `temperatureOverlayTags` (api.md → Timeline & dashboard).
+   */
+  async vitalOverlayTags(metric: VitalMetric): Promise<string[]> {
+    const analyteId = (await ensureVitalAnalytes(this.db.db as any)).get(metric);
+    if (!analyteId) return [];
+    return this.chartOverlayTags(analyteId);
+  }
+
+  /** The overlay tags for one analyte, reduced to the strings a chart matches doses against. */
+  async chartOverlayTags(analyteId: string): Promise<string[]> {
+    const db = this.db.db as any;
+    const rows = await db
+      .select()
+      .from(chartOverlayDefaults)
+      .where(and(eq(chartOverlayDefaults.analyteId, analyteId), eq(chartOverlayDefaults.kind, 'medication_tag')));
+    return rows.map((row: any) => row.value);
   }
 
   /**
@@ -531,6 +612,56 @@ export class AnalytesService {
     const ranges = (await this.listRanges(patientId, analyteId, userId))
       .slice()
       .sort((a, b) => a.effectiveFrom - b.effectiveFrom);
-    return { analyte, ranges, points };
+    const doses = await this.overlayDosesFor(patientId, analyteId);
+    return { analyte, ranges, points, doses };
+  }
+
+  /**
+   * This patient's doses whose medication carries one of the metric's chart overlay defaults —
+   * what the history chart draws as markers, so it needs no timeline fan-out.
+   *
+   * Presence data only: which doses happened and when, never an annotation about what they did
+   * (P6). No defaults, or nothing matching them, is an empty array and a chart with no markers.
+   */
+  private async overlayDosesFor(patientId: string, analyteId: string): Promise<AnalyteHistoryDose[]> {
+    const overlayTags = await this.chartOverlayTags(analyteId);
+    if (!overlayTags.length) return [];
+    const db = this.db.db as any;
+    const wanted = new Set(overlayTags);
+
+    const medicationRows = await db.select().from(medications);
+    const matching = new Map<string, { name: string; tags: string[] }>();
+    for (const row of medicationRows) {
+      const tags = parseMedicationTags(row.tags);
+      if (matchesOverlayTags(tags, wanted)) matching.set(row.id, { name: row.name, tags });
+    }
+    if (!matching.size) return [];
+
+    const doseRows = await db
+      .select()
+      .from(interventions)
+      .where(and(eq(interventions.patientId, patientId), eq(interventions.type, 'medication_dose')));
+
+    const out: AnalyteHistoryDose[] = [];
+    for (const row of doseRows) {
+      let metadata: any;
+      try {
+        metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      } catch {
+        continue;
+      }
+      const medication = matching.get(metadata?.medicationId);
+      if (!medication) continue;
+      out.push({
+        interventionId: row.id,
+        performedAt: normalizeTs(row.performedAt) as number,
+        medicationId: metadata.medicationId,
+        medicationName: medication.name,
+        amountMg: typeof metadata.amountMg === 'number' ? metadata.amountMg : null,
+        medicationTags: medication.tags,
+      });
+    }
+    out.sort((a, b) => a.performedAt - b.performedAt);
+    return out;
   }
 }

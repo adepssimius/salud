@@ -1,0 +1,40 @@
+meta {
+  name: Get Chart Defaults
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes/{{temperatureAnalyteId}}/chart-defaults
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  if (!bru.getVar('temperatureAnalyteId')) {
+    await bru.runRequest("analytes/list-vitals");
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Which dose markers this metric's chart shows **by default** (api.md → "Chart overlay defaults";
+  data-model.md → `ChartOverlayDefault`).
+
+  Display config, not a recorded relationship: a row means "show antipyretic doses on the
+  temperature chart unless the reader filters otherwise", never "antipyretics affect temperature".
+  The app is saying *you probably want these visible together* and nothing more — the chart's
+  no-annotation rule is unchanged, and no computed "responsive to X" text ever renders on a marker.
+
+  Household-global like the analyte catalog itself: authenticated, no patient scoping. Works
+  identically on a seeded vital and on a lab analyte, since a vital *is* an analyte row.
+
+  Out of the box `yarn seed:catalog` seeds two: antipyretic doses on the `temperature` chart, and
+  analgesic doses on the `pain_score` chart. Nothing re-seeds them, so a delete sticks.
+
+  404 `ANALYTE_NOT_FOUND` on an unknown id.
+}

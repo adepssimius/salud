@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import Database from 'better-sqlite3';
 import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
@@ -7,7 +7,9 @@ import { drizzle as drizzleMysql } from 'drizzle-orm/mysql2';
 import { Client as PgClient } from 'pg';
 import mysql from 'mysql2/promise';
 import { resolveDatabaseConfig } from '../apps/api/src/app/persistence/database.config';
+import { ensureVitalAnalytes } from '../apps/api/src/app/analytes/vital-analytes';
 import * as schema from '../apps/api/src/db/schema';
+import type { VitalMetric } from '../libs/shared/types/src/lib/types';
 
 interface EmbodimentSeed {
   key: string;
@@ -229,6 +231,57 @@ async function seedCatalog(db: any) {
     }
 
     console.log(`Seeded ${med.name} with ${med.embodiments.length} embodiment(s) and ${med.guidelines.length} guideline(s).`);
+  }
+
+  await seedChartOverlayDefaults(db);
+}
+
+// Which dose markers a metric's chart shows by default (data-model.md -> ChartOverlayDefault).
+// Seeded here rather than at boot, and beside the medications whose tags these reference: the two
+// only mean anything together. A caregiver's delete is permanent unless someone re-runs this
+// script deliberately -- the same rule the seeded temperature range follows.
+//
+// Display defaults only. A row says "show antipyretic doses on the temperature chart", never
+// "antipyretics affect temperature" (P6).
+const OVERLAY_DEFAULTS: ReadonlyArray<{ metric: VitalMetric; tag: string }> = [
+  { metric: 'temperature', tag: 'antipyretic' },
+  { metric: 'pain_score', tag: 'analgesic' },
+];
+
+async function seedChartOverlayDefaults(db: any) {
+  // The vitals are seeded rows; this resolves (and creates, first time) the catalog rows the
+  // defaults hang off, using the same helper the API boots with.
+  const vitalIds = await ensureVitalAnalytes(db);
+
+  for (const { metric, tag } of OVERLAY_DEFAULTS) {
+    const analyteId = vitalIds.get(metric);
+    if (!analyteId) {
+      console.log(`No seeded ${metric} vital found; skipping its chart overlay default.`);
+      continue;
+    }
+    // Idempotent on the (analyte, kind, value) triple, so a second run adds nothing.
+    const existing = await db
+      .select()
+      .from(schema.chartOverlayDefaults)
+      .where(
+        and(
+          eq(schema.chartOverlayDefaults.analyteId, analyteId),
+          eq(schema.chartOverlayDefaults.kind, 'medication_tag'),
+          eq(schema.chartOverlayDefaults.value, tag),
+        ),
+      )
+      .limit(1);
+    if (existing.length) {
+      console.log(`Chart overlay default already seeded (${metric} -> ${tag}); skipping.`);
+      continue;
+    }
+    await db.insert(schema.chartOverlayDefaults).values({
+      id: randomUUID(),
+      analyteId,
+      kind: 'medication_tag',
+      value: tag,
+    });
+    console.log(`Seeded chart overlay default: ${tag} doses show by default on the ${metric} chart.`);
   }
 }
 
