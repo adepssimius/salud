@@ -221,16 +221,21 @@ The run number rather than a timestamp is deliberate: it is identical across bot
 publish matrix, so api and web can never land on different tags, and it is monotonic without
 depending on fixed-width formatting.
 
-Neither image is compiled inside Docker. CI builds the workspace once, in the job that also lints
-and tests it, and hands `dist/api` and `dist/apps/web/browser` to the publish jobs as artifacts;
-each Dockerfile ends its from-source path in a `dist` stage that the build substitutes with those
-(`--build-context`), which prunes the compile out of the image graph. Running `docker build` on
-either Dockerfile with no extra flags still builds from source, so the images remain reproducible
-outside CI — that path is just not what a release takes.
+Neither image is compiled inside Docker. `ci.yml` is a single job that lints, builds and tests the
+workspace and then builds both images from that same `dist/` output: each Dockerfile ends its
+from-source path in a flat `dist` stage that the build substitutes (`--build-context`), which
+prunes the compile out of the image graph. Running `docker build` on either Dockerfile with no
+extra flags still builds from source, so the images remain reproducible outside CI — that path is
+just not what a release takes.
 
-Pull requests build both images too, and throw them away; only a push pushes. The image build is
-nearly free now that it carries no compile, and without it a change that breaks an image would
-stay green until it had already merged and started deploying.
+One job rather than several is deliberate, and is about cost rather than speed: minutes are billed
+per job rounded up to the whole minute, and each additional job re-pays checkout and a dependency
+restore. Splitting the suites across jobs to run them in parallel measured 7 billed minutes warm
+and 13 cold against 3 for the single job, for a wall-clock saving nobody was waiting on.
+
+Pull requests stop after the tests — they skip the image steps entirely, which is the one billed
+minute they have no use for. A `workflow_dispatch` run does build both images without pushing,
+which is how a change to the Dockerfiles or to the image steps gets exercised before it merges.
 
 `scripts/release.sh` cuts a `YYYYMMDD-HHMMSS` tag. That publishes an image but does **not**
 deploy — Flux matches only the `main-` form. It exists to pin a release you want to point at.
