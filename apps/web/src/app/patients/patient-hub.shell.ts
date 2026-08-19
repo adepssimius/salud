@@ -21,9 +21,12 @@ import { PatientHubStore } from './patient-hub.store';
   imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive],
   template: `
     <div class="hub">
-      <header class="hub-header card">
+      <header class="hub-header card accent-rail" [ngClass]="accentClass()">
         <div class="identity">
-          <h1>{{ store.patient()?.fullName || 'Patient' }}</h1>
+          <!-- The patient's accent color, on every tab (frontend.md → "Patient identity"). The
+               rail carries it without being read; the dot ties it to the name so the association
+               is learnable in the first place. -->
+          <h1><span class="accent-dot"></span>{{ store.patient()?.fullName || 'Patient' }}</h1>
           <div class="meta">
             <span class="muted" *ngIf="age() as a">{{ a }}</span>
             <span class="muted sex" *ngIf="store.patient() as p">{{ p.sexAtBirth }}</span>
@@ -68,6 +71,9 @@ import { PatientHubStore } from './patient-hub.store';
       h1 {
         margin: 0;
         font-size: 1.6rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
       }
       .meta {
         display: flex;
@@ -103,6 +109,12 @@ export class PatientHubShell implements OnInit {
   ready = signal(false);
 
   age = computed(() => formatAge(this.store.patient()?.dateOfBirth));
+  // Empty until the patient lands, which matches no palette rule and leaves the neutral fallback
+  // in place — a header that guessed a color and then changed it would teach the wrong thing.
+  accentClass = computed(() => {
+    const token = this.store.patient()?.accentColor;
+    return token ? `accent-${token}` : '';
+  });
   weightStale = computed(() => !!this.store.patient() && isWeightStale(this.store.patient()!.latestWeightRecordedAt));
   weightLabel = computed(() => {
     const days = weightAgeDays(this.store.patient()?.latestWeightRecordedAt);

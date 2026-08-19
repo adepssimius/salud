@@ -93,8 +93,35 @@
 `file_assets.bucket` records which store a blob was written to (the bucket name under `s3`, the
 literal `local` otherwise), but **reads always resolve through the currently configured driver** —
 nothing dual-reads on that column. Flipping `FILE_STORAGE_DRIVER` on a populated instance without
-copying the blobs across leaves every existing attachment unreadable. There is no
-`migrate:local-to-s3` tool today; the column exists so one could be written.
+copying the blobs across leaves every existing attachment unreadable: the rows survive, the bytes
+do not move, and every photo in the timeline and the ER Brief becomes a broken image.
+
+`yarn migrate:attachments` (`apps/api/src/tools/migrate-attachments.ts`) is the supported way
+across, in **either** direction — local→s3, s3→local, or s3→s3 between two buckets. Like
+`migrate:sqlite-to-postgres`, it exists because both backends are first-class targets, so
+"outgrew the local volume" is a path other self-hosters walk too, not just this cluster's cutover.
+
+- The **destination** is described by the ordinary storage variables — the same ones the API will
+  run with afterwards. The **source** is described by `MIGRATE_SOURCE_*`, parsed by the same
+  resolver so both ends get identical validation. It refuses to run if the two describe the same
+  store, which would otherwise report a clean success having moved nothing.
+- Work is enumerated from `file_assets`, not from a directory listing: the table is the
+  authoritative list of what the app will try to read.
+- Every blob is verified by reading it *back out of the destination* and comparing size and
+  SHA-256. Each row's `bucket` is stamped as its blob lands, which makes an interrupted run
+  resumable — a re-run skips what already moved.
+- It exits non-zero if any blob failed or was missing at the source, and says so loudly. A partial
+  copy must not be mistaken for a completed migration; the driver stays on the old value until the
+  run is clean.
+- It **never deletes from the source**. The old copy is the rollback path, and reclaiming that
+  space is a separate, deliberate act.
+- `--dry-run` reports what would move; `--force` re-copies rows already stamped with the
+  destination.
+
+The tool ships in the api image alongside `main.js` (`apps/api/webpack.config.js` →
+`additionalEntryPoints`), so a containerised deployment can run it as a Job that mounts the old
+volume — `node migrate-attachments.js` — rather than needing a checkout. `deployment.md` →
+"Moving attachments to object storage" has the ordered runbook.
 
 ## Local storage location
 - The local storage should be in a /data directory when this application is built into a docker container by default
