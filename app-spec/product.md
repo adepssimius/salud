@@ -90,9 +90,14 @@ Load-bearing; every feature decision traces back to one of these.
      observation crossing a threshold. A trip immediately resurfaces the instruction as a card and
      is remembered as an event on the timeline.
 9. **ER Brief** (data-model.md/api.md/er-brief.md; requirements doc §5.7)
-   - A generated handoff artifact aggregating patient identity/weight/code-status/danger-reactions/
-     active-conditions header plus a chronological episode body, active-schedule med situation
-     (with mg/kg), prior episodes under the same condition, and atypical-dose history.
+   - A generated handoff artifact aggregating patient identity/weight/code-status/care-documents/
+     danger-reactions/active-conditions header plus a chronological episode body, active-schedule
+     med situation (with mg/kg), prior episodes under the same condition, and atypical-dose history.
+   - **Care documents** (§4.1): living will, advance directive, and medical power of attorney as
+     patient-level standing state — per kind, explicitly tri-state (not recorded / stated "none" /
+     on file), attributed and dated like code status, surfaced in the brief header, and frozen —
+     file bytes included — into shared snapshots. "None" and "not recorded" are different facts
+     and both are communicated; neither is ever inferred (P6).
    - Printable one-pager, an arm's-length "flash view," and a time-limited, unauthenticated
      frozen-snapshot link — an export, not an account (P4).
    - Strictly data, never derived conclusions (P6) — enforced by the response shape itself.

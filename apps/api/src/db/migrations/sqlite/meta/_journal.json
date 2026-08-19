@@ -57,6 +57,13 @@
       "when": 1787106730661,
       "tag": "0007_awesome_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787113055187,
+      "tag": "0008_colorful_blink",
+      "breakpoints": true
     }
   ]
 }

@@ -51,6 +51,11 @@ nothing about how sick anyone is.
       "patient": { "id": "...", "fullName": "...", "dateOfBirth": "...", "sexAtBirth": "...", "ageYears": 7, "ageMonths": 91 },
       "latestWeight": { "kg": 24.3, "recordedAt": 1234567890 },
       "codeStatus": { "value": "Full code", "setByUserId": "...", "setByName": "...", "setAt": 1234000000 },
+      "careDocuments": {
+        "livingWill": null,
+        "advanceDirective": { "status": "none", "setByUserId": "...", "setByName": "...", "setAt": 1230000000 },
+        "medicalPoa": { "status": "on_file", "fileId": "...", "originalName": "medical-poa-2025.pdf", "contentType": "application/pdf", "holderName": "...", "holderPhone": "...", "setByUserId": "...", "setByName": "...", "setAt": 1230000000 }
+      },
       "dangerReactions": [ { "...AdverseReaction, severity=danger only" } ],
       "activeConditions": [ { "id": "...", "name": "ALL treatment", "diagnosisText": "...", "baselines": [...], "devices": [...], "contacts": [...] } ],
       "protocolFiredReason": {
@@ -74,12 +79,24 @@ nothing about how sick anyone is.
     }
   }
   ```
-- **Header** (F-7.1–F-7.5) — what a team acts on before reading anything else:
+- **Header** (F-7.1–F-7.5, plus §4.1's care documents) — what a team acts on before reading
+  anything else:
   - `patient.ageYears`/`ageMonths` computed from `dateOfBirth` as of now.
   - `latestWeight` is `null`, not omitted, when no weight is on file — the brief is explicit about
     missing data rather than silent about it (the ER re-doses everything off this number, F-7.1).
   - `codeStatus` is `null` when never set — F-7.2 is explicit that the brief should make an unset
     code status impossible to miss, not paper over it with a default.
+  - `careDocuments` (§4.1; data-model.md → `CareDocumentStatement`): living will, advance
+    directive, medical power of attorney. All three keys are always present, each the current
+    statement or `null` when never recorded — the tri-state is the contract. `null` means "not
+    recorded" and renders as exactly that (the same make-the-gap-impossible-to-miss rule as an
+    unset code status); `status: 'none'` is an affirmative caregiver statement that no such
+    document exists; `'on_file'` carries the file reference, served via `GET /api/files/:id` on
+    the authenticated brief and via the token file route on a shared snapshot (see "Formats").
+    `setByName` is resolved server-side like `codeStatus`'s, and the client renders each
+    statement's age — a two-year-old "none" should look as stale as a two-year-old code status.
+    P6 holds throughout: "the family stated none exists" is a stored fact, not an inference from
+    absence — which is precisely why absence (`null`) must render differently from it.
   - `dangerReactions`: every `AdverseReaction` with `severity: 'danger'` on file, regardless of
     scope type (F-7.3) — allergies belong in the header, not buried in the body.
   - `activeConditions`: every `Condition` with `status: 'active'` for the patient, full baselines/
@@ -140,6 +157,26 @@ nothing about how sick anyone is.
       and stays true when someone reads it three days later. The consequence for the client is that
       it must label the window from those two numbers rather than from the phrase "the last 72
       hours" — a shared brief read on day 3 that still says "last 72 hours" is simply lying.
+    - The snapshot also records the `FileAsset` ids referenced by `header.careDocuments` as
+      `fileIds` at creation (data-model.md → `ErBriefSnapshot`), and
+      `GET /api/er-brief/shared/:token/files/:fileId` — unauthenticated, in
+      `ErBriefPublicController` — streams those files and only those. An id not frozen into this
+      snapshot 404s `SNAPSHOT_NOT_FOUND`, identically to a bad or expired token: one code for the
+      whole route, so holding a valid token gives no probing signal either. The bytes are frozen
+      by construction — `FileAsset` blobs are immutable (data-model.md → Data integrity rules), so
+      a later superseding upload is a different id and never reachable through an old token. The
+      route carries the same hardened CSP as `GET /api/files/:id`. Snapshots from before `fileIds`
+      existed carry `null` there and simply have no token-readable files.
+    - **Document staleness is stated, never checked.** Every care-document line the shared page
+      renders carries a fixed caveat built from frozen values — "as on file ⟨frozenAt date⟩ — may
+      have been superseded; ask the family for a current link" — alongside the statement's own
+      `setAt` date. There is deliberately **no** live has-this-been-superseded lookup at read
+      time. Three reasons, in rising order: it would break the frozen contract (the `eventScope`
+      shim below stays the only read-time boundary); it would leak a bit of live record state
+      through an unauthenticated link; and — decisive — a conditional warning's *silence* would
+      read as "still current", a promise the app cannot make, since the record can lag the
+      family's reality. "May have been superseded" is the only claim the system can stand behind,
+      so it is made unconditionally — a property of the medium, not of the patient (P6).
     - Snapshots frozen before `eventScope` existed do not carry the field. `GET /api/er-brief/shared/:token`
       synthesizes it on read — the episode shape when the payload has an episode, the recent shape
       derived from `frozenAt` otherwise. That shim lives at exactly one boundary so the field can stay
@@ -185,6 +222,17 @@ nothing about how sick anyone is.
 - Both modes carry a **confident** empty state rather than a blank section — "No events recorded for
   this episode." or "Nothing logged in the last 72 hours." A blank section is ambiguous between
   "nothing happened" and "the app doesn't know".
+- The header's care-document lines are the same confident-state idea applied to documents: all
+  three kinds render, always, as one line each — "Living will: not recorded", "Advance directive:
+  none — stated by Mom, Mar 2025", "Medical POA: on file (uploaded Mar 2025)" — with the file one
+  tap away when on file, and the holder's name and phone on the PoA line when recorded. Never a
+  conditionally-absent section: at triage, "not recorded" is itself actionable ("ask the family").
+  The **flash view includes these three lines** — whether a directive exists is an arm's-length
+  triage fact. Print keeps them in the header at one line each.
+- **Both print stylesheets** — the authenticated page's and the public page's — end with a fixed
+  footer line: "Generated ⟨date⟩ — verify documents are current." The live page needs no caveat on
+  screen (it *is* current), but paper is the ultimate frozen snapshot, with no expiry at all, and
+  the printout is the copy most likely to be handed to a paramedic.
 - The medication-situation table must not force the page to scroll sideways on a phone. It is the
   screen most likely opened one-handed in a waiting room, and horizontal scroll is where the
   caregiver loses the "next allowed" column. Print keeps the real table — a paramedic reads a
@@ -194,7 +242,10 @@ nothing about how sick anyone is.
   when it was frozen and when it expires, and the same scope line read from the frozen values. A 404
   from the API renders as "This link has expired or doesn't exist," without further detail (same
   non-disclosure the API itself practices). It gets the same table treatment and its own print
-  stylesheet — it is the copy an actual clinician is most likely to open and print.
+  stylesheet — it is the copy an actual clinician is most likely to open and print. Its
+  care-document lines fetch files through `GET /api/er-brief/shared/:token/files/:fileId` (never
+  the authenticated files route) and each carries the frozen-value caveat from "Formats" above —
+  "as on file ⟨frozenAt date⟩ — may have been superseded; ask the family for a current link".
 
 ## Security
 

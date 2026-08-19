@@ -74,12 +74,14 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
 - Observations (multi-entry, weight denormalizes onto `patients.latest_weight_kg`), interventions,
   episodes, conditions + protocols, medications/embodiments/guidelines, intervention schedules
   (incl. `POST /api/schedules/:id/log`), adverse reactions, advisories, revisions, files, dosing
-  engine (`POST .../dose-checks`), timeline + dashboard, What's-New, ER Brief + frozen snapshots.
+  engine (`POST .../dose-checks`), timeline + dashboard, What's-New, ER Brief + frozen snapshots,
+  care documents (living will / advance directive / medical PoA).
 - `yarn seed:catalog` seeds a starter medication catalog; without it every dose-guidance feature is
   inert, since the catalog starts empty.
 - Web: auth, profile, patient detail + care team, new-observation/intervention, dashboard, the
   journal (attributed feed + collapsible chart + the since-you-last-looked marker, which replaced
-  the What's-New page), episodes, conditions, schedules, medications, ER Brief + `/brief/:token`.
+  the What's-New page), episodes, conditions, schedules, medications, ER Brief + `/brief/:token`,
+  the care-documents card in the hub's Settings tab.
 
 **Gaps worth knowing**
 - **Adverse reactions have no web UI** — `POST|GET /api/patients/:id/reactions` works and drives the
@@ -87,6 +89,14 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
 - `apps/api/src/app/api.spec.ts` is a 30-entry `test.todo` plan mirroring the spec — a useful
   checklist of what "done" means per area, and still largely unconverted.
 - `medications.brandNames` exists in `schema.ts` and is searched by `GET /api/medications?q=`.
+- `care_document_statements` is **append-only and ordered by `seq`, never by `set_at`** — living
+  will / advance directive / medical PoA, each a tri-state (no row = not recorded, `status:'none'`
+  = an affirmative family statement, `'on_file'` = a `FileAsset`). SQLite's second-resolution
+  timestamps tie when two statements land in the same second, so the ordinal is what decides which
+  statement is current; don't "simplify" it back to a timestamp sort. ER Brief snapshots freeze the
+  referenced file ids into `er_brief_snapshots.file_ids`, which is what
+  `GET /api/er-brief/shared/:token/files/:fileId` authorizes against (the second unauthenticated
+  route). See `app-spec/data-model.md` → `CareDocumentStatement` and `er-brief.md` → Formats.
 
 ## Conventions to match
 

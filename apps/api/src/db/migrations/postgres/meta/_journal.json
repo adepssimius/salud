@@ -15,6 +15,13 @@
       "when": 1787106736303,
       "tag": "0001_numerous_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787113056164,
+      "tag": "0002_elite_expediter",
+      "breakpoints": true
     }
   ]
 }

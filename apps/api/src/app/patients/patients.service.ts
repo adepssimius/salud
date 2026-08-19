@@ -5,6 +5,7 @@ import { DatabaseService } from '../persistence/database.service';
 import {
   advisories,
   adverseReactions,
+  careDocumentStatements,
   careTeamMemberships,
   conditions,
   episodes,
@@ -165,6 +166,8 @@ export class PatientsService {
     await tx.delete(episodes).where(eq(episodes.patientId, id));
     await tx.delete(protocols).where(inArray(protocols.conditionId, conditionIds));
     await tx.delete(conditions).where(eq(conditions.patientId, id));
+    // Before fileAssets: a care-document statement holds a real FK to the file it names.
+    await tx.delete(careDocumentStatements).where(eq(careDocumentStatements.patientId, id));
     await tx.delete(fileAssets).where(eq(fileAssets.patientId, id));
     await tx.delete(careTeamMemberships).where(eq(careTeamMemberships.patientId, id));
     await tx.delete(patients).where(eq(patients.id, id));

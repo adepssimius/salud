@@ -1,0 +1,45 @@
+meta {
+  name: Set On File
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/care-documents/medical_poa
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:json {
+  {
+    "status": "on_file",
+    "fileId": "{{fileId}}",
+    "holderName": "Aunt Ada",
+    "holderPhone": "555-0100"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Run files/Upload File first to populate {{fileId}}. `holderName`/`holderPhone` are accepted only
+  on medical_poa and rejected (400) on the other two kinds. The file must belong to this patient,
+  or the answer is 400 CARE_DOCUMENT_FILE_NOT_FOUND.
+}

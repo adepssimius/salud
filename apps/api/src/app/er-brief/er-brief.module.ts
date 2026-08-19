@@ -8,9 +8,18 @@ import { EpisodesModule } from '../episodes/episodes.module';
 import { ConditionsModule } from '../conditions/conditions.module';
 import { SchedulesModule } from '../schedules/schedules.module';
 import { TimelineModule } from '../timeline/timeline.module';
+import { CareDocumentsModule } from '../care-documents/care-documents.module';
 
 @Module({
-  imports: [PersistenceModule, PatientsModule, EpisodesModule, ConditionsModule, SchedulesModule, TimelineModule],
+  imports: [
+    PersistenceModule,
+    PatientsModule,
+    EpisodesModule,
+    ConditionsModule,
+    SchedulesModule,
+    TimelineModule,
+    CareDocumentsModule,
+  ],
   providers: [ErBriefService],
   controllers: [ErBriefController, ErBriefPublicController],
 })
