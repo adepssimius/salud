@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, gte, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
   advisories,
@@ -28,7 +28,7 @@ import {
 } from '../whats-new/whats-new-window';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
-import { PatientAccentColor, TimelineRecordedBy } from '@salud/shared/types';
+import { PatientAccentColor, TemperatureMethod, TimelineRecordedBy } from '@salud/shared/types';
 
 const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
@@ -40,6 +40,46 @@ const LAST_DOSE_WINDOW_HOURS = 24;
 // Two nights of readings is what makes a fever curve legible; a hard SQL cutoff again, for the same
 // reason as above.
 const RECENT_TEMPERATURE_WINDOW_HOURS = 48;
+// How far back the Temp quick action's method prefill looks, in readings rather than hours: the
+// method is a per-patient habit, so the last known-method reading decides however old it is — but
+// `method` lives inside the metadata JSON text, so the scan is bounded by row count instead.
+const LAST_TEMP_METHOD_LOOKBACK_ROWS = 25;
+
+/** What both dose-summary builders capture per (patient, medication) before projection. */
+interface DoseSummarySource {
+  performedAtTs: number;
+  nextAllowedAt: number | null;
+  isAtypical: boolean;
+  embodimentId: string | null;
+  amountMg: number | null;
+  amountMl: number | null;
+}
+
+function doseSummarySource(performedAtTs: number, metadata: any): DoseSummarySource {
+  return {
+    performedAtTs,
+    nextAllowedAt: metadata.nextAllowedAt ?? null,
+    isAtypical: !!metadata.isAtypical,
+    embodimentId: metadata.medicationEmbodimentId ?? null,
+    amountMg: metadata.amountMg ?? null,
+    amountMl: metadata.amountMl ?? null,
+  };
+}
+
+// medicationName and lastEmbodimentLabel are filled in by getDashboard from combined lookups.
+function projectDoseSummary(medicationId: string, v: DoseSummarySource) {
+  return {
+    medicationId,
+    medicationName: '',
+    lastDoseAt: v.performedAtTs,
+    nextAllowedAt: v.nextAllowedAt,
+    isAtypicalLastDose: v.isAtypical,
+    lastEmbodimentId: v.embodimentId,
+    lastEmbodimentLabel: null as string | null,
+    lastAmountMg: v.amountMg,
+    lastAmountMl: v.amountMl,
+  };
+}
 
 @Injectable()
 export class TimelineService {
@@ -278,6 +318,51 @@ export class TimelineService {
     return new Map(rows.map((r: any) => [r.id, r.name]));
   }
 
+  private async embodimentLabels(embodimentIds: string[]): Promise<Map<string, string>> {
+    if (!embodimentIds.length) return new Map();
+    const db = this.db.db as any;
+    const rows = await db
+      .select()
+      .from(medicationEmbodiments)
+      .where(inArray(medicationEmbodiments.id, embodimentIds));
+    return new Map(rows.map((r: any) => [r.id, r.label]));
+  }
+
+  /**
+   * The Temp quick action's method prefill (api.md → GET /api/dashboard → recentTemperatures):
+   * per patient, the method of the most recent temperature entry whose method is known. `unknown`
+   * rows are skipped, and the lookup deliberately ignores the 48h sparkline window and episode
+   * boundaries — the method is a per-patient habit (tympanic for one child, rectal for the baby),
+   * not an episode property.
+   *
+   * One ordered query per patient rather than one batched query: `method` lives inside the
+   * metadata JSON text, so SQL can't select on it, and the row-count LIMIT is what keeps this
+   * proportional. The caller passes sick patients only, which in a household is a handful.
+   */
+  private async lastTempMethods(patientIds: string[]): Promise<Map<string, TemperatureMethod | null>> {
+    const db = this.db.db as any;
+    const result = new Map<string, TemperatureMethod | null>();
+    for (const patientId of patientIds) {
+      const rows = await db
+        .select({ metadata: observationEntries.metadata })
+        .from(observationEntries)
+        .innerJoin(observations, eq(observationEntries.observationId, observations.id))
+        .where(and(eq(observations.patientId, patientId), eq(observationEntries.type, 'temperature')))
+        .orderBy(desc(observations.observedAt))
+        .limit(LAST_TEMP_METHOD_LOOKBACK_ROWS);
+      let method: TemperatureMethod | null = null;
+      for (const row of rows) {
+        const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+        if (typeof metadata.method === 'string' && metadata.method !== 'unknown') {
+          method = metadata.method;
+          break;
+        }
+      }
+      result.set(patientId, method);
+    }
+    return result;
+  }
+
   // Patient-scoped and episode-agnostic, unlike buildActiveEpisodeSummary's `medications` — a dose
   // logged with no episode (the common 3 AM case) has no episodes_events_pivot row and would
   // otherwise be invisible on the whole dashboard. Returns one row per patient, every time,
@@ -303,10 +388,7 @@ export class TimelineService {
         ),
       );
 
-    const byPatientMed: Record<
-      string,
-      Record<string, { performedAtTs: number; nextAllowedAt: number | null; isAtypical: boolean }>
-    > = {};
+    const byPatientMed: Record<string, Record<string, DoseSummarySource>> = {};
     for (const row of rows) {
       const metadata = row.metadata ? JSON.parse(row.metadata) : {};
       if (!metadata.medicationId) continue;
@@ -314,24 +396,14 @@ export class TimelineService {
       const byMed = (byPatientMed[row.patientId] ??= {});
       const existing = byMed[metadata.medicationId];
       if (!existing || performedAtTs > existing.performedAtTs) {
-        byMed[metadata.medicationId] = {
-          performedAtTs,
-          nextAllowedAt: metadata.nextAllowedAt ?? null,
-          isAtypical: !!metadata.isAtypical,
-        };
+        byMed[metadata.medicationId] = doseSummarySource(performedAtTs, metadata);
       }
     }
 
     return accessible.map((p) => {
       const byMed = byPatientMed[p.id] ?? {};
       const doses = Object.entries(byMed)
-        .map(([medicationId, v]) => ({
-          medicationId,
-          medicationName: '', // filled in by getDashboard from the combined name map
-          lastDoseAt: v.performedAtTs,
-          nextAllowedAt: v.nextAllowedAt,
-          isAtypicalLastDose: v.isAtypical,
-        }))
+        .map(([medicationId, v]) => projectDoseSummary(medicationId, v))
         .sort((a, b) => b.lastDoseAt - a.lastDoseAt);
       return { patientId: p.id, patientName: p.fullName, accentColor: p.accentColor, doses };
     });
@@ -449,7 +521,7 @@ export class TimelineService {
     let medicationsSummary: any[] = [];
     if (intIds.length) {
       const intRows = await db.select().from(interventions).where(inArray(interventions.id, intIds));
-      const byMed: Record<string, { performedAtTs: number; nextAllowedAt: number | null; isAtypical: boolean }> = {};
+      const byMed: Record<string, DoseSummarySource> = {};
       for (const row of intRows) {
         if (row.type !== 'medication_dose') continue;
         const metadata = row.metadata ? JSON.parse(row.metadata) : {};
@@ -457,20 +529,10 @@ export class TimelineService {
         const performedAtTs = normalizeTs(row.performedAt) ?? 0;
         const existing = byMed[metadata.medicationId];
         if (!existing || performedAtTs > existing.performedAtTs) {
-          byMed[metadata.medicationId] = {
-            performedAtTs,
-            nextAllowedAt: metadata.nextAllowedAt ?? null,
-            isAtypical: !!metadata.isAtypical,
-          };
+          byMed[metadata.medicationId] = doseSummarySource(performedAtTs, metadata);
         }
       }
-      medicationsSummary = Object.entries(byMed).map(([medicationId, v]) => ({
-        medicationId,
-        medicationName: '', // filled in by getDashboard from the combined name map
-        lastDoseAt: v.performedAtTs,
-        nextAllowedAt: v.nextAllowedAt,
-        isAtypicalLastDose: v.isAtypical,
-      }));
+      medicationsSummary = Object.entries(byMed).map(([medicationId, v]) => projectDoseSummary(medicationId, v));
     }
 
     let startedAt: number | null = null;
@@ -538,8 +600,13 @@ export class TimelineService {
       byPatient.get(row.patientId)?.push({ timestamp, valueC });
     }
 
+    // The method prefill rides on the same rows: same patient set, same consumer (the sick card's
+    // Temp quick action), and the alternative is a second per-patient array in the payload.
+    const methodByPatient = await this.lastTempMethods(patientIds);
+
     return patientIds.map((patientId) => ({
       patientId,
+      lastMethod: methodByPatient.get(patientId) ?? null,
       points: (byPatient.get(patientId) ?? []).sort((a, b) => a.timestamp - b.timestamp),
     }));
   }
@@ -583,6 +650,28 @@ export class TimelineService {
       ...p,
       doses: p.doses.map((d: any) => ({ ...d, medicationName: nameById.get(d.medicationId) ?? 'unknown' })),
     }));
+
+    // Labels for the repeat-dose prefill button ("↻ 160 mg · Children's syrup") — one combined
+    // lookup serving both arrays, same shape as the medication-name fill above. An embodiment
+    // deleted since the dose keeps a null label; the button still prefills the rest.
+    const embodimentIds = new Set<string>();
+    for (const ep of activeEpisodes) {
+      for (const m of ep.medications) if (m.lastEmbodimentId) embodimentIds.add(m.lastEmbodimentId);
+    }
+    for (const p of lastDoses) {
+      for (const d of p.doses) if (d.lastEmbodimentId) embodimentIds.add(d.lastEmbodimentId);
+    }
+    const embodimentLabelById = await this.embodimentLabels(Array.from(embodimentIds));
+    for (const ep of activeEpisodes) {
+      for (const m of ep.medications) {
+        m.lastEmbodimentLabel = m.lastEmbodimentId ? (embodimentLabelById.get(m.lastEmbodimentId) ?? null) : null;
+      }
+    }
+    for (const p of lastDoses) {
+      for (const d of p.doses) {
+        d.lastEmbodimentLabel = d.lastEmbodimentId ? (embodimentLabelById.get(d.lastEmbodimentId) ?? null) : null;
+      }
+    }
 
     // Sick patients only, and derived from activeEpisodes rather than re-queried: whatever counts as
     // "has an active episode" for the rest of this payload has to be the same set here, or a sick

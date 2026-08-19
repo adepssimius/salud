@@ -181,6 +181,23 @@ follows the household's state instead of rendering one fixed stack of sections:
   a muted suffix), a 48-hour temperature sparkline (from the dashboard payload's
   `recentTemperatures` — Home stays a single request, as in v1), atypical-dose flags, and inline
   Temp/Dose quick actions scoped to that patient.
+- **Repeat a dose straight from the card.** Every medication line on a sick card carries a repeat
+  button labeled with what it will prefill ("↻ 160 mg · Children's syrup"): one tap opens the
+  compact dose form with medication, embodiment and amount prefilled from **this patient's** most
+  recent dose of that medication — the same handoff Quick Log's recents cards make, so it is a
+  prefill and nothing more: dose-checks still run, guidance cards, advisory banners and the danger
+  interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩". The prefill
+  comes from the dashboard payload itself (`lastDoses[].doses` and `activeEpisodes[].medications`
+  carry `lastEmbodimentId`/`lastEmbodimentLabel`/`lastAmountMg`/`lastAmountMl` — api.md →
+  `GET /api/dashboard`), so Home stays a single request, and it is per-patient by construction
+  because each card's medications already are (→ "Patient identity"). With concurrent medications
+  (acetaminophen + ibuprofen on an uncontrolled fever), each line has its own button.
+- **Temp is one tap to the number.** The card's Temp action opens the compact temperature form
+  with the measurement method preselected from this patient's most recent temperature reading
+  whose method is known — across episodes, because the method is a per-patient habit (tympanic
+  for one child, rectal for the baby), not an episode property. The method select stays on the
+  form and editable; a history of `unknown` methods prefills nothing and the form defaults to
+  `unknown` as before. Backed by `lastMethod` on the payload's `recentTemperatures` rows.
 - **The sparkline is readable as a measurement, not just a shape.** A bare curve on an
   auto-scaled axis answers neither "how high is it" nor "is that high" — the same drawing serves a
   0.2° wobble and a 3° spike. So it carries two things beyond the line:

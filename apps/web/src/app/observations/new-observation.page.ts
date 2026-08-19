@@ -9,7 +9,16 @@ import { EntryDraft, EntryMetadataFormComponent } from './entry-metadata-form.co
 import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { entrySummary, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { Advisory, Observation, ObservationType, Patient, TimelineResponse, UnitPreference } from '@salud/shared/types';
+import {
+  Advisory,
+  Observation,
+  ObservationType,
+  Patient,
+  TEMPERATURE_METHODS,
+  TemperatureMethod,
+  TimelineResponse,
+  UnitPreference,
+} from '@salud/shared/types';
 
 /** The verbs Quick Log can hand off here, and the heading each one gets. */
 const VERB_HEADINGS: Record<string, string> = {
@@ -103,6 +112,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
           [patientId]="form.getRawValue().patientId"
           [framingHintFileId]="framingHintFileId()"
           [lockedType]="lockedEntryType()"
+          [initialTempMethod]="initialTempMethod()"
           (typeChange)="onEntryTypeChange($event)"
           (entryAdded)="addEntry($event)"
         ></app-entry-metadata-form>
@@ -196,6 +206,8 @@ export class NewObservationPage implements OnInit {
   /** Set by Quick Log: one verb, one entry type, no patient dropdown. */
   compact = signal(false);
   lockedEntryType = signal<ObservationType | null>(null);
+  /** Set by Home's Temp quick action: the patient's habitual measurement method, still editable. */
+  initialTempMethod = signal<TemperatureMethod | null>(null);
   saving = signal(false);
   error = signal<string | null>(null);
   entries = signal<EntryDraft[]>([]);
@@ -256,6 +268,14 @@ export class NewObservationPage implements OnInit {
       this.entryType = entryTypeParam as ObservationType;
     }
     this.compact.set(params.get('compact') === '1' && !!patientIdParam);
+
+    // Home's Temp action passes the patient's last known method (api.md → GET /api/dashboard →
+    // recentTemperatures.lastMethod). Validated against the enum, and 'unknown' never prefills —
+    // that is the form's own default, not a habit worth asserting.
+    const methodParam = params.get('method');
+    if (methodParam && methodParam !== 'unknown' && TEMPERATURE_METHODS.includes(methodParam as TemperatureMethod)) {
+      this.initialTempMethod.set(methodParam as TemperatureMethod);
+    }
 
     const user = this.auth.user();
     if (!user && this.auth.token) {

@@ -539,14 +539,98 @@ describe('DashboardPage', () => {
         expect(card.bands[0].high).toBeCloseTo(99, 0);
       });
 
-      it('offers Temp and Dose quick actions scoped to that patient', () => {
-        const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+      it('offers Temp and Dose quick actions scoped to that patient, landing on the compact forms', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', lastMethod: 'tympanic', points: [] }],
+        });
         const comp = fixture.componentInstance;
 
-        comp.quickTemp('p1');
-        expect(routerMock.navigate).toHaveBeenCalledWith(['/observations/new'], { queryParams: { patientId: 'p1' } });
+        // Temp carries the patient's habitual method (api.md → recentTemperatures.lastMethod).
+        comp.quickTemp(comp.sickCards()[0]);
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/observations/new'], {
+          queryParams: { patientId: 'p1', entryType: 'temperature', compact: '1', method: 'tympanic' },
+        });
         comp.quickDose('p1');
-        expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], { queryParams: { patientId: 'p1' } });
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], {
+          queryParams: { patientId: 'p1', type: 'medication_dose', compact: '1' },
+        });
+      });
+
+      it('omits the method param when the patient has no known-method reading — the form defaults to unknown', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', lastMethod: null, points: [] }],
+        });
+        const comp = fixture.componentInstance;
+
+        comp.quickTemp(comp.sickCards()[0]);
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/observations/new'], {
+          queryParams: { patientId: 'p1', entryType: 'temperature', compact: '1' },
+        });
+      });
+
+      // "Same as last time" from the card (frontend.md → Home). One button per active medication —
+      // the tylenol+ibuprofen alternation is the design case — handing the dose form the same
+      // prefill contract Quick Log's recents cards use. It is a prefill only: dose-checks and the
+      // review step still happen on the form.
+      describe('repeat dose', () => {
+        const prefilled = (over: Record<string, unknown> = {}) =>
+          dose({
+            lastEmbodimentId: 'emb1',
+            lastEmbodimentLabel: "Children's syrup",
+            lastAmountMg: 160,
+            lastAmountMl: 5,
+            ...over,
+          });
+
+        it('renders one repeat button per medication, labeled with what it will prefill', () => {
+          const fixture = render({
+            activeEpisodes: [
+              episode({
+                medications: [
+                  prefilled(),
+                  prefilled({ medicationId: 'm2', medicationName: 'Tylenol', lastAmountMl: null }),
+                ],
+              }),
+            ],
+          });
+          const buttons = Array.from(
+            fixture.nativeElement.querySelectorAll('.dose-block button'),
+          ) as HTMLElement[];
+          expect(buttons.length).toBe(2);
+          const labels = buttons.map((b) => b.textContent!.replace(/\s+/g, ' ').trim());
+          expect(labels).toContain("↻ 160 mg · 5 mL · Children's syrup");
+          expect(labels).toContain("↻ 160 mg · Children's syrup");
+        });
+
+        it('navigates with the same prefill contract Quick Log recents hand the dose form', () => {
+          const fixture = render({ activeEpisodes: [episode({ medications: [prefilled({ lastAmountMl: null })] })] });
+          const comp = fixture.componentInstance;
+
+          comp.repeatDose('p1', comp.sickCards()[0].medications[0]);
+          expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], {
+            queryParams: {
+              patientId: 'p1',
+              type: 'medication_dose',
+              compact: '1',
+              medicationId: 'm1',
+              embodimentId: 'emb1',
+              amountMg: '160',
+            },
+          });
+        });
+
+        it('still offers a plain repeat when the last dose carries no amounts or embodiment', () => {
+          const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+          const comp = fixture.componentInstance;
+          expect(fixture.nativeElement.textContent).toContain('Repeat dose');
+
+          comp.repeatDose('p1', comp.sickCards()[0].medications[0]);
+          expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], {
+            queryParams: { patientId: 'p1', type: 'medication_dose', compact: '1', medicationId: 'm1' },
+          });
+        });
       });
 
       it('drops the separate Active episodes list — the sick cards are that list now', () => {

@@ -23,6 +23,17 @@ export type CareTeamRole =
   | 'babysitter'
   | 'other';
 
+/** How a temperature was taken (data-model.md → "Observation entry structured metadata"). */
+export type TemperatureMethod = 'oral' | 'tympanic' | 'axillary' | 'rectal' | 'temporal' | 'unknown';
+export const TEMPERATURE_METHODS: readonly TemperatureMethod[] = [
+  'oral',
+  'tympanic',
+  'axillary',
+  'rectal',
+  'temporal',
+  'unknown',
+];
+
 export type ObservationType =
   | 'temperature'
   | 'heart_rate'
@@ -812,6 +823,15 @@ export interface DashboardMedicationSummary {
   lastDoseAt: number; // epoch seconds
   nextAllowedAt: number | null;
   isAtypicalLastDose: boolean;
+  /**
+   * The sick card's one-tap repeat-dose prefill, mirroring RecentMedication's `last*` fields —
+   * read from the same dose metadata this row is built from, so Home stays a single request
+   * (api.md → GET /api/dashboard). Each is null when the dose's metadata lacks it.
+   */
+  lastEmbodimentId: string | null;
+  lastEmbodimentLabel: string | null;
+  lastAmountMg: number | null;
+  lastAmountMl: number | null;
 }
 
 /** Most recent dose of one medication for one patient, inside the 24-hour window. */
@@ -822,6 +842,14 @@ export interface DashboardLastDose {
   /** Frozen at log time, not recomputed. null = no guideline supplied an interval. */
   nextAllowedAt: number | null;
   isAtypicalLastDose: boolean;
+  /**
+   * Repeat-dose prefill, exactly as on DashboardMedicationSummary — the sick card merges the two
+   * arrays and either side can win the merge, so both carry it.
+   */
+  lastEmbodimentId: string | null;
+  lastEmbodimentLabel: string | null;
+  lastAmountMg: number | null;
+  lastAmountMl: number | null;
 }
 
 /**
@@ -924,6 +952,14 @@ export interface DashboardTemperaturePoint {
 
 export interface DashboardPatientTemperatures {
   patientId: string;
+  /**
+   * The method of this patient's most recent temperature entry whose method is known — `unknown`
+   * entries are skipped, and the lookup ignores both the 48h window and episode boundaries: the
+   * measurement method is a per-patient habit (tympanic for one child, rectal for the baby), not
+   * an episode property. Seeds the Temp quick action's method select, which stays editable — a
+   * prefill, never an assertion. Null when no entry with a known method exists.
+   */
+  lastMethod: TemperatureMethod | null;
   /** Chronological, oldest first — the order a sparkline is drawn in. */
   points: DashboardTemperaturePoint[];
 }
