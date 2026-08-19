@@ -833,6 +833,23 @@ export interface DashboardShoppingListItem {
   runningLowFlaggedAt: number | null;
 }
 
+/**
+ * One 48h temperature reading for the Home sick card's sparkline. Canonical °C regardless of the
+ * unit the thermometer was read in — temperature is the one entry type stored as entered
+ * (data-model.md), so the server converts here and the client converts again to the viewer's
+ * preference at read time, like every other consumer.
+ */
+export interface DashboardTemperaturePoint {
+  timestamp: number; // epoch seconds
+  valueC: number;
+}
+
+export interface DashboardPatientTemperatures {
+  patientId: string;
+  /** Chronological, oldest first — the order a sparkline is drawn in. */
+  points: DashboardTemperaturePoint[];
+}
+
 export interface DashboardPayload {
   lastDoses: DashboardPatientLastDoses[];
   whatsNew: DashboardWhatsNewSummary[];
@@ -840,6 +857,14 @@ export interface DashboardPayload {
   upcomingSchedules: DashboardUpcomingSchedule[];
   shoppingList: DashboardShoppingListItem[];
   unacknowledgedAdvisories: Advisory[];
+  /**
+   * The last 48 hours of temperatures, one row **only for patients with at least one active
+   * episode** (api.md → GET /api/dashboard). Quiet patients render no sparkline, so their rows
+   * would be dead weight. A sick patient with no readings still gets a row with `points: []`.
+   * Exists so the bimodal Home stays a single request instead of fanning out a timeline query per
+   * sick patient.
+   */
+  recentTemperatures: DashboardPatientTemperatures[];
 }
 
 // ER Brief — see app-spec/er-brief.md. P6 is enforced by this shape: no summary/assessment/

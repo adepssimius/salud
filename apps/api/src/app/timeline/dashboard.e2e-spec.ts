@@ -463,4 +463,112 @@ describe('Dashboard (e2e)', () => {
       expect(row.advisoryCount).toBeGreaterThan(0);
     });
   });
+
+  describe('recentTemperatures', () => {
+    // Own patient per test again: this field keys off "has an active episode", and the shared
+    // fixture patient picked one up in the very first test in this file.
+    async function newPatient(name = 'Sparkline Patient') {
+      const res = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: name, dateOfBirth: '2020-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      return res.body.id as string;
+    }
+
+    async function logTemp(
+      pid: string,
+      hoursAgo: number,
+      metadata: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) {
+      return request(app.getHttpServer())
+        .post(`/api/patients/${pid}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
+          entries: [{ type: 'temperature', metadata }],
+          ...extra,
+        })
+        .expect(201);
+    }
+
+    async function temperatureRow(pid: string) {
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return dashboard.body.recentTemperatures.find((r: any) => r.patientId === pid);
+    }
+
+    it('returns 48 hours of readings, oldest first, for a patient with an active episode', async () => {
+      const pid = await newPatient();
+      await logTemp(pid, 3, { value: 38.7, unit: 'C', method: 'oral' }, { startEpisodeName: 'Sparkline Fever' });
+      const later = await logTemp(pid, 1, { value: 39.1, unit: 'C', method: 'oral' });
+
+      const row = await temperatureRow(pid);
+      expect(row).toBeDefined();
+      expect(row.points.length).toBe(2);
+      expect(row.points[0].valueC).toBe(38.7);
+      expect(row.points[1].valueC).toBe(39.1);
+      expect(row.points[1].timestamp).toBe(later.body.observedAt);
+      expect(row.points[0].timestamp).toBeLessThan(row.points[1].timestamp);
+    });
+
+    it('converts a Fahrenheit reading to canonical °C', async () => {
+      const pid = await newPatient();
+      await logTemp(pid, 1, { value: 101.2, unit: 'F', method: 'temporal' }, { startEpisodeName: 'F Fever' });
+
+      const row = await temperatureRow(pid);
+      expect(row.points.length).toBe(1);
+      expect(row.points[0].valueC).toBe(38.4);
+    });
+
+    it('omits patients with no active episode entirely — a quiet patient renders no sparkline', async () => {
+      const pid = await newPatient('Quiet Patient');
+      await logTemp(pid, 1, { value: 37.1, unit: 'C', method: 'oral' }); // no episode
+
+      expect(await temperatureRow(pid)).toBeUndefined();
+    });
+
+    it('applies a hard 48-hour cutoff: excludes a reading from 49h ago, includes one from 47h ago', async () => {
+      const pid = await newPatient();
+      await logTemp(pid, 1, { value: 38.0, unit: 'C', method: 'oral' }, { startEpisodeName: 'Cutoff Fever' });
+      await logTemp(pid, 49, { value: 36.6, unit: 'C', method: 'oral' });
+      await logTemp(pid, 47, { value: 37.9, unit: 'C', method: 'oral' });
+
+      const row = await temperatureRow(pid);
+      expect(row.points.map((p: any) => p.valueC)).toEqual([37.9, 38.0]);
+    });
+
+    it('still returns a row with points: [] for a sick patient with no readings in the window', async () => {
+      const pid = await newPatient();
+      // The episode is started by a non-temperature observation, so there is nothing to plot.
+      await request(app.getHttpServer())
+        .post(`/api/patients/${pid}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date().toISOString(),
+          startEpisodeName: 'No Readings Fever',
+          entries: [{ type: 'pain_score', metadata: { score: 4 } }],
+        })
+        .expect(201);
+
+      const row = await temperatureRow(pid);
+      expect(row).toBeDefined();
+      expect(row.points).toEqual([]);
+    });
+
+    it('never leaks a patient the caller is not on the care team for', async () => {
+      const pid = await newPatient();
+      await logTemp(pid, 1, { value: 39.4, unit: 'C', method: 'oral' }, { startEpisodeName: 'Private Fever' });
+
+      const other = await registerAndLogin(app);
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${other.token}`)
+        .expect(200);
+      expect(dashboard.body.recentTemperatures).toEqual([]);
+    });
+  });
 });
