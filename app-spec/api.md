@@ -609,7 +609,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     model"); the most common dose of all is the 3 AM one logged with no episode at all, and it must
     still reach the dashboard.
   - Response includes:
-    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl } ] } ]`
+    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource } ] } ]`
       — the most recent dose of each distinct medication **in the last 24 hours**, per patient,
       **episode-agnostic**. This is the direct answer to product.md's founding question ("did I
       already give Tylenol?").
@@ -617,6 +617,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
         one-tap repeat-dose prefill (frontend.md → Home): they are read from the same dose
         metadata this row is already built from, so Home stays a single request. Each is `null`
         when the dose's metadata lacks it.
+      - `lastDoseSource` is that dose's `doseSource` verbatim, `'schedule'` included — the payload
+        reports what was recorded and does not editorialize. Degrading `'schedule'` to `'override'`
+        for a repeat logged outside its schedule is the *client's* call at prefill time
+        (frontend.md → Home), because only the client knows it is not carrying the
+        `interventionScheduleId` along.
       - **One entry per accessible patient, always — including patients with `doses: []`.** The
         empty array is the answer, not the absence of one; the client renders it as an explicit
         "nothing given in the last 24 hours" rather than omitting the patient. Do not "optimize"
@@ -650,7 +655,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - The card and the WYWA page are computed at two different request times, so an event landing
         between them can legitimately make the card say 3 and the page show 4. That is staleness, not
         a defect — the definitions are shared in code precisely so a genuine mismatch can't happen.
-    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl }] } ]`
+    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource }] } ]`
       — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
       episode", which the patient-scoped 24h `lastDoses` above deliberately does not. The `last*`
       fields match `lastDoses[].doses` above, same source and same purpose — the sick card merges
@@ -700,6 +705,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     ```json
     [ { "medicationId": "...", "medicationName": "...", "lastDoseAt": 0, "lastAmountMg": 0,
         "lastAmountMl": 0, "lastEmbodimentId": "...", "lastEmbodimentLabel": "...",
+        "lastDoseSource": "weight_based|age_based|override|schedule",
         "nextAllowedAt": 0, "isAtypicalLastDose": false, "onActiveSchedule": false } ]
     ```
   - `last*` fields and `nextAllowedAt` come from this patient's most recent dose of that medication

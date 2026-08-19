@@ -40,8 +40,12 @@ describe('EpisodeAttachmentComponent', () => {
   it('renders the single pre-attached episode as a removable chip', () => {
     const fixture = render([{ id: 'ep1', name: 'Fever – Aug 2026' }], ['ep1']);
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.textContent).toContain('Adding to');
-    expect(el.textContent).toContain('Fever – Aug 2026');
+    // The whole phrase, not its halves: asserting 'Adding to' and the name separately passes
+    // happily on "Adding toFever – Aug 2026", which is what Angular's whitespace collapsing
+    // actually rendered until the &ngsp; in the template.
+    expect(el.querySelector('.pill')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
+      'Adding to Fever – Aug 2026',
+    );
     expect(el.querySelector('.chip-remove')).not.toBeNull();
   });
 

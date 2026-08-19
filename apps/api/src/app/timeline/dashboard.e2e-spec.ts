@@ -98,6 +98,7 @@ describe('Dashboard (e2e)', () => {
     expect(medSummary.lastEmbodimentLabel).toBe('dashboard suspension');
     expect(medSummary.lastAmountMg).toBe(120);
     expect(medSummary.lastAmountMl).toBeNull();
+    expect(medSummary.lastDoseSource).toBe('override');
   });
 
   it('lists upcoming schedules with an overdue flag', async () => {
@@ -293,6 +294,20 @@ describe('Dashboard (e2e)', () => {
       expect(d.lastEmbodimentLabel).toBe('dashboard suspension');
       expect(d.lastAmountMg).toBe(160);
       expect(d.lastAmountMl).toBe(5);
+    });
+
+    // Without this the repeat prefill leaves the form on its `override` default, and every repeat
+    // of a guideline dose is recorded as an ad-hoc deviation and flagged atypical for it.
+    it('reports the dose source that was recorded, verbatim', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 1, { doseSource: 'weight_based', weightKgUsed: 14 });
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const d = dashboard.body.lastDoses.find((p: any) => p.patientId === pid).doses[0];
+      expect(d.lastDoseSource).toBe('weight_based');
     });
   });
 

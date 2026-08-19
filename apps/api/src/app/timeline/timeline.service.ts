@@ -28,7 +28,7 @@ import {
 } from '../whats-new/whats-new-window';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
-import { PatientAccentColor, TemperatureMethod, TimelineRecordedBy } from '@salud/shared/types';
+import { DoseSource, PatientAccentColor, TemperatureMethod, TimelineRecordedBy } from '@salud/shared/types';
 
 const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
@@ -53,6 +53,7 @@ interface DoseSummarySource {
   embodimentId: string | null;
   amountMg: number | null;
   amountMl: number | null;
+  doseSource: DoseSource | null;
 }
 
 function doseSummarySource(performedAtTs: number, metadata: any): DoseSummarySource {
@@ -63,6 +64,9 @@ function doseSummarySource(performedAtTs: number, metadata: any): DoseSummarySou
     embodimentId: metadata.medicationEmbodimentId ?? null,
     amountMg: metadata.amountMg ?? null,
     amountMl: metadata.amountMl ?? null,
+    // Verbatim, 'schedule' included: the payload reports what was recorded. Whether a repeat may
+    // still call itself a scheduled dose is the client's call at prefill time (api.md).
+    doseSource: metadata.doseSource ?? null,
   };
 }
 
@@ -78,6 +82,7 @@ function projectDoseSummary(medicationId: string, v: DoseSummarySource) {
     lastEmbodimentLabel: null as string | null,
     lastAmountMg: v.amountMg,
     lastAmountMl: v.amountMl,
+    lastDoseSource: v.doseSource,
   };
 }
 

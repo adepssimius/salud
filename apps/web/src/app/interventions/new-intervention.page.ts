@@ -11,8 +11,10 @@ import { DangerInterstitialComponent } from '../core/danger-interstitial.compone
 import { errorText } from '../core/error-display';
 import {
   CreateInterventionDto,
+  DOSE_SOURCES,
   DoseCheckDto,
   DoseCheckResult,
+  DoseSource,
   InterventionSchedule,
   InterventionType,
   Medication,
@@ -377,12 +379,16 @@ export class NewInterventionPage implements OnInit {
 
   private scheduleIdParam: string | null = null;
   private patientIdParam: string | null = null;
-  /** "Same as last time", handed over by Quick Log's recents step. A prefill and nothing more. */
+  /**
+   * "Same as last time", handed over by Quick Log's recents step or Home's per-medication repeat
+   * button. A prefill and nothing more.
+   */
   private prefill: {
     medicationId?: string;
     embodimentId?: string;
     amountMg?: number;
     amountMl?: number;
+    doseSource?: DoseSource;
   } | null = null;
 
   patients = signal<Patient[]>([]);
@@ -470,6 +476,7 @@ export class NewInterventionPage implements OnInit {
         embodimentId: params.get('embodimentId') ?? undefined,
         amountMg: amountMg === null ? undefined : Number(amountMg),
         amountMl: amountMl === null ? undefined : Number(amountMl),
+        doseSource: this.readDoseSourceParam(params.get('doseSource')),
       };
     }
     this.form.valueChanges.pipe(debounceTime(400)).subscribe(() => this.maybeRunDoseCheck());
@@ -510,8 +517,26 @@ export class NewInterventionPage implements OnInit {
       type: 'medication_dose',
       amountMg: prefill.amountMg ?? null,
       amountMl: prefill.amountMl ?? null,
+      // The source travels with the amount. Repeating a weight-based dose is still arriving at it
+      // from the weight-based guideline, and leaving the form's `override` default in place would
+      // record every repeat as an ad-hoc deviation and flag it atypical for it — a false signal
+      // manufactured by the shortcut (frontend.md → Home). Absent param keeps the default.
+      ...(prefill.doseSource ? { doseSource: prefill.doseSource } : {}),
     });
     this.loadMedicationForSchedule(prefill.medicationId, prefill.embodimentId ?? null);
+  }
+
+  /**
+   * `?doseSource=` off a repeat/recents prefill, validated against the enum.
+   *
+   * `'schedule'` deliberately degrades to `'override'`: this dose is not executing the standing
+   * schedule (no `interventionScheduleId` rides along with a repeat), and recording it as one
+   * would misstate its provenance in the ER Brief. The atypical exemption keys on the scheduleId
+   * rather than on this value, so the degradation costs nothing but honesty (api.md → Interventions).
+   */
+  private readDoseSourceParam(raw: string | null): DoseSource | undefined {
+    if (!raw || !DOSE_SOURCES.includes(raw as DoseSource)) return undefined;
+    return raw === 'schedule' ? 'override' : (raw as DoseSource);
   }
 
   private prefillFromSchedule(scheduleId: string): void {

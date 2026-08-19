@@ -7,7 +7,13 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relative-time';
 import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { DashboardPayload, DashboardTemperaturePoint, PatientAccentColor, TemperatureMethod } from '@salud/shared/types';
+import {
+  DashboardPayload,
+  DashboardTemperaturePoint,
+  DoseSource,
+  PatientAccentColor,
+  TemperatureMethod,
+} from '@salud/shared/types';
 import { DisplayBand, PlottedBand, bandedDomain, describeBand, plotBands, toDisplayBands } from '../core/value-bands';
 
 // The sparkline canvas. Small on purpose: it is a glance at the shape of the last two nights, not
@@ -34,6 +40,7 @@ interface SickMedication {
   lastEmbodimentLabel: string | null;
   lastAmountMg: number | null;
   lastAmountMl: number | null;
+  lastDoseSource: DoseSource | null;
 }
 
 interface SickEpisode {
@@ -192,9 +199,13 @@ interface SickCard {
               <ng-template #noTemps>
                 <p class="muted small">No temperature logged in the last 48 hours.</p>
               </ng-template>
+              <!-- The reading and the button that updates it are one glance: you read the number,
+                   then log the next one without hunting for an action row (frontend.md → Home).
+                   Present with no readings too — that is exactly when one is wanted. -->
               <span class="spark-latest" *ngIf="c.latest">
                 {{ c.latest.valueShown }} °{{ tempUnit() }} · {{ ago(c.latest.timestamp) }}
               </span>
+              <button type="button" class="secondary small" (click)="quickTemp(c)">Temp</button>
             </div>
             <!-- Named in words as well as shaded: the colour alone doesn't say 36.1–37.2, and at
                  3 AM the number is what gets repeated down a phone to a nurse. -->
@@ -202,8 +213,10 @@ interface SickCard {
               <span *ngFor="let b of c.bands; let i = index">{{ i ? ' · ' : '' }}{{ bandTitle(b) }}</span>
             </p>
 
+            <!-- Temp lives beside the reading above, and each medication carries its own repeat
+                 button, so what is left here is the search-first path: a medication this card is
+                 not already showing. -->
             <div class="quick-actions">
-              <button type="button" class="secondary small" (click)="quickTemp(c)">Temp</button>
               <button type="button" class="secondary small" (click)="quickDose(c.patientId)">Dose</button>
             </div>
           </li>
@@ -768,6 +781,9 @@ export class DashboardPage implements OnInit {
     if (m.lastEmbodimentId) queryParams['embodimentId'] = m.lastEmbodimentId;
     if (m.lastAmountMg != null) queryParams['amountMg'] = String(m.lastAmountMg);
     if (m.lastAmountMl != null) queryParams['amountMl'] = String(m.lastAmountMl);
+    // How the caregiver arrived at that amount travels with it — otherwise the form's `override`
+    // default records every repeat as an ad-hoc deviation and flags it atypical.
+    if (m.lastDoseSource) queryParams['doseSource'] = m.lastDoseSource;
     this.router.navigate(['/interventions/new'], { queryParams });
   }
 

@@ -432,6 +432,9 @@ export class QuickLogSheetComponent implements OnInit {
     if (recent.lastEmbodimentId) params['embodimentId'] = recent.lastEmbodimentId;
     if (recent.lastAmountMg != null) params['amountMg'] = String(recent.lastAmountMg);
     if (recent.lastAmountMl != null) params['amountMl'] = String(recent.lastAmountMl);
+    // Including how they arrived at that amount: a repeat of a weight-based dose is not an
+    // override, and recording it as one would flag it atypical for no reason the caregiver caused.
+    if (recent.lastDoseSource) params['doseSource'] = recent.lastDoseSource;
     this.go('/interventions/new', params);
   }
 
