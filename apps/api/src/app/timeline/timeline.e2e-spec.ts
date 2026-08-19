@@ -3,11 +3,11 @@ import request from 'supertest';
 import { AppModule } from '../app.module';
 import { createTestApp } from '../../testing/create-test-app';
 
-async function registerAndLogin(app: INestApplication) {
+async function registerAndLogin(app: INestApplication, displayName = 'Timeline User') {
   const email = `timeline-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
   const reg = await request(app.getHttpServer())
     .post('/api/auth/register')
-    .send({ email, password: 'password123', displayName: 'Timeline User' });
+    .send({ email, password: 'password123', displayName });
   return { token: reg.body.token, userId: reg.body.user.id };
 }
 
@@ -15,14 +15,16 @@ describe('Timeline (e2e)', () => {
   let app: INestApplication;
   let close: () => Promise<void>;
   let token: string;
+  let userId: string;
   let patientId: string;
   let medicationId: string;
 
   beforeAll(async () => {
     ({ app, close } = await createTestApp('timeline'));
 
-    const auth = await registerAndLogin(app);
+    const auth = await registerAndLogin(app, 'Dana Owner');
     token = auth.token;
+    userId = auth.userId;
 
     const patientRes = await request(app.getHttpServer())
       .post('/api/patients')
@@ -159,6 +161,92 @@ describe('Timeline (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(timeline.body.weightPrompt.needsUpdate).toBe(false);
+  });
+
+  it('attributes every entry with a server-resolved recordedBy', async () => {
+    const timeline = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/timeline`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const events = timeline.body.entries.filter((e: any) => e.kind !== 'advisory');
+    expect(events.length).toBeGreaterThan(0);
+    for (const entry of events) {
+      expect(entry.recordedBy).toEqual({ id: userId, displayName: 'Dana Owner' });
+    }
+  });
+
+  it('names each caregiver on their own rows', async () => {
+    const other = await registerAndLogin(app, 'Sam Nightshift');
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ userId: other.userId, role: 'co-parent' })
+      .expect(201);
+
+    const theirs = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/observations`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'temperature', metadata: { value: 39.1, unit: 'C', method: 'oral' } }],
+      })
+      .expect(201);
+
+    const timeline = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/timeline`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const entry = timeline.body.entries.find((e: any) => e.id === theirs.body.id);
+    expect(entry.recordedBy).toEqual({ id: other.userId, displayName: 'Sam Nightshift' });
+    // The reader's own rows keep their own name — one page, two authors, no bleed.
+    expect(
+      timeline.body.entries.filter((e: any) => e.recordedBy?.id === userId).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // Attribution outlives membership (product.md → P3). A caregiver removed from the care team
+  // keeps their name on the rows they wrote — the handoff log a household most needs to trust is
+  // often the one written by the person who has since left.
+  it('keeps recordedBy after the recording caregiver leaves the care team', async () => {
+    const leaver = await registerAndLogin(app, 'Robin Departed');
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ userId: leaver.userId, role: 'babysitter' })
+      .expect(201);
+
+    const dose = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set('Authorization', `Bearer ${leaver.token}`)
+      .send({
+        performedAt: new Date().toISOString(),
+        type: 'medication_dose',
+        medicationId,
+        doseSource: 'override',
+        amountMg: 240,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/patients/${patientId}/care-team/${leaver.userId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    // They can no longer read the patient…
+    await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/timeline`)
+      .set('Authorization', `Bearer ${leaver.token}`)
+      .expect(404);
+
+    // …but the dose they gave is still theirs.
+    const timeline = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/timeline`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const entry = timeline.body.entries.find((e: any) => e.id === dose.body.id);
+    expect(entry.recordedBy).toEqual({ id: leaver.userId, displayName: 'Robin Departed' });
   });
 
   it('enforces patient access control (404, not 403)', async () => {

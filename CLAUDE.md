@@ -77,8 +77,9 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
   engine (`POST .../dose-checks`), timeline + dashboard, What's-New, ER Brief + frozen snapshots.
 - `yarn seed:catalog` seeds a starter medication catalog; without it every dose-guidance feature is
   inert, since the catalog starts empty.
-- Web: auth, profile, patient detail + care team, new-observation/intervention, dashboard, timeline,
-  episodes, conditions, schedules, medications, What's-New, ER Brief + the public `/brief/:token`.
+- Web: auth, profile, patient detail + care team, new-observation/intervention, dashboard, the
+  journal (attributed feed + collapsible chart + the since-you-last-looked marker, which replaced
+  the What's-New page), episodes, conditions, schedules, medications, ER Brief + `/brief/:token`.
 
 **Gaps worth knowing**
 - **Adverse reactions have no web UI** — `POST|GET /api/patients/:id/reactions` works and drives the

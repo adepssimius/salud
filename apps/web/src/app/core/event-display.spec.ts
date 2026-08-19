@@ -171,6 +171,32 @@ describe('describeEvent', () => {
     expect(describeEvent(e)).toBe('HR 100 bpm');
   });
 
+  it('names the medication on a dose when the caller supplies the catalog', () => {
+    const doseEvent = {
+      id: 'i1',
+      kind: 'intervention',
+      type: 'medication_dose',
+      timestamp: 1700000000,
+      display: { type: 'medication_dose', metadata: { medicationId: 'm1', amountMg: 240 } },
+    } as any;
+    // The journal feed's line (frontend.md → Journal): "Dana — 240 mg ibuprofen · 2:15 AM".
+    expect(describeEvent(doseEvent, CANONICAL_UNITS, { medicationNames: new Map([['m1', 'ibuprofen']]) })).toBe(
+      '240 mg ibuprofen',
+    );
+    // Without the catalog it stays generic — the raw id is not something to show a caregiver.
+    expect(describeEvent(doseEvent)).toBe('medication dose — 240 mg');
+  });
+
+  it('omits document entries only when the caller renders them as links', () => {
+    const e = obsEvent([
+      { type: 'document', metadata: { fileId: 'f1', label: 'Discharge summary' } },
+      { type: 'heart_rate', metadata: { bpm: 100 } },
+    ]);
+    expect(describeEvent(e, CANONICAL_UNITS, { omitDocuments: true })).toBe('HR 100 bpm');
+    // A caller with no link affordance keeps the text and stays whole.
+    expect(describeEvent(e)).toBe('document · Discharge summary — HR 100 bpm');
+  });
+
   it('aggregates lab_result entries into one line instead of one per analyte', () => {
     const labs = Array.from({ length: 30 }, (_, i) => ({
       type: 'lab_result',
