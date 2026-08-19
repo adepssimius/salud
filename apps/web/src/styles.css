@@ -927,6 +927,32 @@ h2 {
   color: var(--text-muted);
 }
 
+/*
+ * The row's way through to the event's detail page — worn alongside `.feed-text`, so a row reads the
+ * same whether or not it has somewhere to go. It sits on the summary text rather than on the whole
+ * row because the row already holds its own interactive children — photo thumbnails and attachment
+ * links — and a button inside a button is invalid and unreachable by keyboard. Advisory rows keep
+ * the plain `.feed-text` span: an advisory has no detail page to reach.
+ */
+.feed-text-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+.feed-text-link:hover,
+.feed-text-link:focus-visible {
+  color: var(--accent-soft);
+  text-decoration-color: currentColor;
+}
+
 .feed-time {
   color: var(--text-dim);
   font-size: 0.8rem;

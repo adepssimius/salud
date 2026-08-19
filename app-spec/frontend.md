@@ -576,6 +576,82 @@ app. They therefore need somewhere to be entered.
 - Links to the ER Brief scoped to this episode (`/patients/:id/er-brief?episodeId=...`, already
   supported by the API) and back to the patient.
 
+## Observation & intervention detail
+
+**Read-only.** Both pages display; neither edits, deletes, nor re-links. Correcting an entry is a
+separate flow (see "Corrections"), and until it ships the record is inspected here and changed
+nowhere.
+
+The gap they close: entry metadata was write-only. A photo's `bodyLocation`/`side`/`sizeCm`, a
+lesion's measurements, a temperature's method, and every field of a dose's provenance were
+collected by the entry forms, stored, and then rendered nowhere — the journal line summarises a
+whole event in one sentence, and the ER Brief prints a subset. These are the pages where what was
+recorded can be read back.
+
+- `observation-detail.page.ts` at `/observations/:observationId` and `intervention-detail.page.ts`
+  at `/interventions/:interventionId` — both lazy, both behind `authGuard`, both declared after
+  their sibling `/new` routes so the literal segment wins.
+- Entry points: a journal feed row (the row itself is the link) and the episode detail event list.
+  Advisory rows link nowhere — an advisory is not a correctable entity and has no detail page.
+- Existing endpoints only: `GET /api/observations/:id`, `GET /api/interventions/:id`, and the
+  matching `/revisions` route for the History section.
+- Both pages resolve **attribution** against `GET /api/patients/:patientId/care-team`: the entity
+  itself carries only `recordedByUserId`, and the timeline's `recordedBy` is not on this payload. A
+  caregiver who has since left the care team is no longer in that list, so the line reads "Unknown
+  caregiver" rather than printing a raw uuid or guessing a name (P6).
+- Both label the **log time** (`createdAt`) separately from the clinical time. They are different
+  facts — a 2 AM dose written up at 6 AM — and that difference is the whole reason the journal's
+  since-you-last-looked marker selects on one and orders by the other.
+- Both list **episode links** as chips through to `/episodes/:id`, naming the episode from
+  `GET /api/patients/:patientId/episodes`, and mark which frames this event *started* and which it
+  *resolved* — that is what the pivot's flags mean and it is invisible everywhere else.
+
+### Observation detail
+- Header: `observedAt` as an absolute local date-time with its relative age beside it ("2h 15m
+  ago"), plus the observation's free `text` when set.
+- **Entry provenance**: `unitPreferenceAtEntry`, when present, renders as "Entered in °F · lb · in"
+  — the units the recorder actually had on screen. Values themselves are always shown in the
+  *reader's* preference (`unitsFor` and the converters in `core/event-display.ts`), so the two
+  together say "recorded there, read here" rather than implying a conversion that never happened.
+- **Every entry rendered per its type**, one row each, in stored order, through the same
+  `entrySummary` formatter every other event surface uses:
+  - `photo` renders the image **large** through `PhotoThumbnailComponent`, its metadata as the
+    caption beneath ("photo · tympanic membrane (left) · 2.1 cm — looks less red"). This is the
+    page the F-8.2 framing photos were taken for; it is where a rash last week and a rash today
+    are actually compared.
+  - `document` renders as the same labeled attachment link the journal uses.
+  - `lab_result` names the analyte from `labContext.displayName` and lists every range this patient
+    holds for it, resolved at `observedAt` and labeled by lineage ("Reference 30–400"), so a value
+    can be read against its standard without leaving the page. Flags are only ever what the report
+    printed; the page computes none (P6).
+  - Every other type reads as its own phrase — temperature with unit and method, lesion size with
+    its dimensions and site, pain as `n/10`, and so on.
+
+### Intervention detail
+- Header: the type ("Medication dose" / "Dressing change"), `performedAt` absolute and relative,
+  and `notes`.
+- **A medication dose shows its whole provenance**, which is the reason the page exists — the
+  caregiver asking "why was it that much?" three days later:
+  - the medication (linked to its catalog page) and the embodiment's label;
+  - `amountMg`, `amountMl` and `pillCount` as recorded;
+  - `doseSource` in words — weight-based, age-based, override ("no guideline followed") or schedule
+    — beside `weightKgUsed` (in the reader's weight unit) and `ageMonthsUsed`, the inputs the
+    number was computed from;
+  - the cited guideline's `source` and type, since a computed dose is worth exactly its provenance
+    (N-4, P2);
+  - `isAtypical` as a warning pill spelling out `atypicalReason` in the same words the advisory
+    banner uses, so a dose flagged at entry reads the same way when it is read back;
+  - `nextAllowedAt` as an absolute time with its countdown ("can give now" / "in 1h 40m"), labeled
+    as frozen at log time — this page never recomputes it.
+- **A dressing change shows** `bodyLocation`, `side` and `dressingType`.
+- `scheduleId`, when set, links to `/schedules/:id`: "this dose came from a plan" is provenance too.
+
+### History
+Both pages carry a "History" section rendering `GET .../revisions` through the existing
+`RevisionHistoryComponent` — the edited-marker the "Corrections" section always assumed, in the
+entity detail view that did not exist until now. Read-only: who edited, when, and the prior
+snapshot. No diffing, no revert.
+
 ## ER Brief
 See `er-brief.md` for the full spec. `er-brief.page.ts` (authenticated, entry point from patient
 detail) renders the header/body response as a one-page-on-print document; `?mode=flash` swaps to a
