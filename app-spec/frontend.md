@@ -4,8 +4,14 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 
 ## Information architecture (v2)
 
-**Status: proposed, not yet built.** This section defines the target structure of the app — what
-lives where and how a caregiver moves between it. The behavioral specs in the sections that follow
+**Status: partly built.** Shipped: the `/patients` list, the hub shell and its persistent header,
+and the Journal / Meds / History / Share / Settings tabs. Still proposed: the `now` tab, per-patient
+`accentColor`, Quick Log, the journal feed (the Journal tab renders today's chart), the bimodal Home
+with its night board, and the bottom-bar/left-rail shell. Until `now` exists, `/patients/:id`
+redirects to `journal` for every patient, sick or quiet.
+
+This section defines the target structure of the app — what lives where and how a caregiver moves
+between it. The behavioral specs in the sections that follow
 (dose entry mechanics, entry builder, advisories, lab import, errors, …) all continue to apply
 *inside* this structure; where a **placement** rule below contradicts an older bullet (written
 against the v1 page layout), this section wins and the older section carries a pointer note.
