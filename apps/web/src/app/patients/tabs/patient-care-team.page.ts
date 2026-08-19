@@ -15,27 +15,20 @@ interface UserSearchResult {
 }
 
 /**
- * Who can see this patient, and how their record leaves the household.
+ * Who is on this patient's care team, and what each person's relationship to them is.
  *
- * The care team and the ER Brief share a tab because they are the same question asked twice — one
- * is standing access for caregivers, the other a one-off handoff to a clinician.
+ * This was the "Share" tab, paired with the ER Brief on the theory that standing access and a
+ * one-off clinician handoff are the same question asked twice. That was a designer's abstraction,
+ * not a caregiver's: nobody adding their co-parent goes looking under "Share". The tab is now named
+ * for the thing it manages, and the ER Brief — a handoff artifact, not an access control — moved to
+ * the hub header where it is reachable from every tab.
  */
 @Component({
-  selector: 'app-patient-share-page',
+  selector: 'app-patient-care-team-page',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
     <div class="layout">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2>ER Brief</h2>
-            <p class="muted">One page for a triage desk: allergies, meds, conditions, recent events.</p>
-          </div>
-          <button class="secondary" type="button" (click)="goToErBrief()">Open ER Brief</button>
-        </div>
-      </div>
-
       <div class="card">
         <div class="card-header">
           <div>
@@ -267,7 +260,7 @@ interface UserSearchResult {
     `,
   ],
 })
-export class PatientSharePage {
+export class PatientCareTeamPage {
   protected readonly store = inject(PatientHubStore);
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
@@ -287,10 +280,6 @@ export class PatientSharePage {
 
   get patientId() {
     return this.store.patientId();
-  }
-
-  goToErBrief() {
-    this.router.navigate(['/patients', this.patientId, 'er-brief']);
   }
 
   changeRole(member: CareTeamMember, role: CareTeamRole) {
