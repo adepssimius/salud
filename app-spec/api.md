@@ -349,6 +349,16 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       record: it skips guideline resolution entirely, so the dosing engine and every advisory
       silently do nothing. A `PATCH` is checked against the **merged** result, so clearing
       `medicationId` on an existing dose is rejected too.
+    - **`metadata` may not name a key the service owns** (400 `RESERVED_METADATA_KEY`, body carries
+      the offending `keys`). `metadata` is otherwise free-form and a client may park its own keys
+      there, but the dosing engine's resolved fields (`isAtypical`, `atypicalReason`,
+      `nextAllowedAt`, `guidelineId`, `weightKgUsed`, `ageMonthsUsed`) and the validated top-level
+      fields (`medicationId`, `amountMg`, `side`, …) are the server's to write. Two things this
+      closes: a client could otherwise hand back `isAtypical: false` over the verdict just
+      computed — erasing the permanent trace that a dose didn't follow guidance (F-2.4), with
+      nothing in the record showing it — and it could smuggle an unvalidated `amountMg` past the
+      range check into the daily total that drives `exceeds_max_per_day`. Rejected rather than
+      silently stripped, matching how an observation entry's `metadata` answers an unknown key.
     - `interventionScheduleId` is stored only (no schedule state updates); also persisted as `scheduleId` column for querying.
     - `guidelineId` optional; omit if not provided.
     - `medicationId`, `medicationEmbodimentId` and `guidelineId` must be v4 UUIDs.
@@ -1251,6 +1261,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `SCHEDULE_EPISODE_CONDITION_CONFLICT` | 400 | an `InterventionSchedule` create/update with both `episodeId` and `conditionId` set |
 | `MEDICATION_ID_REQUIRED` | 400 | intervention or schedule create/update of type `medication_dose` missing `medicationId` |
 | `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |
+| `RESERVED_METADATA_KEY` | 400 | intervention create/update whose `metadata` names a key the service owns (the dosing engine's resolved fields, or a validated top-level field); body carries `keys` |
 | `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED` | 400 | schedule create with neither a frequency nor explicit times |
 | `FILE_REQUIRED` | 400 | `POST /api/files` with no file part |
 | `PATIENT_ID_REQUIRED` | 400 | `POST /api/files` with no `patientId` field |

@@ -26,7 +26,7 @@ body:json {
   {
     "notes": "Updated via Bruno",
     "metadata": {
-      "isAtypical": true
+      "loggedFrom": "bruno"
     }
   }
 }
@@ -34,4 +34,9 @@ body:json {
 settings {
   encodeUrl: true
   timeout: 0
+}
+
+docs {
+  `metadata` is free-form for a client's own keys, but the keys the service owns are rejected with
+  400 `RESERVED_METADATA_KEY`.
 }

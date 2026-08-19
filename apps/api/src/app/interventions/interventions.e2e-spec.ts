@@ -258,6 +258,107 @@ describe('Interventions (e2e)', () => {
   // Read-time enrichment from the catalog, never stored on the dose (api.md → Interventions).
   // CURRENT tags: retagging a medication re-classifies its past doses everywhere at once, which is
   // what lets a chart overlay default apply retroactively without a backfill.
+  // ISSUES.md #28: `metadata` merged last, so a client could hand back its own value over the one
+  // the dosing engine had just resolved — including the atypical flag, which is the permanent
+  // trace that a dose didn't follow guidance (F-2.4).
+  describe('reserved metadata keys', () => {
+    it('refuses to let a create erase the engine\'s atypical verdict', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const auth = { Authorization: `Bearer ${token}` };
+
+      const attempt = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth)
+        .send({
+          performedAt: '2026-01-05T10:00:00.000Z',
+          type: 'medication_dose',
+          medicationId: MED_1,
+          doseSource: 'override',
+          amountMg: 200,
+          metadata: { isAtypical: false, atypicalReason: null },
+        })
+        .expect(400);
+      expect(attempt.body.message).toBe('RESERVED_METADATA_KEY');
+      expect(attempt.body.keys.sort()).toEqual(['atypicalReason', 'isAtypical']);
+
+      // The same dose without the smuggled keys saves, and keeps the verdict the engine computed:
+      // an override with no schedule is atypical by definition (data-model.md).
+      const honest = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth)
+        .send({
+          performedAt: '2026-01-05T10:00:00.000Z',
+          type: 'medication_dose',
+          medicationId: MED_1,
+          doseSource: 'override',
+          amountMg: 200,
+        })
+        .expect(201);
+      expect(honest.body.metadata.isAtypical).toBe(true);
+      expect(honest.body.metadata.atypicalReason).toContain('override');
+    });
+
+    it('refuses to let metadata smuggle an unvalidated amount past the DTO range check', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const auth = { Authorization: `Bearer ${token}` };
+
+      // Rejected as a top-level field by the range check, and now equally rejected via metadata —
+      // a negative amount would otherwise count toward the daily total behind exceeds_max_per_day.
+      const smuggled = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth)
+        .send({
+          performedAt: '2026-01-05T10:00:00.000Z',
+          type: 'medication_dose',
+          medicationId: MED_1,
+          doseSource: 'override',
+          amountMg: 200,
+          metadata: { amountMg: -5000 },
+        })
+        .expect(400);
+      expect(smuggled.body.message).toBe('RESERVED_METADATA_KEY');
+      expect(smuggled.body.keys).toEqual(['amountMg']);
+    });
+
+    it('refuses the same keys on update, and still allows a client\'s own metadata', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const auth = { Authorization: `Bearer ${token}` };
+
+      const created = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth)
+        .send({
+          performedAt: '2026-01-05T10:00:00.000Z',
+          type: 'medication_dose',
+          medicationId: MED_1,
+          doseSource: 'override',
+          amountMg: 200,
+          metadata: { loggedFrom: 'unit-test' },
+        })
+        .expect(201);
+      // Free-form keys are still welcome — this guard narrows nothing a client legitimately does.
+      expect(created.body.metadata.loggedFrom).toBe('unit-test');
+
+      const blocked = await request(app.getHttpServer())
+        .patch(`/api/interventions/${created.body.id}`)
+        .set(auth)
+        .send({ metadata: { isAtypical: false } })
+        .expect(400);
+      expect(blocked.body.message).toBe('RESERVED_METADATA_KEY');
+
+      const allowed = await request(app.getHttpServer())
+        .patch(`/api/interventions/${created.body.id}`)
+        .set(auth)
+        .send({ metadata: { loggedFrom: 'bruno' } })
+        .expect(200);
+      expect(allowed.body.metadata.loggedFrom).toBe('bruno');
+      expect(allowed.body.metadata.isAtypical).toBe(true); // untouched by the client
+    });
+  });
+
   it('enriches a dose with its medication\'s current tags, and follows a retag', async () => {
     const { token } = await registerAndLogin(app);
     const patientId = await createPatient(app, token);

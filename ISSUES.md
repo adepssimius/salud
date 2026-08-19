@@ -792,7 +792,7 @@ change, not a drive-by.
 
 ---
 
-### 28. 🔴 A client can overwrite server-resolved dose fields through `metadata` passthrough
+### 28. ✅ A client can overwrite server-resolved dose fields through `metadata` passthrough
 
 **Found during the 2026-08-09 QA-findings batch; deliberately left out of it** — it is a distinct
 defect from the required-field and bounds work that batch covered, and it deserves its own change.
@@ -807,8 +807,19 @@ merge order quietly says otherwise.
 **Why it matters:** the atypical flag is the permanent trace that a dose didn't follow guidance
 (F-2.4). A client that can clear it can erase that trace, and nothing in the record would show it.
 
-**Fix:** merge `dto.metadata` *first* and let the resolved fields win, or whitelist which keys a
-client may contribute. The second is better but needs a decision about what that list is.
+**Fixed 2026-08-19.** Took the second option: `reserved-metadata.ts` names the keys the service
+owns and `create`/`update` both reject a client that sends one, with 400 `RESERVED_METADATA_KEY`
+carrying the offending `keys`. The list is every key the service itself writes — the engine's
+resolved fields (`isAtypical`, `atypicalReason`, `nextAllowedAt`, `guidelineId`, `weightKgUsed`,
+`ageMonthsUsed`) plus the validated top-level ones (`medicationId`, `amountMg`, `side`, …), since
+the latter reaching the row through `metadata` bypassed their DTO range checks — a second hole the
+original note didn't mention. Free-form client keys still pass through untouched, so nothing a
+client legitimately does got narrower.
+
+Rejecting rather than silently stripping matches how an observation entry's `metadata` answers an
+unknown key (`forbidNonWhitelisted`): a client sending `isAtypical` is confused about who owns it,
+and dropping it quietly would leave it believing the value stuck. `bruno/interventions/update.bru`
+used to demonstrate the hole (it sent `isAtypical: true`) and now sends a harmless custom key.
 
 ---
 
