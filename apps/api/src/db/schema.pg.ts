@@ -31,6 +31,11 @@ export const patients = pgTable('patients', {
   dateOfBirth: text('date_of_birth').notNull(), // ISO date
   sexAtBirth: text('sex_at_birth', { enum: ['female', 'male'] }).notNull(),
   notes: text('notes'),
+  // Palette token, not a hex value, so the palette can be retuned without a migration
+  // (data-model.md → Patient). Nullable only for rows written before the column existed;
+  // every create assigns one, and the API resolves a legacy null to a stable per-id fallback
+  // so `accentColor` is always a string on the wire.
+  accentColor: text('accent_color'),
   latestWeightKg: doublePrecision('latest_weight_kg'),
   latestWeightRecordedAt: timestamp('latest_weight_recorded_at', { withTimezone: true, mode: 'date' }),
   ownedByUserId: text('owned_by_user_id')
