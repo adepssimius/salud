@@ -95,22 +95,27 @@ describe('App', () => {
       expect(el.querySelector('.side-rail')).not.toBeNull();
     });
 
-    it('drops the v1 top-right Dashboard link — nav is the bar and the rail now', () => {
+    it('drops the v1 top-right nav link — Home is a bar slot and a rail link now', () => {
       const fixture = TestBed.createComponent(App);
       fixture.detectChanges();
-      const links = Array.from(
-        (fixture.nativeElement as HTMLElement).querySelectorAll('.nav-actions a'),
-      ).map((a) => a.textContent?.trim());
-      expect(links).not.toContain('Dashboard');
+      const el = fixture.nativeElement as HTMLElement;
+      const links = () => Array.from(el.querySelectorAll('.nav-actions a')).map((a) => a.textContent?.trim());
+      expect(links()).not.toContain('Home');
+      expect(links()).not.toContain('Dashboard');
+
+      // What the header keeps is the avatar menu: Profile, Manage, Log out.
+      fixture.componentInstance.toggleMenu();
+      fixture.detectChanges();
+      expect(links()).toEqual(['Edit profile', 'Manage']);
     });
 
-    it('puts the catalog and schedule setup under Manage rather than on Home', () => {
+    it('parks Manage at the bottom of the rail, off the urgent path', () => {
       const fixture = TestBed.createComponent(App);
       fixture.detectChanges();
       const railLabels = Array.from(
         (fixture.nativeElement as HTMLElement).querySelectorAll('.rail-bottom .rail-link'),
       ).map((a) => a.textContent?.trim());
-      expect(railLabels).toEqual(['Medication catalog', 'Analyte catalog', 'New schedule']);
+      expect(railLabels).toEqual(['Manage']);
     });
 
     it('hides the bar and rail when signed out', async () => {

@@ -497,6 +497,178 @@ h2 {
   outline-offset: 2px;
 }
 
+/* ---- home / night board -------------------------------------------------
+   The bimodal Home's sick mode (frontend.md → "Information architecture (v2)" → Home). Global
+   rather than page-local for one concrete reason: the patient hub's `now` tab is specced as "the
+   same content as this patient's Home sick card", so the card vocabulary has to be adoptable from a
+   second component without being copied into it. Everything here is shape and weight — the
+   countdown is the hero of a sick card, and nothing else on it may out-shout that. */
+
+.night-board {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.nb-row {
+  display: grid;
+  grid-template-columns: minmax(4rem, 7rem) 1fr;
+  gap: 0.5rem 0.75rem;
+  align-items: start;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--surface-sunken);
+}
+
+.nb-patient {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.nb-meds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.nb-med {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  /* Wrap the countdown onto its own line rather than squeezing the name: `anywhere` here spelled
+     "i b u p r o f e n" down a column on a phone, which is the one device this board is for. */
+  flex-wrap: wrap;
+}
+
+.nb-med-name {
+  color: var(--text-muted);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+/* The one number the board exists to show. Tabular figures so two rows' countdowns line up
+   vertically and can be compared without reading them. */
+.nb-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+}
+
+.nb-count.ready {
+  color: var(--success-text);
+}
+
+/* On a phone the name column costs more than it explains — one caregiver, two bedrooms, and the
+   whole width is needed for "medication … countdown". */
+@media (max-width: 560px) {
+  .nb-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+}
+
+/* ---- sick card ---- */
+
+.sick-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.sick-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sick-name {
+  font-size: 1.15rem;
+}
+
+.episode-pill {
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dose-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+/* The hero. It answers the founding 3 AM question, so it is the largest thing on the card — never
+   a muted suffix on the medication name (frontend.md → Home). */
+.dose-hero {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.dose-hero.ready {
+  color: var(--success-text);
+}
+
+.dose-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.spark-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.spark {
+  width: 180px;
+  height: 44px;
+  overflow: visible;
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--accent-soft);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.spark-dot {
+  fill: var(--accent-bright);
+}
+
+.spark-latest {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 /* ---- patient accent colors ---------------------------------------------
    A patient's stable identity color (frontend.md → "Patient identity"). Identity and nothing
    else: never severity, never status — a color that sometimes meant "sick" would stop being

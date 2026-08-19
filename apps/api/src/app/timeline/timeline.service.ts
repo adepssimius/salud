@@ -33,6 +33,10 @@ const STALE_WEIGHT_DAYS = 60;
 // blob), so every last-dose lookup here is a full scan + JS reduce; bounding it to a day's doses
 // keeps that proportional instead of scanning the patient's whole history.
 const LAST_DOSE_WINDOW_HOURS = 24;
+// The sparkline window on Home's sick cards (api.md → GET /api/dashboard → recentTemperatures).
+// Two nights of readings is what makes a fever curve legible; a hard SQL cutoff again, for the same
+// reason as above.
+const RECENT_TEMPERATURE_WINDOW_HOURS = 48;
 
 @Injectable()
 export class TimelineService {
@@ -428,6 +432,57 @@ export class TimelineService {
     };
   }
 
+  // The 48h temperature sparkline source for Home's sick cards (api.md → GET /api/dashboard).
+  // Restricted to patients with an active episode by the caller: a quiet patient renders no
+  // sparkline, so their row would be payload weight nobody reads. A sick patient with no readings
+  // still gets a row with `points: []` — same "the empty array is the answer" rule as lastDoses.
+  //
+  // Temperature is the one entry type stored in the unit it was entered in (data-model.md →
+  // "Observation entry structured metadata"), so the conversion to canonical °C happens here rather
+  // than being pushed onto every consumer. The client still converts to the viewer's preferred unit
+  // at read time, exactly as it does for a timeline entry.
+  private async buildRecentTemperatureRows(patientIds: string[], nowTs: number) {
+    if (!patientIds.length) return [];
+    const db = this.db.db as any;
+    const cutoff = nowTs - RECENT_TEMPERATURE_WINDOW_HOURS * 3600;
+
+    // Projected to three columns and joined in SQL: the alternative — fetching observations and
+    // then their entries — is the N+1 that buildActiveEpisodeSummary can afford (one episode, one
+    // observation) and this cannot (two days of readings across every sick patient).
+    const rows = await db
+      .select({
+        patientId: observations.patientId,
+        observedAt: observations.observedAt,
+        metadata: observationEntries.metadata,
+      })
+      .from(observationEntries)
+      .innerJoin(observations, eq(observationEntries.observationId, observations.id))
+      .where(
+        and(
+          inArray(observations.patientId, patientIds),
+          eq(observationEntries.type, 'temperature'),
+          gte(observations.observedAt, new Date(cutoff * 1000)),
+        ),
+      );
+
+    const byPatient = new Map<string, Array<{ timestamp: number; valueC: number }>>();
+    for (const id of patientIds) byPatient.set(id, []);
+    for (const row of rows) {
+      const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      if (typeof metadata.value !== 'number') continue;
+      const timestamp = normalizeTs(row.observedAt);
+      if (timestamp == null) continue;
+      const valueC =
+        metadata.unit === 'F' ? Math.round((((metadata.value - 32) * 5) / 9) * 10) / 10 : metadata.value;
+      byPatient.get(row.patientId)?.push({ timestamp, valueC });
+    }
+
+    return patientIds.map((patientId) => ({
+      patientId,
+      points: (byPatient.get(patientId) ?? []).sort((a, b) => a.timestamp - b.timestamp),
+    }));
+  }
+
   async getDashboard(userId: string) {
     const db = this.db.db as any;
     // One clock read for the whole aggregation. Two Date.now() calls milliseconds apart can flag a
@@ -457,6 +512,12 @@ export class TimelineService {
       ...p,
       doses: p.doses.map((d: any) => ({ ...d, medicationName: nameById.get(d.medicationId) ?? 'unknown' })),
     }));
+
+    // Sick patients only, and derived from activeEpisodes rather than re-queried: whatever counts as
+    // "has an active episode" for the rest of this payload has to be the same set here, or a sick
+    // card renders with a sparkline the night board can't explain.
+    const sickPatientIds = Array.from(new Set(activeEpisodes.map((ep: any) => ep.patientId)));
+    const recentTemperatures = await this.buildRecentTemperatureRows(sickPatientIds, nowTs);
 
     let upcomingSchedules: any[] = [];
     if (patientIds.length) {
@@ -521,6 +582,14 @@ export class TimelineService {
       }));
     }
 
-    return { lastDoses, whatsNew, activeEpisodes, upcomingSchedules, shoppingList, unacknowledgedAdvisories };
+    return {
+      lastDoses,
+      whatsNew,
+      activeEpisodes,
+      upcomingSchedules,
+      shoppingList,
+      unacknowledgedAdvisories,
+      recentTemperatures,
+    };
   }
 }

@@ -5,7 +5,8 @@
       <ng-container *ngIf="isAuthed(); else loggedOut">
         <!-- No link list here any more: navigation lives in the bottom bar (mobile) and the left
              rail (desktop). A top-right link row is a desktop pattern on the device this product
-             is primarily for (frontend.md → "Information architecture (v2)" → App shell).
+             is primarily for (frontend.md → "Information architecture (v2)" → App shell) — Home
+             is a bottom-bar slot and a rail link now, so its header link retires with the row.
              The menu is a sibling of the toggle, not a child: a <button> may not contain the
              menu's own link and button. -->
         <div class="profile-wrap">
@@ -22,16 +23,9 @@
           </button>
           <div class="menu" role="menu" *ngIf="menuOpen()">
             <a routerLink="/profile" role="menuitem" (click)="closeMenu()">Edit profile</a>
-            <!-- Manage: monthly setup tasks. They reach the menu on mobile and the rail bottom on
-                 desktop, so they stop competing with "log a dose" for the most urgent screen. -->
-            <span class="menu-label">Manage</span>
-            <a
-              *ngFor="let item of manageItems"
-              [routerLink]="item.path"
-              role="menuitem"
-              (click)="closeMenu()"
-              >{{ item.label }}</a
-            >
+            <!-- Monthly setup, off the urgent screen: the avatar menu is Manage's mobile home,
+                 the rail bottom its desktop one. -->
+            <a routerLink="/manage" role="menuitem" (click)="closeMenu()">Manage</a>
             <button type="button" role="menuitem" (click)="logout()">Log out</button>
           </div>
         </div>
@@ -64,10 +58,7 @@
       </div>
 
       <div class="rail-section rail-bottom">
-        <span class="rail-label">Manage</span>
-        <a *ngFor="let item of manageItems" [routerLink]="item.path" routerLinkActive="active" class="rail-link">{{
-          item.label
-        }}</a>
+        <a routerLink="/manage" routerLinkActive="active" class="rail-link">Manage</a>
       </div>
     </nav>
 

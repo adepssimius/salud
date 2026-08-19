@@ -38,13 +38,6 @@ export class App implements OnInit {
    */
   protected hubPatientId = computed(() => HUB_PATH.exec(this.currentPath())?.[1] ?? null);
 
-  /** Monthly setup tasks — the avatar menu on mobile, the rail bottom on desktop. */
-  protected manageItems = [
-    { path: '/medications', label: 'Medication catalog' },
-    { path: '/analytes', label: 'Analyte catalog' },
-    { path: '/schedules/new', label: 'New schedule' },
-  ];
-
   ngOnInit(): void {
     if (this.auth.token && !this.user()) {
       this.auth.me().subscribe({

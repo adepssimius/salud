@@ -5,10 +5,25 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 ## Information architecture (v2)
 
 **Status: partly built.** Shipped: the `/patients` list, the hub shell and its persistent header,
-and the Journal / Meds / History / Share / Settings tabs. Still proposed: the `now` tab, per-patient
-`accentColor`, Quick Log, the journal feed (the Journal tab renders today's chart), the bimodal Home
-with its night board, and the bottom-bar/left-rail shell. Until `now` exists, `/patients/:id`
-redirects to `journal` for every patient, sick or quiet.
+the Journal / Meds / History / Share / Settings tabs, per-patient `accentColor` (server-assigned,
+carried on the hub header and the list rows), the bimodal Home with its night board, and `/manage`
+(reached from the avatar menu) holding the catalogs and "New schedule". Still proposed: the `now`
+tab, Quick Log, the journal feed (the Journal tab renders today's chart), and the
+bottom-bar/left-rail shell. Until `now` exists, `/patients/:id` redirects to `journal` for every
+patient, sick or quiet.
+
+Two notes on what shipped, where the section below leaves a choice open:
+
+- **Sick cards and night-board rows are still name-only**, even though `patients.accentColor` now
+  exists: `GET /api/dashboard` aggregates patients without returning the `Patient` object, so no
+  row on that payload carries the token. Colouring Home means adding `accentColor` to the
+  dashboard's per-patient rows first — until then a sick card would have to fetch every patient to
+  colour itself, which is the fan-out the single-request rule exists to prevent.
+- **"Active medication" on a sick card and on the night board is the union of two scopes**: the
+  patient's episode-scoped `activeEpisodes[].medications` and the episode-agnostic 24-hour
+  `lastDoses` (api.md → `GET /api/dashboard`), deduplicated by medication with the more recent dose
+  winning. Either source alone drops doses — the first misses the 3 AM dose logged with no episode,
+  the second misses a dose given earlier in the episode than a day ago.
 
 This section defines the target structure of the app — what lives where and how a caregiver moves
 between it. The behavioral specs in the sections that follow
