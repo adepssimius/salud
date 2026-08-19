@@ -1,227 +1,135 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
+import { Router } from '@angular/router';
 import { PatientSettingsPage } from './patient-settings.page';
-import { ApiClientService } from '../../core/api-client.service';
+import { PatientHubStore } from '../patient-hub.store';
 import { AuthService } from '../../core/auth.service';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ApiClientService } from '../../core/api-client.service';
+
+const patient: any = {
+  id: 'p1',
+  fullName: 'Jamie Doe',
+  dateOfBirth: '2015-04-02',
+  sexAtBirth: 'female',
+  notes: 'note',
+  ownedById: 'u1',
+  latestWeightKg: 20,
+  latestWeightRecordedAt: null,
+  myRole: 'parent',
+  codeStatus: null,
+  codeStatusSetByUserId: null,
+  codeStatusSetAt: null,
+};
 
 describe('PatientSettingsPage', () => {
   let apiMock: any;
   let authMock: any;
   let routerMock: any;
+  let store: PatientHubStore;
+
+  const build = (patientOverride: any = patient) => {
+    store = TestBed.inject(PatientHubStore);
+    store.patientId.set('p1');
+    store.patient.set(patientOverride);
+    const fixture = TestBed.createComponent(PatientSettingsPage);
+    fixture.detectChanges();
+    return fixture;
+  };
 
   beforeEach(async () => {
     apiMock = {
-      get: jest.fn(),
+      get: jest.fn().mockReturnValue(of([])),
       patch: jest.fn(),
-      post: jest.fn(),
       delete: jest.fn(),
     };
     authMock = {
       token: 'token',
-      user: jest.fn().mockReturnValue({
-        id: 'u1',
-        email: 't@example.com',
-        displayName: 'Tester',
-        preferredTempUnit: 'F',
-        preferredLengthUnit: 'cm',
-        preferredWeightUnit: 'kg',
-      }),
+      user: jest.fn().mockReturnValue({ id: 'u1', displayName: 'Tester', email: 't@example.com' }),
       me: jest.fn(),
       logout: jest.fn(),
     };
-    routerMock = { navigateByUrl: jest.fn(), navigate: jest.fn() };
+    routerMock = { navigate: jest.fn(), navigateByUrl: jest.fn() };
 
     await TestBed.configureTestingModule({
       imports: [PatientSettingsPage],
       providers: [
+        PatientHubStore,
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
-        {
-          provide: ActivatedRoute,
-          useValue: { snapshot: { paramMap: new Map([['id', 'p1']]) } },
-        },
         { provide: Router, useValue: routerMock },
       ],
     }).compileComponents();
   });
 
-  it('loads patient, care team, and conditions', () => {
-    // A URL switch rather than a mockReturnValueOnce chain: the chain was order-dependent, so any
-    // new fetch in ngOnInit silently shifted every later stub onto the wrong call.
-    apiMock.get.mockImplementation((path: string) => {
-      if (path.endsWith('/care-team')) {
-        return of([{ user: { id: 'u1', email: 't@example.com', displayName: 'Tester' }, role: 'parent' }]);
-      }
-      if (path.endsWith('/conditions')) {
-        return of([{ id: 'c1', patientId: 'p1', name: 'ALL treatment', status: 'active' }]);
-      }
-      if (path.endsWith('/reactions')) return of([]);
-      if (path.startsWith('/medications')) return of([]);
-      if (path.includes('/revisions')) return of([]);
-      return of({
-        id: 'p1',
-        fullName: 'Pat One',
-        dateOfBirth: '2010-01-01',
-        sexAtBirth: 'female',
-        notes: null,
-        ownedById: 'u1',
-        latestWeightKg: null,
-        latestWeightRecordedAt: null,
-        myRole: 'parent',
-        codeStatus: null,
-        codeStatusSetByUserId: null,
-        codeStatusSetAt: null,
-      });
-    });
-
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
-    expect(component.patient()?.fullName).toBe('Pat One');
-    expect(component.careTeam().length).toBe(1);
-    expect(component.conditions().length).toBe(1);
-    expect(apiMock.get).toHaveBeenCalledWith('/patients/p1/conditions');
+  it('fills the form from the hub store without refetching the patient', () => {
+    const fixture = build();
+    expect(fixture.componentInstance.form.getRawValue().fullName).toBe('Jamie Doe');
+    // The shell already fetched it; a second GET here would be the duplication the store exists
+    // to prevent.
+    expect(apiMock.get).not.toHaveBeenCalledWith('/patients/p1');
   });
 
-  it('sets code status via the dedicated endpoint', () => {
-    apiMock.get.mockReturnValue(
-      of({
-        id: 'p1',
-        codeStatus: null,
-        codeStatusSetByUserId: null,
-        codeStatusSetAt: null,
-      }),
-    );
-    apiMock.patch.mockReturnValue(
-      of({
-        id: 'p1',
-        fullName: 'Pat One',
-        codeStatus: 'Full code',
-        codeStatusSetByUserId: 'u1',
-        codeStatusSetAt: 1700000000,
-      }),
-    );
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
+  it('saves edits and pushes the result back into the store', () => {
+    apiMock.patch.mockReturnValue(of({ ...patient, fullName: 'Jamie Renamed' }));
+    const fixture = build();
     const component = fixture.componentInstance;
+    component.form.patchValue({ fullName: 'Jamie Renamed' });
+    component.savePatient();
+    expect(apiMock.patch).toHaveBeenCalledWith('/patients/p1', expect.objectContaining({ fullName: 'Jamie Renamed' }));
+    // Pushed to the store so the hub header renames at the same moment.
+    expect(store.patient()?.fullName).toBe('Jamie Renamed');
+    expect(component.saveMessage()).toBe('Saved');
+  });
 
+  it('writes code status through its own endpoint', () => {
+    apiMock.patch.mockReturnValue(of({ ...patient, codeStatus: 'Full code' }));
+    const fixture = build();
+    const component = fixture.componentInstance;
     component.startEditCodeStatus();
     component.codeStatusDraft = 'Full code';
     component.saveCodeStatus();
-
     expect(apiMock.patch).toHaveBeenCalledWith('/patients/p1/code-status', { codeStatus: 'Full code' });
-    expect(component.patient()?.codeStatus).toBe('Full code');
     expect(component.editingCodeStatus()).toBe(false);
   });
 
-  it('shows the code status age in relative time, and blank when unset', () => {
-    const fourteenMonthsAgo = Math.floor(Date.now() / 1000) - 14 * 30 * 86400;
-    apiMock.get.mockImplementation((path: string) => {
-      if (path === '/patients/p1') {
-        return of({
-          id: 'p1',
-          codeStatus: 'DNR',
-          codeStatusSetByUserId: 'u1',
-          codeStatusSetAt: fourteenMonthsAgo,
-        });
-      }
-      return of([]);
-    });
-    const fixture = TestBed.createComponent(PatientSettingsPage);
+  it('names who set the code status from the hub-loaded care team', () => {
+    // Attribution (P3) has to hold here even though the care team is rendered on the Share tab —
+    // that is exactly why the hub loads it once instead of each tab fetching its own.
+    const fixture = build({ ...patient, codeStatusSetByUserId: 'u2', codeStatusSetAt: 1700000000 });
+    store.careTeam.set([{ user: { id: 'u2', email: 'dana@example.com', displayName: 'Dana' }, role: 'parent' } as any]);
     fixture.detectChanges();
-    const component = fixture.componentInstance;
-
-    expect(component.codeStatusAge()).toBe('14 months ago');
-
-    component.patient.set({ ...component.patient()!, codeStatusSetAt: null } as any);
-    expect(component.codeStatusAge()).toBe('');
+    expect(fixture.componentInstance.codeStatusSetByName()).toBe('Dana');
+    expect(fixture.componentInstance.codeStatusAge()).not.toBe('');
   });
 
-  it('navigates to new-condition and condition-detail', () => {
-    apiMock.get.mockReturnValue(of({}));
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
-
-    component.goToNewCondition();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'conditions', 'new']);
-
-    component.goToCondition('c1');
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/conditions', 'c1']);
+  it('falls back to a neutral word when the setter has left the care team', () => {
+    const fixture = build({ ...patient, codeStatusSetByUserId: 'gone', codeStatusSetAt: 1700000000 });
+    expect(fixture.componentInstance.codeStatusSetByName()).toBe('someone');
   });
 
-  it('goToErBrief navigates to the ER Brief page', () => {
-    apiMock.get.mockReturnValue(of({}));
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    fixture.componentInstance.goToErBrief();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'er-brief']);
-  });
-
-  it('updates patient details', () => {
-    apiMock.get.mockReturnValue(of({}));
-    apiMock.patch.mockReturnValue(
-      of({
-        id: 'p1',
-        fullName: 'Updated',
-        dateOfBirth: '2010-01-01',
-        sexAtBirth: 'female',
-        notes: null,
-        ownedById: 'u1',
-        latestWeightKg: null,
-        latestWeightRecordedAt: null,
-        myRole: 'parent',
-      }),
-    );
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
-    component.form.patchValue({ fullName: 'Updated', dateOfBirth: '2010-01-01', sexAtBirth: 'female' });
-    component.savePatient();
-    expect(apiMock.patch).toHaveBeenCalled();
-  });
-
-  it('deletes patient and navigates back', () => {
-    // ownedById must match the signed-in user: delete is owner-only (api.md -> Patients), and
-    // deletePatient() re-checks rather than trusting the button being visible.
-    apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'u1' }));
+  it('deletes and returns to the patient list', () => {
     apiMock.delete.mockReturnValue(of({ deleted: true }));
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
     jest.spyOn(window, 'confirm').mockReturnValue(true);
-    component.deletePatient();
+    const fixture = build();
+    fixture.componentInstance.deletePatient();
     expect(apiMock.delete).toHaveBeenCalledWith('/patients/p1');
     expect(routerMock.navigate).toHaveBeenCalledWith(['/patients']);
   });
 
-  it('hides delete and refuses to call it for a non-owner', () => {
-    apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'someone-else' }));
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
-
-    expect(component.isOwner()).toBe(false);
+  it('hides delete from a non-owner and refuses the call', () => {
+    const fixture = build({ ...patient, ownedById: 'someone-else' });
     expect(fixture.nativeElement.querySelector('button.danger')).toBeNull();
-
-    jest.spyOn(window, 'confirm').mockReturnValue(true);
-    component.deletePatient();
+    fixture.componentInstance.deletePatient();
     expect(apiMock.delete).not.toHaveBeenCalled();
   });
 
-  it('shows a delete failure next to the button, not in the care team card', () => {
-    apiMock.get.mockReturnValue(of({ id: 'p1', ownedById: 'u1' }));
-    apiMock.delete.mockReturnValue(throwError(() => ({ status: 403, error: { message: 'NOT_PATIENT_OWNER' } })));
-    const fixture = TestBed.createComponent(PatientSettingsPage);
-    fixture.detectChanges();
-    const component = fixture.componentInstance;
+  it('reports a failed delete without clobbering other messages', () => {
+    apiMock.delete.mockReturnValue(throwError(() => ({ error: { message: 'boom' } })));
     jest.spyOn(window, 'confirm').mockReturnValue(true);
-
+    const fixture = build();
+    const component = fixture.componentInstance;
     component.deletePatient();
-
-    expect(component.deleteError()).toContain('owner');
-    expect(component.careTeamError()).toBeNull();
+    expect(component.deleteError()).toBe('Could not delete this patient.');
     expect(component.deleting()).toBe(false);
   });
 });

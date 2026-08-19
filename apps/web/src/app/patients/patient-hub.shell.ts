@@ -26,7 +26,7 @@ import { PatientHubStore } from './patient-hub.store';
           <h1>{{ store.patient()?.fullName || 'Patient' }}</h1>
           <div class="meta">
             <span class="muted" *ngIf="age() as a">{{ a }}</span>
-            <span class="muted" *ngIf="store.patient() as p">{{ p.sexAtBirth }}</span>
+            <span class="muted sex" *ngIf="store.patient() as p">{{ p.sexAtBirth }}</span>
             <!-- Allergies are header material on the ER Brief; the hub mirrors that priority so a
                  danger-class reaction is visible from every tab, not just the one that lists it. -->
             <span class="pill pill-danger" *ngFor="let r of store.dangerReactions()">
@@ -44,6 +44,9 @@ import { PatientHubStore } from './patient-hub.store';
 
       <nav class="tab-bar">
         <a class="tab-link" routerLink="journal" routerLinkActive="active">Journal</a>
+        <a class="tab-link" routerLink="meds" routerLinkActive="active">Meds</a>
+        <a class="tab-link" routerLink="history" routerLinkActive="active">History</a>
+        <a class="tab-link" routerLink="share" routerLinkActive="active">Share</a>
         <a class="tab-link settings-tab" routerLink="settings" routerLinkActive="active" title="Settings">⚙</a>
       </nav>
 
@@ -72,6 +75,10 @@ import { PatientHubStore } from './patient-hub.store';
         gap: 0.4rem;
         flex-wrap: wrap;
         margin-top: 0.35rem;
+      }
+      /* Only the enum gets title-cased. A reaction description is the caregiver's own sentence
+         ("throat swelled up") and must render as they typed it. */
+      .sex {
         text-transform: capitalize;
       }
       .pill-warn {

@@ -238,7 +238,7 @@ export class NewConditionPage implements OnInit {
     this.api.post<Condition, CreateConditionDto>(`/patients/${this.patientId}/conditions`, body).subscribe({
       next: () => {
         this.saving.set(false);
-        this.router.navigate(['/patients', this.patientId]);
+        this.router.navigate(['/patients', this.patientId, 'history']);
       },
       error: (err) => {
         this.saving.set(false);
@@ -248,6 +248,6 @@ export class NewConditionPage implements OnInit {
   }
 
   cancel() {
-    this.router.navigate(['/patients', this.patientId]);
+    this.router.navigate(['/patients', this.patientId, 'history']);
   }
 }

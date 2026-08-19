@@ -101,6 +101,19 @@ export const appRoutes: Route[] = [
         loadComponent: () => import('./timeline/timeline.page').then((m) => m.TimelinePage),
       },
       {
+        path: 'meds',
+        loadComponent: () => import('./patients/tabs/patient-meds.page').then((m) => m.PatientMedsPage),
+      },
+      {
+        path: 'history',
+        loadComponent: () =>
+          import('./patients/tabs/patient-history.page').then((m) => m.PatientHistoryPage),
+      },
+      {
+        path: 'share',
+        loadComponent: () => import('./patients/tabs/patient-share.page').then((m) => m.PatientSharePage),
+      },
+      {
         path: 'settings',
         loadComponent: () =>
           import('./patients/tabs/patient-settings.page').then((m) => m.PatientSettingsPage),

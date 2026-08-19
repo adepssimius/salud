@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
-import { AdverseReaction, Episode, Patient } from '@salud/shared/types';
+import { AdverseReaction, CareTeamMember, Episode, Patient } from '@salud/shared/types';
 
 /**
  * State shared by the patient hub shell and its tabs.
@@ -19,6 +19,9 @@ export class PatientHubStore {
   readonly patient = signal<Patient | null>(null);
   readonly reactions = signal<AdverseReaction[]>([]);
   readonly activeEpisodes = signal<Episode[]>([]);
+  readonly careTeam = signal<CareTeamMember[]>([]);
+  readonly careTeamLoading = signal(false);
+  readonly careTeamError = signal<string | null>(null);
   readonly error = signal<string | null>(null);
 
   /** Header material: only `danger` reactions earn a pill next to the patient's name (F-7.3). */
@@ -29,6 +32,10 @@ export class PatientHubStore {
     this.loadPatient();
     this.loadReactions();
     this.loadActiveEpisodes();
+    // Loaded at the hub rather than by the Share tab that renders it: the Settings tab resolves the
+    // name behind "code status set by ..." out of the same list, and attribution (P3) shouldn't
+    // depend on which tab happens to be open.
+    this.loadCareTeam();
   }
 
   loadPatient() {
@@ -48,6 +55,23 @@ export class PatientHubStore {
       next: (res) => this.reactions.set(res),
       error: () => this.reactions.set([]),
     });
+  }
+
+  loadCareTeam() {
+    this.careTeamLoading.set(true);
+    this.careTeamError.set(null);
+    this.api
+      .get<{ careTeam?: CareTeamMember[] } | CareTeamMember[]>(`/patients/${this.patientId()}/care-team`)
+      .subscribe({
+        next: (res) => {
+          this.careTeam.set(Array.isArray(res) ? res : res.careTeam ?? []);
+          this.careTeamLoading.set(false);
+        },
+        error: (err) => {
+          this.careTeamError.set(errorText(err, 'Could not load the care team.'));
+          this.careTeamLoading.set(false);
+        },
+      });
   }
 
   loadActiveEpisodes() {

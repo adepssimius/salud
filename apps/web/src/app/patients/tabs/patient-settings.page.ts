@@ -1,32 +1,24 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, effect, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router } from '@angular/router';
+import { Router } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { FormsModule } from '@angular/forms';
-import {
-  AdverseReaction,
-  CareTeamMember,
-  CareTeamRole,
-  Condition,
-  Medication,
-  Patient,
-  SexAtBirth,
-  UpdateCodeStatusDto,
-  UpdatePatientDto,
-  UserProfile,
-} from '@salud/shared/types';
+import { Patient, UpdateCodeStatusDto, UpdatePatientDto } from '@salud/shared/types';
 import { ApiClientService } from '../../core/api-client.service';
 import { AuthService } from '../../core/auth.service';
 import { errorText } from '../../core/error-display';
 import { timeAgo } from '../../core/relative-time';
 import { RevisionHistoryComponent } from '../../core/revision-history.component';
+import { PatientHubStore } from '../patient-hub.store';
 
-interface UserSearchResult {
-  id: string;
-  email: string;
-  displayName: string;
-}
-
+/**
+ * The deliberate acts: edit the record, set the code status, delete the patient.
+ *
+ * Behind a gear rather than being the hub's landing tab, because editing is something a caregiver
+ * chooses to do, not the resting state of a patient page (frontend.md → Information architecture
+ * v2). Reactions, conditions and the care team, which used to share this page, now live on the
+ * tabs where they are acted on.
+ */
 @Component({
   selector: 'app-patient-settings-page',
   standalone: true,
@@ -40,8 +32,6 @@ interface UserSearchResult {
             <p class="muted">View and edit patient info.</p>
           </div>
           <div class="header-actions">
-            <button class="secondary" type="button" (click)="goToErBrief()">ER Brief</button>
-            <button class="secondary" type="button" (click)="goToLabImport()">Import lab report</button>
             <button
               *ngIf="isOwner()"
               class="danger"
@@ -97,13 +87,13 @@ interface UserSearchResult {
             <p class="muted">Set deliberately; the age is always visible.</p>
           </div>
           <button class="secondary" type="button" (click)="startEditCodeStatus()" *ngIf="!editingCodeStatus()">
-            {{ patient()?.codeStatus ? 'Update' : 'Set code status' }}
+            {{ store.patient()?.codeStatus ? 'Update' : 'Set code status' }}
           </button>
         </div>
         <div *ngIf="!editingCodeStatus()">
-          <p *ngIf="patient()?.codeStatus" class="code-status-value">{{ patient()?.codeStatus }}</p>
-          <p *ngIf="!patient()?.codeStatus" class="muted">Not set.</p>
-          <p class="muted small" *ngIf="patient()?.codeStatusSetAt">
+          <p *ngIf="store.patient()?.codeStatus" class="code-status-value">{{ store.patient()?.codeStatus }}</p>
+          <p *ngIf="!store.patient()?.codeStatus" class="muted">Not set.</p>
+          <p class="muted small" *ngIf="store.patient()?.codeStatusSetAt">
             Set by {{ codeStatusSetByName() }} · {{ codeStatusAge() }}
           </p>
         </div>
@@ -114,171 +104,6 @@ interface UserSearchResult {
           </button>
           <button class="secondary" type="button" (click)="editingCodeStatus.set(false)">Cancel</button>
         </div>
-      </div>
-
-      <!-- Above Conditions deliberately: reactions are header material on the ER Brief (F-7.3,
-           "allergies belong in the header"), and this page should mirror that priority. -->
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2>Reactions</h2>
-            <p class="muted">Allergies and adverse reactions. These warn you at dose entry.</p>
-          </div>
-          <button class="secondary" type="button" (click)="goToNewReaction()">Add reaction</button>
-        </div>
-        <div class="error" *ngIf="reactionsError()">{{ reactionsError() }}</div>
-        <ul class="row-list" *ngIf="reactions().length">
-          <li *ngFor="let r of reactions()">
-            <span>
-              <span class="pill" [class.pill-danger]="r.severity === 'danger'" [class.pill-neutral]="r.severity !== 'danger'">
-                {{ r.severity }}
-              </span>
-              {{ r.description }}
-              <span class="muted small"> — {{ describeReactionScope(r) }}</span>
-              <span class="muted small">
-                ·
-                <ng-container *ngIf="r.occurredAt; else noDate">{{
-                  r.occurredAt! * 1000 | date: 'mediumDate'
-                }}</ng-container>
-                <ng-template #noDate>Date unknown</ng-template>
-              </span>
-            </span>
-            <button type="button" class="tiny" (click)="deleteReaction(r)">Remove</button>
-          </li>
-        </ul>
-        <p class="muted" *ngIf="!reactions().length">No reactions recorded.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2>Conditions</h2>
-            <p class="muted">Standing frames for chronic illness.</p>
-          </div>
-          <button class="secondary" type="button" (click)="goToNewCondition()">Add condition</button>
-        </div>
-        <ul class="condition-list" *ngIf="conditions().length">
-          <li *ngFor="let c of conditions()">
-            <button type="button" class="condition-row" (click)="goToCondition(c.id)">
-              <span class="name">{{ c.name }}</span>
-              <span class="pill" [class.pill-success]="c.status === 'active'">{{ c.status }}</span>
-            </button>
-          </li>
-        </ul>
-        <p class="muted" *ngIf="!conditions().length">No conditions yet.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2>Caregivers</h2>
-            <p class="muted">Manage care team access and relationships.</p>
-          </div>
-          <button class="secondary" type="button" (click)="openAddCaregiver()">Add caregiver</button>
-        </div>
-
-        <div *ngIf="careTeamLoading()">Loading caregivers…</div>
-        <div *ngIf="careTeamError()" class="error">{{ careTeamError() }}</div>
-
-        <table *ngIf="!careTeamLoading() && careTeam().length" class="care-table">
-          <thead>
-            <tr>
-              <th>Caregiver</th>
-              <th>Relationship</th>
-              <th>Owner</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let member of careTeam()">
-              <td>
-                <div class="name">{{ member.user.displayName || member.user.email }}</div>
-                <div class="muted small">{{ member.user.email }}</div>
-              </td>
-              <td>
-                <select
-                  name="role-{{ member.user.id }}"
-                  [(ngModel)]="member.role"
-                  (ngModelChange)="changeRole(member, $event)"
-                >
-                  <option *ngFor="let role of roles" [value]="role">{{ role }}</option>
-                </select>
-              </td>
-              <td>
-                <span class="pill pill-success" *ngIf="member.user.id === patient()?.ownedById">Owner</span>
-                <button
-                  type="button"
-                  class="tiny"
-                  *ngIf="member.user.id !== patient()?.ownedById"
-                  (click)="makeOwner(member)"
-                >
-                  Make owner
-                </button>
-              </td>
-              <td class="actions-cell">
-                <button
-                  type="button"
-                  class="icon-button"
-                  [disabled]="member.user.id === patient()?.ownedById"
-                  (click)="removeCaregiver(member)"
-                >
-                  🗑️
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p class="muted" *ngIf="!careTeamLoading() && !careTeam().length">No caregivers yet.</p>
-      </div>
-    </div>
-
-    <button
-      type="button"
-      class="modal-backdrop"
-      *ngIf="addModalOpen()"
-      aria-label="Close dialog"
-      (click)="closeAddModal()"
-    ></button>
-    <div class="modal" *ngIf="addModalOpen()" role="dialog" aria-modal="true">
-      <div class="modal-header">
-        <h3>Add caregiver</h3>
-        <button class="icon-button" (click)="closeAddModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <label class="field">
-          <span>Search by email</span>
-          <div class="inline">
-            <input type="email" [(ngModel)]="searchEmail" name="searchEmail" />
-            <button class="secondary" type="button" (click)="searchUsers()">Search</button>
-          </div>
-        </label>
-        <div *ngIf="searchError" class="error">{{ searchError }}</div>
-        <ul class="search-results" *ngIf="searchResults.length">
-          <li *ngFor="let u of searchResults" [class.selected]="u.id === selectedUserId">
-            <button
-              type="button"
-              class="result-button"
-              [attr.aria-pressed]="u.id === selectedUserId"
-              (click)="selectUser(u.id)"
-            >
-              <div class="name">{{ u.displayName || u.email }}</div>
-              <div class="muted small">{{ u.email }}</div>
-            </button>
-          </li>
-        </ul>
-
-        <label class="field">
-          <span>Relationship</span>
-          <select [(ngModel)]="newCaregiverRole" name="newCaregiverRole">
-            <option *ngFor="let role of roles" [value]="role">{{ role }}</option>
-          </select>
-        </label>
-      </div>
-      <div class="modal-footer">
-        <button class="secondary" type="button" (click)="closeAddModal()">Cancel</button>
-        <button class="primary" type="button" [disabled]="!selectedUserId || savingCaregiver()" (click)="addCaregiver()">
-          {{ savingCaregiver() ? 'Adding…' : 'Add caregiver' }}
-        </button>
       </div>
     </div>
   `,
@@ -292,10 +117,6 @@ interface UserSearchResult {
       .card-header {
         align-items: center;
       }
-      .header-actions {
-        align-items: center;
-      }
-      h1,
       h2 {
         margin: 0;
       }
@@ -312,332 +133,95 @@ interface UserSearchResult {
         gap: 0.75rem;
         align-items: center;
       }
-      .danger,
-      .tiny {
-        border: none;
-        border-radius: var(--radius-control);
-        font-weight: 700;
-        cursor: pointer;
-      }
       .danger {
         padding: 0.55rem 0.9rem;
-        background: rgba(248, 113, 113, 0.12);
-        border: 1px solid rgba(248, 113, 113, 0.6);
-        color: #fecdd3;
-      }
-      .tiny {
-        padding: 0.35rem 0.6rem;
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
+        border-radius: var(--radius-control);
+        background: var(--danger-bg);
+        border: 1px solid var(--danger-border);
+        color: var(--danger-text);
+        font-weight: 700;
+        cursor: pointer;
       }
       .code-status-value {
         font-size: 1.1rem;
         font-weight: 700;
         margin: 0.25rem 0;
       }
-      .condition-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      .condition-row {
-        width: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.65rem 0.75rem;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
-        color: inherit;
-        font: inherit;
-        cursor: pointer;
-        text-align: left;
-      }
-      .care-table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      .care-table th,
-      .care-table td {
-        text-align: left;
-        padding: 0.6rem;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      }
-      .name {
-        font-weight: 700;
-      }
-      .small {
-        font-size: 0.9rem;
-      }
-      .pill {
-        text-transform: capitalize;
-      }
-      .actions-cell {
-        text-align: right;
-      }
-      .icon-button {
-        border: none;
-        background: transparent;
-        color: #e2e8f0;
-        cursor: pointer;
-      }
-      /* A button rather than a div so dismissing the modal is reachable without a mouse. */
-      .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        border: none;
-        padding: 0;
-        cursor: pointer;
-      }
-      .modal {
-        position: fixed;
-        top: 15%;
-        left: 50%;
-        transform: translateX(-50%);
-        width: min(520px, 92vw);
-        background: #0b1224;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 12px;
-        padding: 1rem;
-        z-index: 50;
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
-      }
-      .modal-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 0.5rem;
-      }
-      .modal-body {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .modal-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.5rem;
-        margin-top: 0.5rem;
-      }
       .inline {
         display: flex;
         gap: 0.5rem;
       }
-      .search-results {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-      }
-      .search-results li {
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
-      }
-      .result-button {
-        width: 100%;
-        padding: 0.65rem;
-        text-align: left;
-        background: none;
-        border: none;
-        color: inherit;
-        font: inherit;
-        cursor: pointer;
-        border-radius: 10px;
-      }
-      .search-results li.selected {
-        border-color: rgba(14, 165, 233, 0.7);
-        background: rgba(14, 165, 233, 0.1);
-      }
     `,
   ],
 })
-export class PatientSettingsPage implements OnInit {
+export class PatientSettingsPage {
+  protected readonly store = inject(PatientHubStore);
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
-  private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
 
-  roles: CareTeamRole[] = ['self', 'parent', 'co-parent', 'nanny', 'grandparent', 'babysitter', 'other'];
-
-  patientId = '';
-  patient = signal<Patient | null>(null);
   savingPatient = signal(false);
   saveMessage = signal<string | null>(null);
   deleting = signal(false);
   deleteError = signal<string | null>(null);
-
-  careTeam = signal<CareTeamMember[]>([]);
-  careTeamLoading = signal(false);
-  careTeamError = signal<string | null>(null);
-
-  conditions = signal<Condition[]>([]);
-  reactions = signal<AdverseReaction[]>([]);
-  reactionsError = signal<string | null>(null);
-  // One catalog fetch to turn scope ids into names, rather than N+1 per row.
-  private medicationNames = signal<Record<string, string>>({});
-
   editingCodeStatus = signal(false);
   codeStatusDraft = '';
   savingCodeStatus = signal(false);
 
-  addModalOpen = signal(false);
-  searchEmail = '';
-  searchResults: UserSearchResult[] = [];
-  selectedUserId: string | null = null;
-  newCaregiverRole: CareTeamRole = 'other';
-  savingCaregiver = signal(false);
-  searchError: string | null = null;
-
   form = this.fb.nonNullable.group({
-    fullName: ['', [Validators.required, Validators.minLength(1)]],
+    fullName: ['', [Validators.required]],
     dateOfBirth: ['', [Validators.required]],
-    sexAtBirth: this.fb.control<SexAtBirth>('female', { nonNullable: true }),
+    sexAtBirth: this.fb.control<'female' | 'male'>('female', { nonNullable: true }),
     notes: [''],
   });
 
-  currentUserId = computed(() => this.auth.user()?.id ?? null);
+  private currentUserId = computed(() => this.auth.user()?.id ?? null);
 
-  // Deleting a patient is owner-only (api.md → Patients). Hiding the button is the affordance;
-  // deletePatient() re-checks, because a hidden button is not a permission check.
+  get patientId() {
+    return this.store.patientId();
+  }
+
   isOwner = computed(() => {
-    const p = this.patient();
-    const me = this.currentUserId();
-    return !!p && !!me && p.ownedById === me;
+    const uid = this.currentUserId();
+    const p = this.store.patient();
+    return !!uid && !!p && p.ownedById === uid;
   });
 
+  /**
+   * Resolved out of the hub store's care team, not a fetch of this tab's own — the care team is
+   * rendered on the Share tab, but attribution (P3) has to hold up wherever the code status is
+   * read, so the hub loads it once for both.
+   */
   codeStatusSetByName = computed(() => {
-    const setById = this.patient()?.codeStatusSetByUserId;
-    if (!setById) return 'unknown';
-    const member = this.careTeam().find((m) => m.user.id === setById);
-    return member?.user.displayName || member?.user.email || 'unknown';
+    const id = this.store.patient()?.codeStatusSetByUserId;
+    if (!id) return '';
+    const member = this.store.careTeam().find((m) => m.user.id === id);
+    return member?.user.displayName || member?.user.email || 'someone';
   });
 
   codeStatusAge = computed(() => {
-    const setAt = this.patient()?.codeStatusSetAt;
-    if (!setAt) return '';
-    return timeAgo(setAt);
+    const at = this.store.patient()?.codeStatusSetAt;
+    return at ? timeAgo(at) : '';
   });
 
-  ngOnInit(): void {
-    this.patientId = this.route.snapshot.paramMap.get('id') ?? '';
-    if (!this.patientId) {
-      this.router.navigateByUrl('/patients');
-      return;
-    }
-    if (!this.auth.user() && this.auth.token) {
-      this.auth.me().subscribe({
-        next: () => this.loadData(),
-        error: () => this.auth.logout(),
-      });
-    } else {
-      this.loadData();
-    }
-  }
-
-  private loadData() {
-    if (!this.currentUserId()) return;
-    this.loadPatient();
-    this.loadCareTeam();
-    this.loadConditions();
-    this.loadReactions();
-  }
-
-  private loadReactions() {
-    this.reactionsError.set(null);
-    this.api.get<AdverseReaction[]>(`/patients/${this.patientId}/reactions`).subscribe({
-      next: (res) => {
-        this.reactions.set(res);
-        if (res.length && !Object.keys(this.medicationNames()).length) {
-          this.api.get<Medication[]>('/medications').subscribe({
-            next: (meds) =>
-              this.medicationNames.set(Object.fromEntries(meds.map((m) => [m.id, m.name]))),
-            error: () => this.medicationNames.set({}),
-          });
-        }
-      },
-      error: (err) => {
-        this.reactions.set([]);
-        this.reactionsError.set(errorText(err, 'Could not load reactions.'));
-      },
+  constructor() {
+    // The hub owns the fetch, so the patient may land before or after this tab is constructed.
+    // An effect covers both without the page issuing a duplicate GET; `pristine` keeps a reload
+    // from stamping over edits the caregiver has started typing.
+    effect(() => {
+      const p = this.store.patient();
+      if (p && this.form.pristine) this.patchForm(p);
     });
   }
 
-  describeReactionScope(r: AdverseReaction): string {
-    if (r.scopeType === 'tag') return `tag: ${r.tag}`;
-    if (r.scopeType === 'medication' && r.medicationId) {
-      return this.medicationNames()[r.medicationId] ?? 'a medication';
-    }
-    // Embodiment names would need a second lookup per row; the form it applies to is visible on
-    // the medication page, and the description is what a caregiver scans this list for.
-    return 'a specific form';
-  }
-
-  goToNewReaction() {
-    this.router.navigate(['/patients', this.patientId, 'reactions', 'new']);
-  }
-
-  deleteReaction(r: AdverseReaction) {
-    // A mis-scoped reaction fires a full-screen interstitial on every future dose, so removing one
-    // is a real action -- confirm, matching the care-team and patient delete convention.
-    if (!window.confirm(`Remove the reaction "${r.description}"?`)) return;
-    this.reactionsError.set(null);
-    this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}/reactions/${r.id}`).subscribe({
-      next: () => this.reactions.set(this.reactions().filter((x) => x.id !== r.id)),
-      error: (err) => this.reactionsError.set(errorText(err, 'Could not remove the reaction.')),
+  private patchForm(p: Patient) {
+    this.form.patchValue({
+      fullName: p.fullName,
+      dateOfBirth: p.dateOfBirth,
+      sexAtBirth: p.sexAtBirth,
+      notes: p.notes ?? '',
     });
-  }
-
-  private loadConditions() {
-    this.api.get<Condition[]>(`/patients/${this.patientId}/conditions`).subscribe({
-      next: (res) => this.conditions.set(res),
-      error: () => this.conditions.set([]),
-    });
-  }
-
-  private loadPatient() {
-    if (!this.currentUserId()) return;
-    this.api.get<Patient>(`/patients/${this.patientId}`).subscribe({
-      next: (p) => {
-        this.patient.set(p);
-        this.form.patchValue({
-          fullName: p.fullName,
-          dateOfBirth: p.dateOfBirth,
-          sexAtBirth: p.sexAtBirth,
-          notes: p.notes ?? '',
-        });
-      },
-      error: () => {
-        this.router.navigateByUrl('/patients');
-      },
-    });
-  }
-
-  private loadCareTeam() {
-    if (!this.currentUserId()) return;
-    this.careTeamLoading.set(true);
-    this.careTeamError.set(null);
-    this.api
-      .get<{ careTeam?: CareTeamMember[] } | CareTeamMember[]>(`/patients/${this.patientId}/care-team`)
-      .subscribe({
-        next: (res) => {
-          const list = Array.isArray(res) ? res : res.careTeam ?? [];
-          this.careTeam.set(list);
-          this.careTeamLoading.set(false);
-        },
-        error: (err) => {
-          this.careTeamError.set(errorText(err, 'Unable to load caregivers right now.'));
-          this.careTeamLoading.set(false);
-        },
-      });
   }
 
   savePatient() {
@@ -647,7 +231,8 @@ export class PatientSettingsPage implements OnInit {
     const dto: UpdatePatientDto = { ...this.form.getRawValue() };
     this.api.patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, dto).subscribe({
       next: (p) => {
-        this.patient.set(p);
+        this.store.patient.set(p);
+        this.form.markAsPristine();
         this.savingPatient.set(false);
         this.saveMessage.set('Saved');
       },
@@ -658,168 +243,36 @@ export class PatientSettingsPage implements OnInit {
     });
   }
 
-  changeRole(member: CareTeamMember, role: CareTeamRole) {
-    if (!this.currentUserId()) return;
-    this.api
-      .post<CareTeamMember, { userId: string; role: CareTeamRole }>(
-        `/patients/${this.patientId}/care-team`,
-        { userId: member.user.id, role },
-      )
-      .subscribe({
-        next: (res) => {
-          this.careTeam.set(
-            this.careTeam().map((m) =>
-              m.user.id === member.user.id ? { ...m, role: res.role } : m,
-            ),
-          );
-        },
-        error: (err) => {
-          this.careTeamError.set(errorText(err, 'Could not update relationship.'));
-        },
-      });
-  }
-
-  makeOwner(member: CareTeamMember) {
-    if (!this.currentUserId()) return;
-    this.api
-      .patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, {
-        ownedById: member.user.id,
-      })
-      .subscribe({
-        next: (p) => {
-          this.patient.set(p);
-        },
-        error: (err) => {
-          // The default USER_NOT_FOUND sentence is written for adding a caregiver by a stale search
-          // result; transferring ownership needs its own wording (app-spec/frontend.md → "Errors &
-          // failure messages").
-          this.careTeamError.set(
-            errorText(err, 'Could not update owner.', {
-              USER_NOT_FOUND: 'That caregiver is no longer on this care team. Refresh the page and try again.',
-            }),
-          );
-        },
-      });
-  }
-
-  removeCaregiver(member: CareTeamMember) {
-    if (!this.currentUserId()) return;
-    if (member.user.id === this.patient()?.ownedById) return;
-    this.api
-      .delete<{ deleted: boolean }>(
-        `/patients/${this.patientId}/care-team/${member.user.id}`,
-      )
-      .subscribe({
-        next: () => {
-          this.careTeam.set(this.careTeam().filter((m) => m.user.id !== member.user.id));
-        },
-        error: (err) => {
-          this.careTeamError.set(errorText(err, 'Could not remove caregiver.'));
-        },
-      });
-  }
-
-  openAddCaregiver() {
-    this.addModalOpen.set(true);
-    this.searchResults = [];
-    this.selectedUserId = null;
-    this.newCaregiverRole = 'other';
-    this.searchEmail = '';
-    this.searchError = null;
-  }
-
-  closeAddModal() {
-    this.addModalOpen.set(false);
-  }
-
-  searchUsers() {
-    if (!this.searchEmail) return;
-    this.searchError = null;
-    this.api.get<UserSearchResult[]>(`/users/search`, { email: this.searchEmail }).subscribe({
-      next: (users) => {
-        this.searchResults = users;
-        if (users.length) {
-          this.selectedUserId = users[0].id;
-        }
-      },
-      error: (err) => {
-        this.searchError = errorText(err, 'Unable to search right now.');
-      },
-    });
-  }
-
-  selectUser(id: string) {
-    this.selectedUserId = id;
-  }
-
-  addCaregiver() {
-    if (!this.currentUserId() || !this.selectedUserId) return;
-    this.savingCaregiver.set(true);
-    this.api
-      .post<CareTeamMember, { userId: string; role: CareTeamRole }>(
-        `/patients/${this.patientId}/care-team`,
-        { userId: this.selectedUserId, role: this.newCaregiverRole },
-      )
-      .subscribe({
-        next: (member) => {
-          this.careTeam.set([...this.careTeam(), member]);
-          this.savingCaregiver.set(false);
-          this.closeAddModal();
-        },
-        error: (err) => {
-          this.careTeamError.set(errorText(err, 'Could not add caregiver.'));
-          this.savingCaregiver.set(false);
-        },
-      });
-  }
-
-  goToErBrief() {
-    this.router.navigate(['/patients', this.patientId, 'er-brief']);
-  }
-
-  goToLabImport() {
-    this.router.navigate(['/patients', this.patientId, 'lab-import']);
-  }
-
   startEditCodeStatus() {
-    this.codeStatusDraft = this.patient()?.codeStatus ?? '';
+    this.codeStatusDraft = this.store.patient()?.codeStatus ?? '';
     this.editingCodeStatus.set(true);
   }
 
   saveCodeStatus() {
-    const value = this.codeStatusDraft.trim();
-    if (!value || this.savingCodeStatus()) return;
+    const codeStatus = this.codeStatusDraft.trim();
+    if (!codeStatus) return;
     this.savingCodeStatus.set(true);
     this.api
-      .patch<Patient, UpdateCodeStatusDto>(`/patients/${this.patientId}/code-status`, { codeStatus: value })
+      .patch<Patient, UpdateCodeStatusDto>(`/patients/${this.patientId}/code-status`, { codeStatus })
       .subscribe({
         next: (p) => {
-          this.patient.set(p);
+          this.store.patient.set(p);
           this.savingCodeStatus.set(false);
           this.editingCodeStatus.set(false);
         },
-        error: () => {
+        error: (err) => {
           this.savingCodeStatus.set(false);
+          this.saveMessage.set(errorText(err, 'Could not save the code status.'));
         },
       });
   }
 
-  goToNewCondition() {
-    this.router.navigate(['/patients', this.patientId, 'conditions', 'new']);
-  }
-
-  goToCondition(conditionId: string) {
-    this.router.navigate(['/conditions', conditionId]);
-  }
-
   deletePatient() {
-    if (!this.isOwner() || this.deleting()) return;
-    const confirmed = window.confirm(
-      'Delete this patient? This removes every observation, dose, episode, condition, schedule, reaction and photo for them. This cannot be undone.',
-    );
-    if (!confirmed) return;
-    this.deleteError.set(null);
+    if (!this.isOwner()) return;
+    const name = this.store.patient()?.fullName ?? 'this patient';
+    if (!window.confirm(`Delete ${name}? This removes every observation, dose and document.`)) return;
     this.deleting.set(true);
+    this.deleteError.set(null);
     this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}`).subscribe({
       next: () => {
         this.deleting.set(false);
@@ -827,9 +280,7 @@ export class PatientSettingsPage implements OnInit {
       },
       error: (err) => {
         this.deleting.set(false);
-        // Its own signal, rendered next to the button. This used to write into careTeamError,
-        // which renders in the Caregivers card far below and is wiped by any loadCareTeam().
-        this.deleteError.set(errorText(err, 'Could not delete patient.'));
+        this.deleteError.set(errorText(err, 'Could not delete this patient.'));
       },
     });
   }
