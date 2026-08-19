@@ -262,6 +262,124 @@ describe('Patients (e2e)', () => {
       .expect(404);
   });
 
+  // Accent colors are the wrong-chart guard (frontend.md → "Patient identity"): two patients in
+  // one household must never open on the same color, or the guard is decoration.
+  it('assigns a distinct accent color per patient, and keeps it across reads', async () => {
+    const { token } = await registerAndLogin(app);
+
+    const first = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Color One', dateOfBirth: '2015-01-01', sexAtBirth: 'male' })
+      .expect(201);
+    const second = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Color Two', dateOfBirth: '2016-01-01', sexAtBirth: 'female' })
+      .expect(201);
+
+    expect(typeof first.body.accentColor).toBe('string');
+    expect(first.body.accentColor).not.toBe(second.body.accentColor);
+
+    const reread = await request(app.getHttpServer())
+      .get(`/api/patients/${first.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(reread.body.accentColor).toBe(first.body.accentColor);
+
+    const listed = await request(app.getHttpServer())
+      .get(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const listedFirst = listed.body.find((p: any) => p.id === first.body.id);
+    expect(listedFirst.accentColor).toBe(first.body.accentColor);
+  });
+
+  it('honours an explicitly chosen accent color and lets PATCH change it', async () => {
+    const { token } = await registerAndLogin(app);
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'Chosen Color',
+        dateOfBirth: '2017-03-03',
+        sexAtBirth: 'male',
+        accentColor: 'violet',
+      })
+      .expect(201);
+    expect(created.body.accentColor).toBe('violet');
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/api/patients/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ accentColor: 'amber' })
+      .expect(200);
+    expect(patched.body.accentColor).toBe('amber');
+
+    const reread = await request(app.getHttpServer())
+      .get(`/api/patients/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(reread.body.accentColor).toBe('amber');
+  });
+
+  it('rejects an unknown accent color with 400, on create and on update', async () => {
+    const { token } = await registerAndLogin(app);
+
+    await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'Bad Color',
+        dateOfBirth: '2019-01-01',
+        sexAtBirth: 'female',
+        accentColor: 'chartreuse',
+      })
+      .expect(400);
+
+    const ok = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Good Color', dateOfBirth: '2019-01-01', sexAtBirth: 'female' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/patients/${ok.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ accentColor: '#ff0000' })
+      .expect(400);
+  });
+
+  // A patient row written before the column existed still has to answer with a color — the header
+  // and the list rows have nowhere to fall back to, and a colorless row reads as "no patient".
+  it('resolves a legacy null accent color to a stable token', async () => {
+    const { token } = await registerAndLogin(app);
+    const created = await request(app.getHttpServer())
+      .post(`/api/patients`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Legacy Row', dateOfBirth: '2014-04-04', sexAtBirth: 'male' })
+      .expect(201);
+
+    const db = app.get(DatabaseService).db as any;
+    await db
+      .update(schema.patients)
+      .set({ accentColor: null })
+      .where(eq(schema.patients.id, created.body.id));
+
+    const first = await request(app.getHttpServer())
+      .get(`/api/patients/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const second = await request(app.getHttpServer())
+      .get(`/api/patients/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(typeof first.body.accentColor).toBe('string');
+    expect(first.body.accentColor).toBe(second.body.accentColor);
+  });
+
   it('rejects a date of birth in the future, on create and on update', async () => {
     const { token } = await registerAndLogin(app);
     const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
