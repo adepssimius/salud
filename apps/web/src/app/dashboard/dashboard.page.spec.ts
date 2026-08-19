@@ -539,6 +539,35 @@ describe('DashboardPage', () => {
         expect(card.bands[0].high).toBeCloseTo(99, 0);
       });
 
+      // The reading and the button that updates it are one glance (frontend.md → Home).
+      it('puts the Temp action beside the latest reading, not in the bottom action row', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [
+            { patientId: 'p1', lastMethod: 'oral', points: [{ timestamp: nowSec() - 3600, valueC: 39.4 }] },
+          ],
+        });
+
+        const sparkButtons = Array.from(
+          fixture.nativeElement.querySelectorAll('.spark-wrap button'),
+        ) as HTMLElement[];
+        expect(sparkButtons.map((b) => b.textContent!.trim())).toEqual(['Temp']);
+        // What is left below is the search-first path for a medication not already on the card.
+        const bottom = Array.from(
+          fixture.nativeElement.querySelectorAll('.quick-actions button'),
+        ) as HTMLElement[];
+        expect(bottom.map((b) => b.textContent!.trim())).toEqual(['Dose']);
+      });
+
+      it('still offers Temp with no readings at all — that is exactly when one is wanted', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', lastMethod: null, points: [] }],
+        });
+        expect(fixture.nativeElement.textContent).toContain('No temperature logged in the last 48 hours.');
+        expect(fixture.nativeElement.querySelector('.spark-wrap button')!.textContent!.trim()).toBe('Temp');
+      });
+
       it('offers Temp and Dose quick actions scoped to that patient, landing on the compact forms', () => {
         const fixture = render({
           activeEpisodes: [episode({ medications: [dose()] })],
@@ -581,6 +610,7 @@ describe('DashboardPage', () => {
             lastEmbodimentLabel: "Children's syrup",
             lastAmountMg: 160,
             lastAmountMl: 5,
+            lastDoseSource: 'weight_based',
             ...over,
           });
 
@@ -617,6 +647,8 @@ describe('DashboardPage', () => {
               medicationId: 'm1',
               embodimentId: 'emb1',
               amountMg: '160',
+              // Without this the form falls back to `override` and the repeat is flagged atypical.
+              doseSource: 'weight_based',
             },
           });
         });

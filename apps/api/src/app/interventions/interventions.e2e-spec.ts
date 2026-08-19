@@ -421,10 +421,27 @@ describe('Recent medications (e2e)', () => {
       lastAmountMl: null,
       lastEmbodimentId: null,
       lastEmbodimentLabel: null,
+      lastDoseSource: null,
       nextAllowedAt: null,
       isAtypicalLastDose: false,
       onActiveSchedule: true,
     });
+  });
+
+  // Carried so the "same as last time" prefill does not silently downgrade a guideline dose to an
+  // ad-hoc override — and get it flagged atypical for it (frontend.md → Home).
+  it('carries the last dose source, so a repeat is not recorded as an override', async () => {
+    const patientId = await createPatient(app, token);
+    const medicationId = await createMedication(`recents-source-${Date.now()}`);
+    await logDose(patientId, {
+      performedAt: new Date().toISOString(),
+      medicationId,
+      amountMg: 160,
+      doseSource: 'weight_based',
+      weightKgUsed: 14,
+    });
+
+    expect((await recents(patientId))[0].lastDoseSource).toBe('weight_based');
   });
 
   // The wrong-chart guard, and the reason this endpoint exists per patient rather than per

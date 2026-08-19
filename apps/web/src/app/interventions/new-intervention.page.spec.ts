@@ -536,6 +536,29 @@ describe('NewInterventionPage', () => {
       expect(fixture.componentInstance.selectedMedication()?.id).toBe('med-1');
     });
 
+    // The source travels with the amount, or every repeat of a guideline dose gets recorded as an
+    // ad-hoc override and flagged atypical for it (frontend.md → Home).
+    describe('dose source', () => {
+      it('carries the previous source rather than leaving the form on its override default', () => {
+        const fixture = render({ ...repeatDose, doseSource: 'weight_based' });
+        expect(fixture.componentInstance.form.getRawValue().doseSource).toBe('weight_based');
+      });
+
+      it('degrades schedule to override — a repeat is not executing the standing schedule', () => {
+        const fixture = render({ ...repeatDose, doseSource: 'schedule' });
+        const val = fixture.componentInstance.form.getRawValue();
+        expect(val.doseSource).toBe('override');
+        expect(val.interventionScheduleId).toBe('');
+      });
+
+      it('keeps the override default for an absent or bogus source', () => {
+        expect(render(repeatDose).componentInstance.form.getRawValue().doseSource).toBe('override');
+        expect(
+          render({ ...repeatDose, doseSource: 'vibes' }).componentInstance.form.getRawValue().doseSource,
+        ).toBe('override');
+      });
+    });
+
     it('renders the compact layout with the patient pinned and no patient or type picker', () => {
       const fixture = render(repeatDose);
       const el = fixture.nativeElement as HTMLElement;

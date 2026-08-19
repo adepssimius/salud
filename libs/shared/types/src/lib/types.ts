@@ -232,6 +232,7 @@ export type InterventionType = 'medication_dose' | 'dressing_change';
  * set up earlier rather than a decision made in the moment; a client never sends this value.
  */
 export type DoseSource = 'weight_based' | 'age_based' | 'override' | 'schedule';
+export const DOSE_SOURCES: readonly DoseSource[] = ['weight_based', 'age_based', 'override', 'schedule'];
 
 export interface Intervention {
   id: string;
@@ -832,6 +833,12 @@ export interface DashboardMedicationSummary {
   lastEmbodimentLabel: string | null;
   lastAmountMg: number | null;
   lastAmountMl: number | null;
+  /**
+   * That dose's `doseSource` verbatim, `'schedule'` included — how the caregiver arrived at the
+   * amount, which a repeat of the same amount arrives at the same way. Degrading `'schedule'` for
+   * a repeat logged outside its schedule is the client's call at prefill time (frontend.md → Home).
+   */
+  lastDoseSource: DoseSource | null;
 }
 
 /** Most recent dose of one medication for one patient, inside the 24-hour window. */
@@ -850,6 +857,7 @@ export interface DashboardLastDose {
   lastEmbodimentLabel: string | null;
   lastAmountMg: number | null;
   lastAmountMl: number | null;
+  lastDoseSource: DoseSource | null;
 }
 
 /**
@@ -1447,6 +1455,11 @@ export interface RecentMedication {
   lastAmountMl: number | null;
   lastEmbodimentId: string | null;
   lastEmbodimentLabel: string | null;
+  /**
+   * How the caregiver arrived at that amount, carried so a repeat is not silently recorded as an
+   * ad-hoc `override` (and flagged atypical for it). Reported verbatim — see DashboardLastDose.
+   */
+  lastDoseSource: DoseSource | null;
   /**
    * Frozen at log time on the last dose, exactly like the dashboard's — `null` means no guideline
    * supplied an interval, which is correct rather than missing (api.md → Timeline & dashboard).

@@ -17,6 +17,7 @@ import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
+import { DoseSource } from '@salud/shared/types';
 
 /** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
 const RECENT_MEDICATIONS_WINDOW_DAYS = 14;
@@ -26,6 +27,7 @@ interface RecentDose {
   lastAmountMg: number | null;
   lastAmountMl: number | null;
   lastEmbodimentId: string | null;
+  lastDoseSource: DoseSource | null;
   nextAllowedAt: number | null;
   isAtypicalLastDose: boolean;
 }
@@ -519,6 +521,8 @@ export class InterventionsService {
         lastAmountMg: metadata.amountMg ?? null,
         lastAmountMl: metadata.amountMl ?? null,
         lastEmbodimentId: metadata.medicationEmbodimentId ?? null,
+        // Verbatim, 'schedule' included — see api.md; the prefill decides what to do with it.
+        lastDoseSource: metadata.doseSource ?? null,
         nextAllowedAt: metadata.nextAllowedAt ?? null,
         isAtypicalLastDose: !!metadata.isAtypical,
       });
@@ -574,6 +578,7 @@ export class InterventionsService {
           lastEmbodimentLabel: dose?.lastEmbodimentId
             ? embodimentLabelById.get(dose.lastEmbodimentId) ?? null
             : null,
+          lastDoseSource: dose?.lastDoseSource ?? null,
           nextAllowedAt: dose?.nextAllowedAt ?? null,
           isAtypicalLastDose: dose?.isAtypicalLastDose ?? false,
           onActiveSchedule: scheduledMedicationIds.has(medicationId),

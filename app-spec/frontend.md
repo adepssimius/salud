@@ -188,16 +188,31 @@ follows the household's state instead of rendering one fixed stack of sections:
   prefill and nothing more: dose-checks still run, guidance cards, advisory banners and the danger
   interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩". The prefill
   comes from the dashboard payload itself (`lastDoses[].doses` and `activeEpisodes[].medications`
-  carry `lastEmbodimentId`/`lastEmbodimentLabel`/`lastAmountMg`/`lastAmountMl` — api.md →
-  `GET /api/dashboard`), so Home stays a single request, and it is per-patient by construction
-  because each card's medications already are (→ "Patient identity"). With concurrent medications
-  (acetaminophen + ibuprofen on an uncontrolled fever), each line has its own button.
-- **Temp is one tap to the number.** The card's Temp action opens the compact temperature form
-  with the measurement method preselected from this patient's most recent temperature reading
-  whose method is known — across episodes, because the method is a per-patient habit (tympanic
-  for one child, rectal for the baby), not an episode property. The method select stays on the
-  form and editable; a history of `unknown` methods prefills nothing and the form defaults to
-  `unknown` as before. Backed by `lastMethod` on the payload's `recentTemperatures` rows.
+  carry `lastEmbodimentId`/`lastEmbodimentLabel`/`lastAmountMg`/`lastAmountMl`/`lastDoseSource` —
+  api.md → `GET /api/dashboard`), so Home stays a single request, and it is per-patient by
+  construction because each card's medications already are (→ "Patient identity"). With concurrent
+  medications (acetaminophen + ibuprofen on an uncontrolled fever), each line has its own button.
+  - **The dose source is part of "same as last time", not a field the repeat resets.**
+    `doseSource` records *how the caregiver arrived at the amount* (api.md → Interventions), and
+    repeating a weight-based dose is still arriving at it from the weight-based guideline. Leaving
+    the form on its `override` default would record every repeat as an ad-hoc deviation and flag
+    it atypical — a false signal in the atypical-dose count and in the ER Brief, produced by the
+    shortcut rather than by anything the caregiver did. The one source that does not carry over is
+    `schedule`: a dose repeated from the card is not executing the standing schedule (it has no
+    `interventionScheduleId`), so it prefills as `override`, which is what it is. This applies to
+    Quick Log's recents cards on the same grounds — same prefill contract, same reasoning.
+- **Temp is one tap to the number, from beside the number.** The Temp action sits **next to the
+  latest reading**, under the sparkline it belongs to — the value you just read and the button
+  that updates it are the same glance, rather than the button living in a generic action row at
+  the bottom of the card. It is present whether or not there are readings: a card saying "no
+  temperature logged in the last 48 hours" is exactly when one wants logging. It opens the compact
+  temperature form with the measurement method preselected from this patient's most recent
+  temperature reading whose method is known — across episodes, because the method is a per-patient
+  habit (tympanic for one child, rectal for the baby), not an episode property. The method select
+  stays on the form and editable; a history of `unknown` methods prefills nothing and the form
+  defaults to `unknown` as before. Backed by `lastMethod` on the payload's `recentTemperatures`
+  rows. The card's bottom action row keeps the search-first **Dose** action for a medication not
+  already listed above it.
 - **The sparkline is readable as a measurement, not just a shape.** A bare curve on an
   auto-scaled axis answers neither "how high is it" nor "is that high" — the same drawing serves a
   0.2° wobble and a 3° spike. So it carries two things beyond the line:
