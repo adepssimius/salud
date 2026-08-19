@@ -17,6 +17,7 @@ describe('DashboardPage', () => {
     upcomingSchedules: [],
     shoppingList: [],
     unacknowledgedAdvisories: [],
+    recentTemperatures: [],
   };
 
   beforeEach(async () => {
@@ -288,5 +289,304 @@ describe('DashboardPage', () => {
     fixture.componentInstance.restock('emb-1');
 
     expect(fixture.componentInstance.error()).toBe('Could not mark that as restocked.');
+  });
+
+  it('keeps the catalogs off Home — they live under Manage now', () => {
+    const fixture = TestBed.createComponent(DashboardPage);
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent;
+
+    expect(text).not.toContain('Medication catalog');
+    expect(text).not.toContain('Analyte catalog');
+    expect(text).not.toContain('New schedule');
+    // The logging actions stay: they are the reason this screen exists.
+    expect(text).toContain('Create observation');
+    expect(text).toContain('Log intervention');
+  });
+
+  // The bimodal split (frontend.md → "Information architecture (v2)" → Home). The page's shape
+  // follows the household's state; these tests pin which shape appears when.
+  describe('bimodal home', () => {
+    const nowSec = () => Math.floor(Date.now() / 1000);
+
+    const episode = (over: Record<string, unknown> = {}) => ({
+      patientId: 'p1',
+      patientName: 'Ada',
+      episodeId: 'ep1',
+      name: 'Fever',
+      startedAt: nowSec() - 2 * 86400 - 3600, // into the third day
+      lastObservationSummary: null,
+      medications: [],
+      ...over,
+    });
+
+    const dose = (over: Record<string, unknown> = {}) => ({
+      medicationId: 'm1',
+      medicationName: 'Ibuprofen',
+      lastDoseAt: nowSec() - 3600,
+      nextAllowedAt: nowSec() + 6000,
+      isAtypicalLastDose: false,
+      ...over,
+    });
+
+    const render = (payload: Record<string, unknown>) => {
+      apiMock.get.mockReturnValue(of({ ...emptyPayload, ...payload }));
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      return fixture;
+    };
+
+    describe('quiet mode', () => {
+      it('renders the quiet sections and no sick cards or night board', () => {
+        const fixture = render({
+          lastDoses: [{ patientId: 'p1', patientName: 'Ada', doses: [] }],
+          upcomingSchedules: [
+            {
+              scheduleId: 's1',
+              patientId: 'p1',
+              label: 'Amoxicillin',
+              type: 'medication_dose',
+              episodeId: null,
+              nextDueAt: nowSec() - 600,
+              overdue: true,
+            },
+          ],
+        });
+        const comp = fixture.componentInstance;
+        const text = fixture.nativeElement.textContent;
+
+        expect(comp.isSickMode()).toBe(false);
+        expect(comp.showNightBoard()).toBe(false);
+        expect(text).not.toContain('Who can have what');
+        expect(text).toContain('Last doses');
+        expect(text).toContain('Nothing given in the last 24 hours.');
+        expect(text).toContain('Upcoming');
+        expect(fixture.nativeElement.querySelector('.sick-card')).toBeNull();
+      });
+    });
+
+    describe('sick mode', () => {
+      it('renders one sick card per sick patient, with the episode day count and the countdown as the hero', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', points: [] }],
+        });
+        const text = fixture.nativeElement.textContent;
+
+        expect(fixture.componentInstance.isSickMode()).toBe(true);
+        expect(fixture.nativeElement.querySelectorAll('.sick-card').length).toBe(1);
+        expect(text).toContain('Ada');
+        expect(text).toContain('Fever');
+        expect(text).toContain('day 3');
+        expect(text).toContain('Ibuprofen');
+        // The countdown is the hero element, not a muted suffix on the medication name.
+        expect(fixture.nativeElement.querySelector('.dose-hero').textContent.trim()).toBe('in 1h 40m');
+      });
+
+      it('reads "can give now" on the hero once next-allowed has elapsed', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() - 60 })] })],
+        });
+        const hero = fixture.nativeElement.querySelector('.dose-hero');
+        expect(hero.textContent.trim()).toBe('can give now');
+        expect(hero.classList).toContain('ready');
+      });
+
+      it('says so in words when no guideline supplied an interval — null is no guidance, not "cannot give"', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: null })] })],
+        });
+        expect(fixture.nativeElement.querySelector('.dose-hero').textContent.trim()).toBe('no interval given');
+      });
+
+      it('merges the episode-agnostic lastDoses into the card — a dose logged with no episode still shows', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          lastDoses: [
+            {
+              patientId: 'p1',
+              patientName: 'Ada',
+              doses: [dose({ medicationId: 'm2', medicationName: 'Tylenol', nextAllowedAt: nowSec() + 60 })],
+            },
+          ],
+        });
+        const meds = fixture.componentInstance.sickCards()[0].medications;
+        expect(meds.map((m: { medicationName: string }) => m.medicationName)).toEqual(['Tylenol', 'Ibuprofen']);
+      });
+
+      it('keeps the newer of two records of the same medication rather than showing it twice', () => {
+        const stale = dose({ lastDoseAt: nowSec() - 7200, nextAllowedAt: nowSec() + 1200 });
+        const fresh = dose({ lastDoseAt: nowSec() - 600, nextAllowedAt: nowSec() + 9000 });
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [stale] })],
+          lastDoses: [{ patientId: 'p1', patientName: 'Ada', doses: [fresh] }],
+        });
+        const meds = fixture.componentInstance.sickCards()[0].medications;
+        expect(meds.length).toBe(1);
+        expect(meds[0].lastDoseAt).toBe(fresh.lastDoseAt);
+        expect(meds[0].nextAllowedAt).toBe(fresh.nextAllowedAt);
+      });
+
+      it('does not repeat a sick patient in the Last doses strip, but still lists quiet patients there', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          lastDoses: [
+            { patientId: 'p1', patientName: 'Ada', doses: [dose()] },
+            { patientId: 'p2', patientName: 'Bo', doses: [] },
+          ],
+        });
+        const rows = fixture.componentInstance.quietLastDoses();
+        expect(rows.map((r: { patientId: string }) => r.patientId)).toEqual(['p2']);
+        // The confident negative survives the demotion — it is the answer, not a fallback.
+        expect(fixture.nativeElement.textContent).toContain('Nothing given in the last 24 hours.');
+      });
+
+      it('renders a sparkline from recentTemperatures, and a confident negative without one', () => {
+        const withTemps = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [
+            {
+              patientId: 'p1',
+              points: [
+                { timestamp: nowSec() - 40 * 3600, valueC: 38.2 },
+                { timestamp: nowSec() - 3600, valueC: 39.4 },
+              ],
+            },
+          ],
+        });
+        const card = withTemps.componentInstance.sickCards()[0];
+        expect(card.points.length).toBe(2);
+        expect(card.polyline.split(' ').length).toBe(2);
+        // Newer reading is hotter, so it plots higher on the canvas (smaller y).
+        expect(card.points[1].y).toBeLessThan(card.points[0].y);
+        expect(withTemps.nativeElement.querySelector('.spark')).not.toBeNull();
+        expect(withTemps.nativeElement.textContent).toContain('39.4 °C');
+
+        const without = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+        expect(without.nativeElement.querySelector('.spark')).toBeNull();
+        expect(without.nativeElement.textContent).toContain('No temperature logged in the last 48 hours.');
+      });
+
+      it('offers Temp and Dose quick actions scoped to that patient', () => {
+        const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+        const comp = fixture.componentInstance;
+
+        comp.quickTemp('p1');
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/observations/new'], { queryParams: { patientId: 'p1' } });
+        comp.quickDose('p1');
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], { queryParams: { patientId: 'p1' } });
+      });
+
+      it('drops the separate Active episodes list — the sick cards are that list now', () => {
+        const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+        expect(fixture.nativeElement.textContent).not.toContain('Active episodes');
+      });
+
+      it('orders cards by the soonest next actionable moment, counting overdue schedules', () => {
+        const fixture = render({
+          activeEpisodes: [
+            episode({ patientId: 'p1', patientName: 'Ada', medications: [dose({ nextAllowedAt: nowSec() + 9000 })] }),
+            episode({
+              patientId: 'p2',
+              patientName: 'Bo',
+              episodeId: 'ep2',
+              medications: [dose({ nextAllowedAt: nowSec() + 1800 })],
+            }),
+            episode({ patientId: 'p3', patientName: 'Cy', episodeId: 'ep3', medications: [dose({ nextAllowedAt: null })] }),
+          ],
+          upcomingSchedules: [
+            {
+              scheduleId: 's1',
+              patientId: 'p1',
+              label: 'Overdue amoxicillin',
+              type: 'medication_dose',
+              episodeId: null,
+              nextDueAt: nowSec() - 3600,
+              overdue: true,
+            },
+          ],
+        });
+        expect(fixture.componentInstance.sickCards().map((c: { patientId: string }) => c.patientId)).toEqual([
+          'p1', // most overdue schedule, even though its own next dose is furthest off
+          'p2',
+          'p3', // nothing actionable at all sorts last
+        ]);
+      });
+    });
+
+    describe('night board', () => {
+      // A factory, not a constant: the relative-time labels are computed against the clock at render
+      // time, and a payload built when the describe block was evaluated would drift a second or two
+      // by the time a later test asserts on "in 1h 40m".
+      const twoSick = () => ({
+        activeEpisodes: [
+          episode({
+            patientId: 'p1',
+            patientName: 'Ada',
+            medications: [dose({ nextAllowedAt: nowSec() + 6000 })],
+          }),
+          episode({
+            patientId: 'p2',
+            patientName: 'Bo',
+            episodeId: 'ep2',
+            medications: [dose({ nextAllowedAt: nowSec() - 60, isAtypicalLastDose: true })],
+          }),
+        ],
+      });
+
+      it('stays hidden with a single sick patient — one child is just a card', () => {
+        const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+        expect(fixture.componentInstance.showNightBoard()).toBe(false);
+        expect(fixture.nativeElement.querySelector('.night-board')).toBeNull();
+      });
+
+      it('renders one row per sick patient with a countdown cell per medication', () => {
+        const fixture = render(twoSick());
+        expect(fixture.componentInstance.showNightBoard()).toBe(true);
+
+        const rows = Array.from(fixture.nativeElement.querySelectorAll('.nb-row')) as HTMLElement[];
+        expect(rows.length).toBe(2);
+        // Bo can be dosed now, so Bo's row is first — the top of the screen is the next thing to do.
+        expect(rows[0].querySelector('.nb-patient')!.textContent!.trim()).toBe('Bo');
+        expect(rows[0].querySelector('.nb-count')!.textContent!.trim()).toBe('can give now');
+        expect(rows[0].querySelector('.nb-count')!.classList).toContain('ready');
+        expect(rows[0].textContent).toContain('atypical');
+
+        expect(rows[1].querySelector('.nb-patient')!.textContent!.trim()).toBe('Ada');
+        expect(rows[1].querySelector('.nb-count')!.textContent!.trim()).toBe('in 1h 40m');
+        expect(rows[1].textContent).not.toContain('atypical');
+      });
+
+      it('renders above the sick cards, never interleaved with them', () => {
+        const fixture = render(twoSick());
+        const board = fixture.nativeElement.querySelector('.night-board-section');
+        const cards = fixture.nativeElement.querySelector('.sick-cards');
+        expect(board).not.toBeNull();
+        expect(cards).not.toBeNull();
+        // Node.DOCUMENT_POSITION_FOLLOWING — the cards section comes after the board.
+        expect(board.compareDocumentPosition(cards) & 4).toBeTruthy();
+      });
+
+      it('lists a medication line per medication, not one per patient', () => {
+        const fixture = render({
+          activeEpisodes: [
+            episode({
+              patientId: 'p1',
+              patientName: 'Ada',
+              medications: [
+                dose({ nextAllowedAt: nowSec() + 6000 }),
+                dose({ medicationId: 'm2', medicationName: 'Tylenol', nextAllowedAt: nowSec() + 1800 }),
+              ],
+            }),
+            episode({ patientId: 'p2', patientName: 'Bo', episodeId: 'ep2', medications: [dose()] }),
+          ],
+        });
+        const rows = Array.from(fixture.nativeElement.querySelectorAll('.nb-row')) as HTMLElement[];
+        const adaRow = rows.find((r) => r.textContent!.includes('Ada'))!;
+        expect(adaRow.querySelectorAll('.nb-med').length).toBe(2);
+        expect(adaRow.textContent).toContain('Tylenol');
+        expect(adaRow.textContent).toContain('Ibuprofen');
+      });
+    });
   });
 });

@@ -4,9 +4,56 @@ import { CommonModule } from '@angular/common';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
-import { nextDoseLabel, timeAgo, relativeTime } from '../core/relative-time';
+import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relative-time';
+import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { DashboardPayload } from '@salud/shared/types';
+import { DashboardPayload, DashboardTemperaturePoint } from '@salud/shared/types';
+
+// The sparkline canvas. Small on purpose: it is a glance at the shape of the last two nights, not
+// the timeline's chart. The x-domain is the fixed 48-hour window rather than the patient's own
+// readings, so two sick cards side by side are actually comparable — a patient measured twice and
+// one measured nine times must not draw the same width of curve at different time scales.
+const SPARK_WIDTH = 180;
+const SPARK_HEIGHT = 44;
+const SPARK_PAD = 5;
+const SPARK_WINDOW_SECONDS = 48 * 3600;
+// A floor on the y-domain, in °C. Without it a night that ran 38.5–38.7 draws the same dramatic
+// swing as one that ran 37.0–40.0, which is the chart editorializing about data it was only asked
+// to plot (P6).
+const SPARK_MIN_SPAN_C = 1.5;
+
+interface SickMedication {
+  medicationId: string;
+  medicationName: string;
+  lastDoseAt: number;
+  nextAllowedAt: number | null;
+  isAtypicalLastDose: boolean;
+}
+
+interface SickEpisode {
+  episodeId: string;
+  name: string;
+  dayCount: number | null;
+}
+
+interface SparkPoint {
+  x: number;
+  y: number;
+  valueShown: number;
+  timestamp: number;
+}
+
+interface SickCard {
+  patientId: string;
+  patientName: string;
+  episodes: SickEpisode[];
+  medications: SickMedication[];
+  points: SparkPoint[];
+  polyline: string;
+  latest: SparkPoint | null;
+  /** The soonest moment this patient needs something done — the card sort key. `null` sorts last. */
+  nextActionableAt: number | null;
+}
 
 @Component({
   selector: 'app-dashboard-page',
@@ -14,13 +61,13 @@ import { DashboardPayload } from '@salud/shared/types';
   imports: [CommonModule, AdvisoryBannerComponent],
   template: `
     <div class="card">
-      <h1>Dashboard</h1>
+      <h1>Home</h1>
+      <!-- Logging only. The catalogs and "New schedule" moved to /manage: they are monthly setup
+           tasks, and they were competing for the most urgent screen in the app (frontend.md →
+           "Information architecture (v2)" → Home). -->
       <div class="actions">
         <button class="primary" type="button" (click)="goToNewObservation()">Create observation</button>
         <button class="secondary" type="button" (click)="goToNewIntervention()">Log intervention</button>
-        <button class="secondary" type="button" (click)="goToMedications()">Medication catalog</button>
-        <button class="secondary" type="button" (click)="goToAnalytes()">Analyte catalog</button>
-        <button class="secondary" type="button" (click)="goToNewSchedule()">New schedule</button>
       </div>
 
       <div class="advisories" *ngIf="dashboard()?.unacknowledgedAdvisories?.length">
@@ -31,12 +78,96 @@ import { DashboardPayload } from '@salud/shared/types';
         ></app-advisory-banner>
       </div>
 
-      <section class="last-doses" *ngIf="dashboard()?.lastDoses?.length">
+      <!-- ==================== SICK MODE ==================== -->
+
+      <!-- The night board. Two or more sick patients is the concurrent-illness case the product is
+           designed around, and this is the whole point of it: who can have what, when, in one
+           glance, without scrolling between cards. Pure arithmetic, no interpretation (P6). -->
+      <section class="night-board-section" *ngIf="showNightBoard()">
+        <h2>Who can have what</h2>
+        <div class="night-board">
+          <div class="nb-row" *ngFor="let c of sickCards()">
+            <div class="nb-patient">{{ c.patientName }}</div>
+            <div class="nb-meds">
+              <p class="muted small" *ngIf="!c.medications.length">No doses logged.</p>
+              <!-- Countdown last, so every row's number ends at the same right edge and the board
+                   reads as one column of times rather than a ragged list. -->
+              <div class="nb-med" *ngFor="let m of c.medications">
+                <span class="nb-med-name">{{ m.medicationName }}</span>
+                <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
+                <span class="nb-count" [class.ready]="doseReady(m.nextAllowedAt)">{{ countdown(m.nextAllowedAt) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="sick-cards" *ngIf="sickCards().length">
+        <ul class="sick-list">
+          <li class="sick-card" *ngFor="let c of sickCards()">
+            <div class="sick-head">
+              <strong class="sick-name">{{ c.patientName }}</strong>
+              <button
+                type="button"
+                class="episode-pill"
+                *ngFor="let ep of c.episodes"
+                (click)="goToEpisode(ep.episodeId)"
+              >
+                {{ ep.name }}<span *ngIf="ep.dayCount"> · day {{ ep.dayCount }}</span>
+              </button>
+            </div>
+
+            <!-- The countdown is the hero, not a suffix: it is the answer to "did I already give
+                 Tylenol?" (product.md → origin story), and at 3 AM it has to be readable before
+                 anything else on the card is. -->
+            <p class="muted small" *ngIf="!c.medications.length">Nothing given in the last 24 hours.</p>
+            <div class="dose-block" *ngFor="let m of c.medications">
+              <div class="dose-hero" [class.ready]="doseReady(m.nextAllowedAt)">{{ countdown(m.nextAllowedAt) }}</div>
+              <div class="dose-meta">
+                <span class="med-name">{{ m.medicationName }}</span>
+                <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
+                <span class="ago">last dose {{ ago(m.lastDoseAt) }}</span>
+              </div>
+            </div>
+
+            <div class="spark-wrap">
+              <svg
+                *ngIf="c.points.length; else noTemps"
+                class="spark"
+                [attr.viewBox]="'0 0 ' + sparkWidth + ' ' + sparkHeight"
+                aria-hidden="true"
+              >
+                <polyline *ngIf="c.points.length > 1" [attr.points]="c.polyline" class="spark-line" />
+                <circle *ngFor="let p of c.points" [attr.cx]="p.x" [attr.cy]="p.y" r="2" class="spark-dot" />
+              </svg>
+              <ng-template #noTemps>
+                <p class="muted small">No temperature logged in the last 48 hours.</p>
+              </ng-template>
+              <span class="spark-latest" *ngIf="c.latest">
+                {{ c.latest.valueShown }} °{{ tempUnit() }} · {{ ago(c.latest.timestamp) }}
+              </span>
+            </div>
+
+            <div class="quick-actions">
+              <button type="button" class="secondary small" (click)="quickTemp(c.patientId)">Temp</button>
+              <button type="button" class="secondary small" (click)="quickDose(c.patientId)">Dose</button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ==================== SHARED / QUIET CONTENT ====================
+           In sick mode everything below renders under the sick cards and never interleaves with
+           them (frontend.md → Home). -->
+
+      <section class="last-doses" *ngIf="quietLastDoses().length">
         <h2>Last doses</h2>
         <ul class="dose-list">
-          <li *ngFor="let p of dashboard()!.lastDoses">
+          <li *ngFor="let p of quietLastDoses()">
             <div class="row-main"><strong>{{ p.patientName }}</strong></div>
 
+            <!-- The confident negative. At 3 AM the negative *is* the answer; a hidden row is
+                 ambiguous between "nobody gave anything" and "the app doesn't know". -->
             <p class="muted small" *ngIf="!p.doses.length">Nothing given in the last 24 hours.</p>
 
             <div class="dose-row" *ngFor="let d of p.doses">
@@ -96,7 +227,9 @@ import { DashboardPayload } from '@salud/shared/types';
         </ul>
       </section>
 
-      <section *ngIf="dashboard()?.activeEpisodes?.length">
+      <!-- Quiet mode only: in sick mode these same episodes are the sick cards above, and rendering
+           both would say the same thing twice on the screen with the least room to spare. -->
+      <section *ngIf="!isSickMode() && dashboard()?.activeEpisodes?.length">
         <h2>Active episodes</h2>
         <ul class="episode-list">
           <li *ngFor="let ep of dashboard()!.activeEpisodes">
@@ -108,11 +241,6 @@ import { DashboardPayload } from '@salud/shared/types';
               <div class="muted small" *ngIf="ep.lastObservationSummary">
                 Last observed {{ ago(ep.lastObservationSummary.observedAt) }}
                 ({{ ep.lastObservationSummary.entries[0]?.type }})
-              </div>
-              <div class="med-row" *ngFor="let m of ep.medications">
-                <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
-                {{ m.medicationName }} — last dose {{ ago(m.lastDoseAt) }}
-                <span *ngIf="nextDose(m.nextAllowedAt) as label">· {{ label }}</span>
               </div>
             </button>
           </li>
@@ -133,9 +261,9 @@ import { DashboardPayload } from '@salud/shared/types';
         class="muted"
         *ngIf="
           dashboard() &&
-          !dashboard()!.lastDoses.length &&
+          !sickCards().length &&
+          !quietLastDoses().length &&
           !whatsNewSummaries().length &&
-          !dashboard()!.activeEpisodes.length &&
           !dashboard()!.upcomingSchedules.length &&
           !dashboard()!.shoppingList.length &&
           !dashboard()!.unacknowledgedAdvisories.length
@@ -144,7 +272,7 @@ import { DashboardPayload } from '@salud/shared/types';
         Nothing needs attention right now.
       </p>
 
-      <!-- An unreachable API must say so. A blank dashboard reads as "nothing has been logged",
+      <!-- An unreachable API must say so. A blank home screen reads as "nothing has been logged",
            which is the worst possible answer on the screen used to decide whether a dose was
            already given (frontend.md → Errors & failure messages). -->
       <p class="error" *ngIf="error()">{{ error() }}</p>
@@ -167,7 +295,7 @@ import { DashboardPayload } from '@salud/shared/types';
         font-size: 0.85rem;
       }
       section {
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: 1px solid var(--border);
         padding-top: 0.85rem;
       }
       .advisories {
@@ -201,27 +329,27 @@ import { DashboardPayload } from '@salud/shared/types';
         font-weight: 600;
       }
       .ago {
-        color: #cbd5e1;
+        color: var(--text-muted);
       }
       .next {
         font-size: 0.85rem;
-        color: #cbd5e1;
+        color: var(--text-muted);
       }
       .next.ready {
-        color: #86efac;
+        color: var(--success-text);
       }
       .schedule-list li {
         padding: 0.6rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius-input);
+        border: 1px solid var(--border);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 0.5rem;
       }
       .schedule-list li.overdue {
-        border-color: rgba(248, 113, 113, 0.4);
-        background: rgba(248, 113, 113, 0.08);
+        border-color: var(--danger-border);
+        background: var(--danger-bg);
       }
       .row-link {
         flex: 1;
@@ -245,8 +373,8 @@ import { DashboardPayload } from '@salud/shared/types';
         width: 100%;
         text-align: left;
         padding: 0.6rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius-input);
+        border: 1px solid var(--border);
         background: transparent;
         color: inherit;
         font: inherit;
@@ -256,22 +384,27 @@ import { DashboardPayload } from '@salud/shared/types';
         gap: 0.25rem;
       }
       .episode-card:hover {
-        background: rgba(255, 255, 255, 0.05);
-      }
-      .med-row {
-        font-size: 0.85rem;
-        color: #cbd5e1;
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
+        background: var(--surface-raised);
       }
       .shopping-list li {
         padding: 0.5rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius-input);
+        border: 1px solid var(--border);
         display: flex;
         align-items: center;
         justify-content: space-between;
+      }
+      .sick-cards {
+        border-top: none;
+        padding-top: 0;
+      }
+      .sick-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
       }
     `,
   ],
@@ -283,6 +416,120 @@ export class DashboardPage implements OnInit {
 
   dashboard = signal<DashboardPayload | null>(null);
   error = signal<string | null>(null);
+
+  sparkWidth = SPARK_WIDTH;
+  sparkHeight = SPARK_HEIGHT;
+
+  tempUnit = computed(() => unitsFor(this.auth.user()).temp);
+
+  /**
+   * The bimodal switch (frontend.md → "Information architecture (v2)" → Home). One sick card per
+   * patient with an active episode; the household's shape decides the page's shape, not a fixed
+   * section stack.
+   *
+   * Ordering, `nextActionableAt` and the sparkline geometry are all computed once per payload, so
+   * they read the clock at load rather than on every change-detection pass. That is deliberate and
+   * matches the countdowns' existing no-live-ticker rule: this page is opened fresh in the case
+   * that matters. The *labels* stay method calls, so they do refresh on any interaction.
+   */
+  sickCards = computed<SickCard[]>(() => {
+    const payload = this.dashboard();
+    if (!payload) return [];
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const byPatient = new Map<string, SickCard>();
+    for (const ep of payload.activeEpisodes) {
+      const card =
+        byPatient.get(ep.patientId) ??
+        ({
+          patientId: ep.patientId,
+          patientName: ep.patientName,
+          episodes: [],
+          medications: [],
+          points: [],
+          polyline: '',
+          latest: null,
+          nextActionableAt: null,
+        } as SickCard);
+      card.episodes.push({
+        episodeId: ep.episodeId,
+        name: ep.name,
+        dayCount: ep.startedAt == null ? null : Math.floor((nowSec - ep.startedAt) / 86400) + 1,
+      });
+      byPatient.set(ep.patientId, card);
+    }
+    if (!byPatient.size) return [];
+
+    // "Active medication" is the union of two deliberately different scopes, and it has to be both:
+    // `activeEpisodes[].medications` is episode-scoped (it reaches back past 24h but only sees
+    // doses attached to an episode), while `lastDoses` is patient-scoped and episode-agnostic (the
+    // 3 AM dose logged with no episode — the common case, and the reason `lastDoses` exists at
+    // all). Dropping either one drops doses a caregiver would then re-give.
+    const merge = (card: SickCard, m: SickMedication) => {
+      const existing = card.medications.find((x) => x.medicationId === m.medicationId);
+      if (!existing) {
+        card.medications.push(m);
+        return;
+      }
+      if (m.lastDoseAt > existing.lastDoseAt) Object.assign(existing, m);
+    };
+    for (const ep of payload.activeEpisodes) {
+      const card = byPatient.get(ep.patientId);
+      if (!card) continue;
+      for (const m of ep.medications) merge(card, { ...m });
+    }
+    for (const row of payload.lastDoses) {
+      const card = byPatient.get(row.patientId);
+      if (!card) continue;
+      for (const d of row.doses) merge(card, { ...d });
+    }
+
+    const temperaturesByPatient = new Map(payload.recentTemperatures?.map((r) => [r.patientId, r.points]) ?? []);
+    const displayUnit = unitsFor(this.auth.user()).temp;
+
+    for (const card of byPatient.values()) {
+      // Soonest-actionable first inside the card too, so the hero countdown at the top of a card is
+      // the next thing that card is asking for.
+      card.medications.sort((a, b) => nullsLast(a.nextAllowedAt) - nullsLast(b.nextAllowedAt) || b.lastDoseAt - a.lastDoseAt);
+
+      const scheduleTimes = this.dashboard()!
+        .upcomingSchedules.filter((s) => s.patientId === card.patientId)
+        .map((s) => s.nextDueAt);
+      const candidates = [...card.medications.map((m) => m.nextAllowedAt), ...scheduleTimes].filter(
+        (t): t is number => t != null,
+      );
+      card.nextActionableAt = candidates.length ? Math.min(...candidates) : null;
+
+      const plotted = this.plotSparkline(temperaturesByPatient.get(card.patientId) ?? [], nowSec, displayUnit);
+      card.points = plotted;
+      card.polyline = plotted.map((p) => `${p.x},${p.y}`).join(' ');
+      card.latest = plotted.length ? plotted[plotted.length - 1] : null;
+    }
+
+    // The top of the screen is the next thing to do — a "can give now" (a next-allowed already
+    // elapsed) sorts above a countdown still running, because a past timestamp is a smaller number.
+    return Array.from(byPatient.values()).sort(
+      (a, b) => nullsLast(a.nextActionableAt) - nullsLast(b.nextActionableAt) || a.patientName.localeCompare(b.patientName),
+    );
+  });
+
+  isSickMode = computed(() => this.sickCards().length > 0);
+
+  /** The night board is for the concurrent-illness case only — one sick child is just a card. */
+  showNightBoard = computed(() => this.sickCards().length >= 2);
+
+  /**
+   * In sick mode the strip carries the quiet patients only: a sick patient's doses are already the
+   * hero of their own card above, and repeating them here would be the same answer twice on the
+   * screen with the least room to spare. Every quiet patient still gets their row — including the
+   * explicit "Nothing given in the last 24 hours", which is itself the answer.
+   */
+  quietLastDoses = computed(() => {
+    const rows = this.dashboard()?.lastDoses ?? [];
+    if (!this.isSickMode()) return rows;
+    const sick = new Set(this.sickCards().map((c) => c.patientId));
+    return rows.filter((r) => !sick.has(r.patientId));
+  });
 
   // The server emits a row per accessible patient, all-zero rows included; hiding the empty ones is
   // this page's call (frontend.md → While You Were Asleep). Nothing changed since you last looked is
@@ -303,8 +550,9 @@ export class DashboardPage implements OnInit {
     }
   }
 
-  // One request for the whole page. The WYWA counts used to cost an extra GET /patients plus one
-  // GET /patients/:id/whats-new per patient; they now ride along on the dashboard payload.
+  // One request for the whole page — including the sick cards' sparklines, which is why
+  // `recentTemperatures` rides along on this payload instead of being a timeline query per sick
+  // patient (api.md → GET /api/dashboard).
   private load() {
     this.api.get<DashboardPayload>('/dashboard').subscribe({
       next: (res) => {
@@ -316,6 +564,27 @@ export class DashboardPage implements OnInit {
         this.error.set(errorText(err, 'Could not load the dashboard.'));
       },
     });
+  }
+
+  private plotSparkline(points: DashboardTemperaturePoint[], nowSec: number, displayUnit: 'C' | 'F'): SparkPoint[] {
+    if (!points.length) return [];
+    const shown = points.map((p) => ({ timestamp: p.timestamp, valueShown: convertTemp(p.valueC, 'C', displayUnit) }));
+    const values = shown.map((p) => p.valueShown);
+    let lo = Math.min(...values);
+    let hi = Math.max(...values);
+    const minSpan = displayUnit === 'F' ? (SPARK_MIN_SPAN_C * 9) / 5 : SPARK_MIN_SPAN_C;
+    const pad = Math.max(0, (minSpan - (hi - lo)) / 2);
+    lo -= pad;
+    hi += pad;
+    const usableW = SPARK_WIDTH - 2 * SPARK_PAD;
+    const usableH = SPARK_HEIGHT - 2 * SPARK_PAD;
+    const from = nowSec - SPARK_WINDOW_SECONDS;
+    return shown.map((p) => ({
+      ...p,
+      x: SPARK_PAD + clamp01((p.timestamp - from) / SPARK_WINDOW_SECONDS) * usableW,
+      // A single reading, or a flat run, sits on the middle line rather than at an arbitrary edge.
+      y: SPARK_PAD + usableH - (hi === lo ? 0.5 : (p.valueShown - lo) / (hi - lo)) * usableH,
+    }));
   }
 
   goToWhatsNew(patientId: string) {
@@ -330,16 +599,16 @@ export class DashboardPage implements OnInit {
     this.router.navigate(['/interventions/new']);
   }
 
-  goToAnalytes() {
-    this.router.navigate(['/analytes']);
+  // Patient-scoped quick actions off a sick card. The observation form already honours
+  // `?patientId=`; the intervention form does not read it yet (that file belongs to the entry-form
+  // track), so a Dose lands on the form with its own patient select for the caregiver to confirm —
+  // the same as today's unscoped "Log intervention" button, and correct the moment the param lands.
+  quickTemp(patientId: string) {
+    this.router.navigate(['/observations/new'], { queryParams: { patientId } });
   }
 
-  goToMedications() {
-    this.router.navigate(['/medications']);
-  }
-
-  goToNewSchedule() {
-    this.router.navigate(['/schedules/new']);
+  quickDose(patientId: string) {
+    this.router.navigate(['/interventions/new'], { queryParams: { patientId } });
   }
 
   goToSchedule(scheduleId: string) {
@@ -376,7 +645,28 @@ export class DashboardPage implements OnInit {
     return nextDoseLabel(ts);
   }
 
+  /**
+   * The bare countdown the night board and the sick-card hero read: "can give now" / "in 1h 40m",
+   * without the "next dose" prefix the strip's fuller sentence carries.
+   *
+   * `null` is *no guidance*, not *cannot give* (api.md → GET /api/dashboard), so it says so in
+   * words rather than rendering an em dash the caregiver has to interpret.
+   */
+  countdown(nextAllowedAt: number | null) {
+    if (nextAllowedAt == null) return 'no interval given';
+    return this.doseReady(nextAllowedAt) ? 'can give now' : timeUntil(nextAllowedAt);
+  }
+
   doseReady(ts: number | null) {
     return ts != null && ts <= Math.floor(Date.now() / 1000);
   }
+}
+
+/** Sort helper: a `null` timestamp has no claim on the caregiver's attention, so it sorts last. */
+function nullsLast(ts: number | null): number {
+  return ts == null ? Number.POSITIVE_INFINITY : ts;
+}
+
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
 }
