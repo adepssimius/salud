@@ -591,7 +591,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     model"); the most common dose of all is the 3 AM one logged with no episode at all, and it must
     still reach the dashboard.
   - Response includes:
-    - `lastDoses`: `[ { patientId, patientName, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose } ] } ]`
+    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose } ] } ]`
       — the most recent dose of each distinct medication **in the last 24 hours**, per patient,
       **episode-agnostic**. This is the direct answer to product.md's founding question ("did I
       already give Tylenol?").
@@ -604,7 +604,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - `nextAllowedAt` is the frozen value written into the dose's metadata at log time (see
         "Dosing engine"), not a live recomputation. `null` means "no guideline supplied an
         interval" — that is *no guidance*, not *cannot give*.
-    - `whatsNew`: `[ { patientId, patientName, since, eventCount, advisoryCount, nowDueCount } ]`
+    - `whatsNew`: `[ { patientId, patientName, accentColor, since, eventCount, advisoryCount, nowDueCount } ]`
       — the "While You Were Asleep" diff reduced to counts, so the dashboard card renders from the
       one dashboard request instead of fanning out to `GET .../whats-new` per patient. `since` is the
       caller's own watermark for that patient, identical to the WYWA endpoint's field.
@@ -628,7 +628,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - The card and the WYWA page are computed at two different request times, so an event landing
         between them can legitimately make the card say 3 and the page show 4. That is staleness, not
         a defect — the definitions are shared in code precisely so a genuine mismatch can't happen.
-    - `activeEpisodes`: `[ { patientId, patientName, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
+    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose }] } ]`
       — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
       episode", which the patient-scoped 24h `lastDoses` above deliberately does not.
     - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean } ]`
@@ -639,6 +639,16 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       M2's producers self-acknowledge at creation, so this is empty until the "seen but backed out"
       case arrives with Conditions/reactions; the field exists now so the dashboard doesn't need a
       later reshape.
+    - **`accentColor` on every row that names a patient** — `lastDoses`, `whatsNew` and
+      `activeEpisodes` each carry the patient's palette token (data-model.md → Patient). It is
+      server-**resolved**, not the raw column: a patient row written before the column existed
+      stores `null`, and the same stable token is derived from the id instead, because an identity
+      color that changed between page loads would be worse than no color at all given what it
+      guards against. This exists so the bimodal Home can color its sick cards, night-board rows
+      and strips from the one dashboard request — the alternative is fetching every patient from
+      Home, which is exactly the fan-out this endpoint's single-request rule exists to prevent.
+      `recentTemperatures` deliberately does *not* carry it: it is keyed by `patientId` and
+      consumed inside a card that already has the token.
     - `recentTemperatures`: `[ { patientId, points: [ { timestamp, valueC } ] } ]` — the last 48
       hours of temperature entries, one row **only for patients with at least one active episode**
       (quiet patients render no sparkline, so their rows would be dead weight). Values are
