@@ -181,6 +181,21 @@ follows the household's state instead of rendering one fixed stack of sections:
   a muted suffix), a 48-hour temperature sparkline (from the dashboard payload's
   `recentTemperatures` — Home stays a single request, as in v1), atypical-dose flags, and inline
   Temp/Dose quick actions scoped to that patient.
+- **The sparkline is readable as a measurement, not just a shape.** A bare curve on an
+  auto-scaled axis answers neither "how high is it" nor "is that high" — the same drawing serves a
+  0.2° wobble and a 3° spike. So it carries two things beyond the line:
+  - **Scale labels** — the y-domain's high and low bracketing the curve, in the viewer's preferred
+    unit. Arithmetic, no interpretation.
+  - **The patient's temperature bands**, shaded behind the curve, from the payload's
+    `temperatureRanges`. These are the household's own `AnalyteRange` rows on the seeded
+    `temperature` vital, seeded once at patient creation and editable thereafter — the app renders
+    what the household recorded, it does not assert a normal range at draw time (P6). The
+    `reference` band reads as the ground the others sit on, matching the analyte history chart.
+  - **The bands are part of the y-domain**, exactly as on the analyte chart: a band the readings
+    never reach must still be visible, or the reference the reader is checking against is the one
+    thing clipped off the picture. This supersedes nothing about the fixed 48-hour x-domain.
+  - A patient with no bands recorded gets scale labels and no shading — never a fallback band
+    drawn from the app's own idea of normal.
 - **Night board — the concurrent-illness centerpiece.** When **two or more** patients are sick, a
   condensed grid renders *above* the cards: one row per sick patient (name + color), one line per
   active medication, each cell just the countdown ("can give now" / "in 1h 40m") plus any
@@ -482,6 +497,11 @@ app. They therefore need somewhere to be entered.
   with medication dose markers overlaid at their `performedAt` positions (F-5.2). The overlay is
   the raw series only: **no computed "responsive to X" annotation** ever renders on or near a dose
   marker — the reader draws that conclusion, not the app (P6).
+- Carries the same **scale labels and temperature bands** as the Home sparkline, on the same rules
+  (bands come from the patient's `AnalyteRange` rows on the seeded `temperature` vital; band bounds
+  join the y-domain so a band is never clipped; no bands recorded means no shading). The glance
+  view and the analysis view read against the same reference, in the same visual vocabulary as the
+  analyte history chart — three charts, one way of showing "what should this be".
 - Filter chips for individual medications and for tags (F-5.1) — the motivating case is "when did
   she last get ibuprofen?" vs. "when did she last get *anything* for the fever?", two different
   questions with two different answers.
@@ -635,6 +655,13 @@ unconditional by design (er-brief.md → Formats).
   catalog. The analyte itself is global to the household, like medications — populated by importing
   reports, so a fresh install shows an empty catalog until the first lab import. Its **ranges are
   per-patient**, so the detail page works one patient at a time.
+- **This is also where vital signs are configured.** The five seeded vital rows (data-model.md →
+  "Analyte catalog") appear here alongside lab analytes, so "what counts as a normal temperature
+  for this child" is edited with the same Ranges section, in the same words, as a ferritin
+  reference range — there is no separate vitals screen, because there is no separate concept. The
+  list marks them as vitals and can filter to them (`?kind=`), since a household with a large lab
+  catalog otherwise has to hunt for the row that drives its fever charts. A vital's header edits
+  its labels only, and it offers no delete: seeded rows are permanent (409 `ANALYTE_IS_VITAL`).
 - **List**: search box (`?q=`), one row per analyte showing `displayName`, the lab's verbatim
   printed `name` muted beneath it when it differs, and the unit. A minimal add form covers the rare
   hand-added analyte.
@@ -661,7 +688,10 @@ unconditional by design (er-brief.md → Formats).
   report's advice text — the parser surfaces those lines as import warnings and the caregiver
   decides what to record (P6).
 - Deleting an analyte that has recorded results is refused, and the message says how many results
-  are in the way.
+  are in the way. Deleting a seeded vital is refused outright.
+- A patient's temperature arrives with one seeded `reference` range already in place, sourced as a
+  default so it reads as the app's starting point rather than a clinician's number. Editing it is
+  ordinary; deleting it is permanent, and leaves the fever charts with scale labels and no bands.
 
 ## Errors & failure messages
 - **Error codes never reach the screen.** The API returns machine-readable codes as the message

@@ -2,7 +2,8 @@ import { Component, EventEmitter, Input, Output, computed, inject, signal } from
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../core/auth.service';
 import { convertTemp, unitsFor } from '../core/event-display';
-import { Episode, TimelineEntry } from '@salud/shared/types';
+import { Episode, ResolvedRange, TimelineEntry } from '@salud/shared/types';
+import { DisplayBand, PlottedBand, bandedDomain, describeBand, plotBands, toDisplayBands } from '../core/value-bands';
 
 interface TempPoint {
   timestamp: number;
@@ -29,6 +30,9 @@ const CHART_HEIGHT = 260;
 const PLOT_TOP = 10;
 const PLOT_BOTTOM = 210;
 const DOSE_MARKER_Y = 230;
+// A floor on the y-domain, in °C, matching Home's sparkline: a flat stretch must not draw like a
+// dramatic one just because it is the only thing on screen.
+const MIN_SPAN_C = 1.5;
 
 /**
  * The journal's instrument panel — the hand-drawn temperature curve with dose markers overlaid at
@@ -67,6 +71,25 @@ const DOSE_MARKER_Y = 230;
           <title>{{ band.name }}</title>
         </rect>
       </g>
+
+      <!-- The patient's own temperature bands, behind everything. What counts as normal is the
+           household's recorded standard, never a number this chart supplies while drawing (P6). -->
+      <g *ngFor="let band of plottedBands()">
+        <rect [attr.x]="0" [attr.y]="band.y" [attr.width]="chartWidth" [attr.height]="band.height"
+          [class.value-band]="band.reference" [class.value-band-custom]="!band.reference">
+          <title>{{ bandTitle(band) }}</title>
+        </rect>
+        <!-- The bound is the thing read off the chart; the fill only says which side is which. -->
+        <line *ngIf="band.highY !== null" [attr.x1]="0" [attr.x2]="chartWidth"
+          [attr.y1]="band.highY" [attr.y2]="band.highY" class="band-edge" />
+        <line *ngIf="band.lowY !== null" [attr.x1]="0" [attr.x2]="chartWidth"
+          [attr.y1]="band.lowY" [attr.y2]="band.lowY" class="band-edge" />
+        <text [attr.x]="6" [attr.y]="band.y + 12" class="band-label">{{ bandTitle(band) }}</text>
+      </g>
+
+      <!-- Scale. A curve with no axis answers "how high is it" with a shape. -->
+      <text [attr.x]="chartWidth - 4" [attr.y]="plotTop + 10" class="axis-label">{{ scaleHigh() }}°{{ tempUnit() }}</text>
+      <text [attr.x]="chartWidth - 4" [attr.y]="plotBottom" class="axis-label">{{ scaleLow() }}°{{ tempUnit() }}</text>
 
       <!-- Temperature curve -->
       <polyline *ngIf="temperaturePoints().length" [attr.points]="temperaturePolylinePoints()" class="temp-line" />
@@ -128,6 +151,28 @@ const DOSE_MARKER_Y = 230;
         stroke: #fbbf24;
         stroke-width: 2;
       }
+      /* Same relationship as .range-band on the analyte history chart: the recorded standard is the
+         ground the series sits on, and a custom band sits lighter than the reference one. */
+      .value-band {
+        fill: rgba(148, 163, 184, 0.13);
+      }
+      .value-band-custom {
+        fill: rgba(148, 163, 184, 0.06);
+      }
+      .band-edge {
+        stroke: rgba(148, 163, 184, 0.4);
+        stroke-width: 1;
+        stroke-dasharray: 4 4;
+      }
+      .band-label {
+        fill: var(--text-muted);
+        font-size: 10px;
+      }
+      .axis-label {
+        fill: var(--text-muted);
+        font-size: 11px;
+        text-anchor: end;
+      }
       .dose-marker.atypical {
         stroke: #f87171;
       }
@@ -140,9 +185,12 @@ export class JournalChartComponent {
   chartWidth = CHART_WIDTH;
   chartHeight = CHART_HEIGHT;
   doseMarkerY = DOSE_MARKER_Y;
+  plotTop = PLOT_TOP;
+  plotBottom = PLOT_BOTTOM;
 
   private readonly entriesSignal = signal<TimelineEntry[]>([]);
   private readonly episodesSignal = signal<Episode[]>([]);
+  private readonly rangesSignal = signal<ResolvedRange[]>([]);
 
   @Input({ required: true }) set entries(value: TimelineEntry[]) {
     this.entriesSignal.set(value ?? []);
@@ -150,6 +198,14 @@ export class JournalChartComponent {
 
   @Input() set episodes(value: Episode[]) {
     this.episodesSignal.set(value ?? []);
+  }
+
+  /**
+   * The patient's temperature bands (canonical °C), as resolved `AnalyteRange` rows. Presentational
+   * like everything else here — the page fetches them, the chart draws them.
+   */
+  @Input() set temperatureRanges(value: ResolvedRange[]) {
+    this.rangesSignal.set(value ?? []);
   }
 
   /** Emits the episode id behind a clicked band; the page owns navigation. */
@@ -208,18 +264,41 @@ export class JournalChartComponent {
     return ((ts - min) / (max - min)) * this.chartWidth;
   }
 
+  /** The patient's bands, converted to the unit this chart is drawn in. */
+  bands = computed<DisplayBand[]>(() => toDisplayBands(this.rangesSignal(), this.tempUnit()));
+
+  /**
+   * The y-domain covers the readings **and every band bound**, the same rule the analyte history
+   * chart follows ("the standards set the scale too") and Home's sparkline now shares. A band the
+   * readings never reach is exactly the reference the reader is checking against; scaling it off
+   * the chart would hide the one thing the picture is for.
+   */
   private valueRange = computed<{ min: number; max: number }>(() => {
     const values = this.temperaturePoints().map((p) => p.value);
-    if (!values.length) return { min: 35, max: 40 };
-    const min = Math.min(...values) - 0.5;
-    const max = Math.max(...values) + 0.5;
-    return min === max ? { min: min - 1, max: max + 1 } : { min, max };
+    const minSpan = this.tempUnit() === 'F' ? (MIN_SPAN_C * 9) / 5 : MIN_SPAN_C;
+    const domain = bandedDomain(values, this.bands(), minSpan);
+    if (!domain) return { min: 35, max: 40 };
+    return { min: domain.lo, max: domain.hi };
   });
 
   private yScale(value: number): number {
     const { min, max } = this.valueRange();
     const usable = PLOT_BOTTOM - PLOT_TOP;
     return PLOT_BOTTOM - ((value - min) / (max - min)) * usable;
+  }
+
+  /** Bands in chart space, drawn behind the curve and spanning the full width. */
+  plottedBands = computed<PlottedBand[]>(() => {
+    const { min, max } = this.valueRange();
+    return plotBands(this.bands(), { lo: min, hi: max }, (v) => this.yScale(v));
+  });
+
+  /** The y-domain's edges, so the curve's amplitude is readable as a number. */
+  scaleHigh = computed(() => round1(this.valueRange().max));
+  scaleLow = computed(() => round1(this.valueRange().min));
+
+  bandTitle(band: DisplayBand): string {
+    return describeBand(band, ` °${this.tempUnit()}`);
   }
 
   temperaturePlotted = computed(() =>
@@ -249,4 +328,9 @@ export class JournalChartComponent {
       })
       .filter((b): b is EpisodeBand => b !== null);
   });
+}
+
+// One decimal — the precision a thermometer reports, and what the rest of the app shows.
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

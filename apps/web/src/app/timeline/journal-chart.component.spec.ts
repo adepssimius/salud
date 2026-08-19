@@ -45,13 +45,24 @@ describe('JournalChartComponent', () => {
     }).compileComponents();
   });
 
-  function render() {
+  function render(temperatureRanges: any[] = []) {
     const fixture = TestBed.createComponent(JournalChartComponent);
     fixture.componentInstance.entries = entries;
     fixture.componentInstance.episodes = episodes;
+    fixture.componentInstance.temperatureRanges = temperatureRanges;
     fixture.detectChanges();
     return fixture;
   }
+
+  const normalBand = {
+    id: 'r1',
+    kind: 'reference' as const,
+    label: 'Normal',
+    low: 36.1,
+    high: 37.2,
+    refText: null,
+    effectiveFrom: 0,
+  };
 
   it('extracts temperature points in Celsius when the viewer has no preference set', () => {
     const fixture = render();
@@ -93,6 +104,28 @@ describe('JournalChartComponent', () => {
     fixture.componentInstance.episodeSelected.subscribe((id: string) => emitted.push(id));
     fixture.nativeElement.querySelector('.episode-band').dispatchEvent(new MouseEvent('click'));
     expect(emitted).toEqual(['ep1']);
+  });
+
+  it('folds the band bounds into the y-domain, so a band below every reading still renders', () => {
+    // The single reading is 38.5 °C; the band tops out at 37.2. Scaled to the reading alone the
+    // band would sit off the chart — the same rule the analyte history chart follows.
+    const fixture = render([normalBand]);
+    const comp = fixture.componentInstance;
+
+    expect(comp.scaleLow()).toBeLessThanOrEqual(36.1);
+    expect(comp.scaleHigh()).toBeGreaterThanOrEqual(38.5);
+    const band = comp.plottedBands()[0];
+    expect(band.height).toBeGreaterThan(0);
+    expect(fixture.nativeElement.querySelector('.value-band')).not.toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Normal 36.1–37.2 °C');
+  });
+
+  it('renders a scale but no band when the patient has none recorded', () => {
+    const fixture = render();
+    expect(fixture.componentInstance.plottedBands()).toEqual([]);
+    expect(fixture.nativeElement.querySelector('.value-band')).toBeNull();
+    // The scale is unconditional — "how high is it" is answerable without any band at all.
+    expect(fixture.nativeElement.querySelector('.axis-label')).not.toBeNull();
   });
 
   // P6: the overlay is the raw series. No "responsive to X" annotation ever renders on or near a

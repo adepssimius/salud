@@ -1,0 +1,43 @@
+meta {
+  name: List Vital Signs
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes?kind=vital
+  body: none
+  auth: inherit
+}
+
+params:query {
+  kind: vital
+}
+
+script:post-response {
+  const temperature = (res.body || []).find((a) => a.vitalMetric === 'temperature');
+  if (temperature) {
+    bru.setVar('temperatureAnalyteId', temperature.id);
+  } else {
+    console.log('No temperature vital found — the catalog seeds one on first read.');
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  The five seeded vital signs (api.md → "Analytes"; data-model.md → "Analyte catalog").
+
+  A vital is a measured quantity read against a named band, which is exactly what an analyte is, so
+  the vitals live in this catalog rather than in a parallel table — and a household configures
+  "what counts as a normal temperature for this child" through the ordinary range endpoints
+  (`Create Range` / `List Ranges`), pointed at one of these ids.
+
+  Seeded on first read and permanent: `DELETE` answers 409 `ANALYTE_IS_VITAL`, as does renaming
+  one. `displayName` and `unit` stay editable — they are labels.
+
+  Stashes the temperature analyte's id in `temperatureAnalyteId` so the range requests can use it.
+}

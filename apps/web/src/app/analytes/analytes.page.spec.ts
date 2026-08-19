@@ -34,7 +34,7 @@ describe('AnalytesPage', () => {
     apiMock.get.mockReturnValue(of([FERRITIN]));
     const fixture = TestBed.createComponent(AnalytesPage);
     fixture.detectChanges();
-    expect(apiMock.get).toHaveBeenCalledWith('/analytes', undefined);
+    expect(apiMock.get).toHaveBeenCalledWith('/analytes', { kind: 'lab' });
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Ferritin');
     expect(text).toContain('as printed: FERRITIN');
@@ -55,7 +55,7 @@ describe('AnalytesPage', () => {
     const fixture = TestBed.createComponent(AnalytesPage);
     fixture.detectChanges();
     fixture.componentInstance.onQueryChange({ target: { value: 'ferr' } } as any);
-    expect(apiMock.get).toHaveBeenLastCalledWith('/analytes', { q: 'ferr' });
+    expect(apiMock.get).toHaveBeenLastCalledWith('/analytes', { kind: 'lab', q: 'ferr' });
   });
 
   it('maps a duplicate-name conflict to its sentence', () => {

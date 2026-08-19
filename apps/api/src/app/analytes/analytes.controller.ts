@@ -36,8 +36,11 @@ export class AnalytesController {
   }
 
   @Get('analytes')
-  async list(@Query('q') q?: string) {
-    return await this.analytes.list({ q });
+  async list(@Query('q') q?: string, @Query('kind') kind?: string) {
+    // Anything unrecognised falls back to the default rather than 400ing: this is a listing filter,
+    // and a typo should show the ordinary catalog, not fail the page.
+    const parsed = kind === 'vital' || kind === 'all' || kind === 'lab' ? kind : undefined;
+    return await this.analytes.list({ q, kind: parsed });
   }
 
   // Declared before `analytes/:id` for readability; Nest matches the literal path first regardless.

@@ -5,6 +5,7 @@ import { DatabaseService } from '../persistence/database.service';
 import {
   advisories,
   adverseReactions,
+  analyteRanges,
   careDocumentStatements,
   careTeamMemberships,
   conditions,
@@ -25,6 +26,7 @@ import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { UpdateCodeStatusDto } from './dto/update-code-status.dto';
 import { leastUsedAccentColor, resolveAccentColor } from './accent-colors';
+import { seedPatientVitalRanges } from '../analytes/vital-analytes';
 import { RevisionsService } from '../revisions/revisions.service';
 import { StorageService } from '../storage/storage.service';
 import { normalizeTs } from '../persistence/time';
@@ -59,6 +61,11 @@ export class PatientsService {
       role,
       permissions: 'full',
     });
+
+    // The starting temperature band, so a fever chart has something to read against before anyone
+    // configures anything (data-model.md → AnalyteRange). Seeded here and only here: deleting it is
+    // meant to be permanent.
+    await seedPatientVitalRanges(db, id);
 
     const patientRow = inserted && inserted[0] ? inserted[0] : await this.getRawPatient(id);
     return this.pickPatient(patientRow, role);
@@ -158,6 +165,10 @@ export class PatientsService {
     );
 
     await tx.delete(advisories).where(eq(advisories.patientId, id));
+    // analyte_ranges holds a real FK to patients. Ranges are per-patient by definition (what a
+    // value should be depends on who was measured), so they go with the patient — the analyte
+    // itself is household-global and stays.
+    await tx.delete(analyteRanges).where(eq(analyteRanges.patientId, id));
     await tx.delete(erBriefSnapshots).where(eq(erBriefSnapshots.patientId, id));
     await tx.delete(adverseReactions).where(eq(adverseReactions.patientId, id));
     await tx.delete(observations).where(eq(observations.patientId, id));

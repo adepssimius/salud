@@ -5,13 +5,14 @@ meta {
 }
 
 get {
-  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes?q=
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}analytes?q=&kind=
   body: none
   auth: inherit
 }
 
 params:query {
   ~q: ferritin
+  ~kind: vital
 }
 
 settings {
@@ -23,4 +24,9 @@ docs {
   The lab-analyte catalog (api.md → "Analytes"). Global to the household like medications, and
   populated by importing reports rather than a seed — expect an empty list before the first
   lab import. `q` is a case-insensitive substring over the printed name and the display name.
+
+  `kind` selects which rows come back: `lab` (the default — ordinary lab analytes), `vital` (the
+  five seeded vital signs, which carry each patient's normal ranges through the same range
+  endpoints), or `all`. The default excludes vitals, so this request behaves exactly as it did
+  before vitals joined the catalog.
 }

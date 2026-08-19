@@ -52,6 +52,105 @@ describe('Analytes (e2e)', () => {
     });
   });
 
+  describe('vital signs in the catalog', () => {
+    const vitals = () =>
+      request(app.getHttpServer()).get('/api/analytes').query({ kind: 'vital' }).set(auth()).expect(200);
+
+    it('seeds the five vitals, and hides them from the default (lab) listing', async () => {
+      const seeded = await vitals();
+      expect(seeded.body.map((a: any) => a.vitalMetric).sort()).toEqual([
+        'heart_rate',
+        'oxygen_saturation',
+        'pain_score',
+        'respiratory_rate',
+        'temperature',
+      ]);
+      // Canonical units, so the bands stored against them are canonical too.
+      expect(seeded.body.find((a: any) => a.vitalMetric === 'temperature').unit).toBe('C');
+
+      const lab = await request(app.getHttpServer()).get('/api/analytes').set(auth()).expect(200);
+      expect(lab.body.some((a: any) => a.vitalMetric)).toBe(false);
+
+      const all = await request(app.getHttpServer())
+        .get('/api/analytes')
+        .query({ kind: 'all' })
+        .set(auth())
+        .expect(200);
+      expect(all.body.some((a: any) => a.vitalMetric === 'temperature')).toBe(true);
+    });
+
+    it('refuses to delete or rename a vital, so a household cannot lose its bands', async () => {
+      const temperature = (await vitals()).body.find((a: any) => a.vitalMetric === 'temperature');
+
+      const del = await request(app.getHttpServer())
+        .delete(`/api/analytes/${temperature.id}`)
+        .set(auth())
+        .expect(409);
+      expect(del.body.message).toBe('ANALYTE_IS_VITAL');
+
+      const rename = await request(app.getHttpServer())
+        .patch(`/api/analytes/${temperature.id}`)
+        .set(auth())
+        .send({ name: 'BODY TEMP' })
+        .expect(409);
+      expect(rename.body.message).toBe('ANALYTE_IS_VITAL');
+
+      // Labels stay editable — they are display, not identity.
+      const relabel = await request(app.getHttpServer())
+        .patch(`/api/analytes/${temperature.id}`)
+        .set(auth())
+        .send({ displayName: 'Body Temperature' })
+        .expect(200);
+      expect(relabel.body.displayName).toBe('Body Temperature');
+    });
+
+    it('never resolves a printed lab line onto a vital, and lets it create its own row', async () => {
+      const temperature = (await vitals()).body.find((a: any) => a.vitalMetric === 'temperature');
+
+      // A report printing "TEMPERATURE" must not bind to the row carrying the household's fever
+      // bands — it gets its own lab analyte, name collision notwithstanding.
+      const resolved = await request(app.getHttpServer())
+        .post('/api/analytes/resolve')
+        .set(auth())
+        .send({ analytes: [{ name: 'TEMPERATURE' }] })
+        .expect(201);
+      expect(resolved.body[0].analyteId).not.toBe(temperature.id);
+      expect(resolved.body[0].created).toBe(true);
+
+      // And it is a lab row: visible in the default listing, where the vital is not.
+      const lab = await request(app.getHttpServer())
+        .get('/api/analytes')
+        .query({ q: 'TEMPERATURE' })
+        .set(auth())
+        .expect(200);
+      expect(lab.body.map((a: any) => a.id)).toContain(resolved.body[0].analyteId);
+      expect(lab.body.map((a: any) => a.id)).not.toContain(temperature.id);
+    });
+
+    it('gives a new patient a temperature band, and lets a delete of it stick', async () => {
+      const temperature = (await vitals()).body.find((a: any) => a.vitalMetric === 'temperature');
+      const fresh = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set(auth())
+        .send({ fullName: 'Seeded Kid', dateOfBirth: '2019-04-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+
+      const url = `/api/patients/${fresh.body.id}/analytes/${temperature.id}/ranges`;
+      const seeded = await request(app.getHttpServer()).get(url).set(auth()).expect(200);
+      expect(seeded.body).toHaveLength(1);
+      expect(seeded.body[0]).toMatchObject({ kind: 'reference', label: 'Normal', low: 36.1, high: 37.2 });
+      expect(seeded.body[0].source).toContain('default');
+
+      // Deleting the seeded band is permanent: nothing re-seeds it behind the caregiver's back.
+      await request(app.getHttpServer())
+        .delete(`/api/analyte-ranges/${seeded.body[0].id}`)
+        .set(auth())
+        .expect(200);
+      const after = await request(app.getHttpServer()).get(url).set(auth()).expect(200);
+      expect(after.body).toHaveLength(0);
+    });
+  });
+
   it('creates an analyte with a title-cased display name and rejects a case-insensitive duplicate', async () => {
     const created = await request(app.getHttpServer())
       .post('/api/analytes')

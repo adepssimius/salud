@@ -39,6 +39,10 @@ yarn start:api && yarn start:web    # api on :3000, web on :4200 (proxies /api v
   Run it **before** flipping `FILE_STORAGE_DRIVER` on a populated instance
   (`apps/api/src/tools/migrate-attachments.ts`). Also ships in the api image as
   `migrate-attachments.js` so a Job can run it in-cluster.
+- `yarn backfill:vital-ranges` — one-time backfill giving patients that predate the seeded
+  temperature band one of their own (`tools/backfill-vital-ranges.ts`). New patients are seeded at
+  creation; this only catches existing rows. Deliberately **not** a boot step — re-seeding on every
+  restart would silently undo a caregiver's delete of the band. Idempotent, so a second run is safe.
 - `yarn migrate:sqlite-to-postgres` — one-time copy of an existing SQLite instance's data into a
   (migrated, empty) Postgres target, with an orphan pre-flight and a row-count verification
   (`tools/sqlite-to-postgres.ts`).
@@ -126,6 +130,20 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
   validation yet (`observations.service.ts:42`).
 - **Canonical units at the persistence boundary** (°C, kg, cm, bpm, %, 0–10); the entered unit is
   preserved in metadata for display, and user prefs drive conversion in the UI.
+- **Vitals are analyte catalog rows, not a parallel table.** The five vital signs
+  (`analytes.vital_metric`) are seeded rows, and `analyte_ranges` carries each patient's normal
+  ranges for them — a temperature band is the same row shape as a ferritin reference range, so one
+  table, one set of endpoints, one management UI serve both. Four guards keep the two apart:
+  vitals are excluded from `GET /analytes` (default `kind=lab`) and from `POST /analytes/resolve`,
+  cannot be deleted or renamed (409 `ANALYTE_IS_VITAL`), and `name` uniqueness is scoped to lab
+  rows so a report printing "TEMPERATURE" can still create its own analyte. See
+  `apps/api/src/app/analytes/vital-analytes.ts`.
+- **Charts scale to their bands, not just their readings.** Every surface plotting a value against
+  a standard folds the band bounds into its y-domain (`apps/web/src/app/core/value-bands.ts`) —
+  otherwise a band the readings never reach gets clipped off, which is precisely the reference the
+  reader is checking against. Applies to Home's sparkline, the journal chart and the analyte
+  history chart. A patient with no recorded bands gets a scale and no shading; the app never
+  substitutes its own idea of normal at render time (P6).
 - **Angular pages** are standalone components in a single `*.page.ts` with inline `template:` and
   `styles:`, `inject()` for DI, `signal()` for state. Dark theme, hand-rolled CSS, no UI library.
 - **Styling: reach for the global vocabulary first.** `apps/web/src/styles.css` holds the theme

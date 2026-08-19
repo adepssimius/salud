@@ -204,6 +204,12 @@ export class TimelineService {
         lastRecordedAt: weightRecordedAt,
         daysSince,
       },
+      // The bands the journal's temperature curve is read against. Carried here for the same reason
+      // the dashboard carries them: the alternative is the page resolving the vital's analyte id
+      // and then its ranges, two round trips to draw one chart.
+      temperatureRanges: (
+        await this.analytesService.vitalRangesForPatients('temperature', [patient.id], nowTs)
+      )[0]?.ranges ?? [],
     };
   }
 
@@ -583,6 +589,10 @@ export class TimelineService {
     // card renders with a sparkline the night board can't explain.
     const sickPatientIds = Array.from(new Set(activeEpisodes.map((ep: any) => ep.patientId)));
     const recentTemperatures = await this.buildRecentTemperatureRows(sickPatientIds, nowTs);
+    // The bands the sparkline is drawn against. Same patient set as the points above, for the same
+    // reason: a curve with no reference answers neither "how high is it" nor "is that high"
+    // (frontend.md → Home).
+    const temperatureRanges = await this.analytesService.vitalRangesForPatients('temperature', sickPatientIds, nowTs);
 
     let upcomingSchedules: any[] = [];
     if (patientIds.length) {
@@ -655,6 +665,7 @@ export class TimelineService {
       shoppingList,
       unacknowledgedAdvisories,
       recentTemperatures,
+      temperatureRanges,
     };
   }
 }
