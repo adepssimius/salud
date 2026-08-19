@@ -26,6 +26,32 @@ assert {
   weightPrompt: isDefined
 }
 
+tests {
+  test("every observation and intervention entry is attributed by name", function() {
+    const entries = res.getBody().entries;
+    for (const entry of entries) {
+      // Advisories fire from the engine and carry no recording user — null is expected there.
+      if (entry.kind === 'advisory') continue;
+      expect(entry.recordedBy).to.be.an('object');
+      expect(entry.recordedBy.id).to.be.a('string');
+      expect(entry.recordedBy.displayName).to.be.a('string');
+    }
+  });
+}
+
+docs {
+  `recordedBy { id, displayName }` is resolved server-side from the `users` row, so the journal
+  feed can attribute every line ("Dana — 240 mg ibuprofen · 2:15 AM") without fanning out to map
+  ids (api.md → Timeline & dashboard; product.md → P3).
+
+  It is deliberately NOT joined through `care_team_memberships`: attribution outlives membership.
+  To see that, add a second caregiver (patients/care-team/add), log a dose as them, remove them
+  again (patients/care-team/delete), and re-run this request — their name is still on the row.
+
+  `display` stays the exact object the single-item GETs return; there is no separate summarization
+  shape (P6).
+}
+
 settings {
   encodeUrl: true
   timeout: 0
