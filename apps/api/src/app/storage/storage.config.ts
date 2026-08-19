@@ -21,6 +21,13 @@ export interface S3StorageConfig {
 
 export type FileStorageConfig = LocalStorageConfig | S3StorageConfig;
 
+/**
+ * Env lookup, parameterized so a caller can resolve a *second* storage backend from a synthetic
+ * env object rather than the ambient one. That is what `tools/migrate-attachments` does to
+ * describe its source driver without duplicating any of the parsing or validation below.
+ */
+export type StorageEnv = Record<string, string | undefined>;
+
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback;
   const normalized = value.trim().toLowerCase();
@@ -35,8 +42,8 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
  * (or worse, the first *download*) looks like data loss. The old version cast an arbitrary string
  * to the driver union, so `FILE_STORAGE_DRIVER=s3` booted happily and threw hours later.
  */
-export function resolveStorageConfig(): FileStorageConfig {
-  const raw = process.env.FILE_STORAGE_DRIVER ?? 'local';
+export function resolveStorageConfig(env: StorageEnv = process.env): FileStorageConfig {
+  const raw = env.FILE_STORAGE_DRIVER ?? 'local';
   if (!(STORAGE_DRIVERS as readonly string[]).includes(raw)) {
     throw new Error(
       `FILE_STORAGE_DRIVER must be one of ${STORAGE_DRIVERS.join(', ')}; got: ${raw}`,
@@ -45,14 +52,14 @@ export function resolveStorageConfig(): FileStorageConfig {
   const driver = raw as StorageDriver;
 
   if (driver === 's3') {
-    const bucket = process.env.S3_BUCKET;
+    const bucket = env.S3_BUCKET;
     if (!bucket) {
       throw new Error('S3_BUCKET is required when FILE_STORAGE_DRIVER is s3');
     }
 
-    const endpoint = process.env.S3_ENDPOINT || undefined;
-    const accessKeyId = process.env.S3_ACCESS_KEY_ID || undefined;
-    const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY || undefined;
+    const endpoint = env.S3_ENDPOINT || undefined;
+    const accessKeyId = env.S3_ACCESS_KEY_ID || undefined;
+    const secretAccessKey = env.S3_SECRET_ACCESS_KEY || undefined;
     if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
       throw new Error(
         'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together, or both left unset to use the default credential chain',
@@ -64,12 +71,12 @@ export function resolveStorageConfig(): FileStorageConfig {
       bucket,
       // us-east-1 rather than an AWS-flavored guess: it is what Ceph RGW and MinIO expect, and it
       // is a valid AWS region for anyone who does set S3_REGION explicitly.
-      region: process.env.S3_REGION || 'us-east-1',
+      region: env.S3_REGION || 'us-east-1',
       endpoint,
       // Virtual-host addressing needs per-bucket DNS, which self-hosted stores rarely have — so a
       // custom endpoint implies path style unless the operator says otherwise.
-      forcePathStyle: parseBoolean(process.env.S3_FORCE_PATH_STYLE, Boolean(endpoint)),
-      prefix: process.env.S3_PREFIX || undefined,
+      forcePathStyle: parseBoolean(env.S3_FORCE_PATH_STYLE, Boolean(endpoint)),
+      prefix: env.S3_PREFIX || undefined,
       credentials:
         accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
     };
@@ -78,7 +85,7 @@ export function resolveStorageConfig(): FileStorageConfig {
   return {
     driver,
     basePath:
-      process.env.FILE_STORAGE_LOCAL_BASE_PATH ??
+      env.FILE_STORAGE_LOCAL_BASE_PATH ??
       path.join(resolveDataDir(), 'attachments'),
   };
 }
