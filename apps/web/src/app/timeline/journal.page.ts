@@ -109,7 +109,11 @@ function prefersChartOpen(): boolean {
           [entries]="entries()"
           [episodes]="episodes()"
           [temperatureRanges]="temperatureRanges()"
+          [overlayTags]="chartOverlayTags()"
+          [showAllDoses]="showAllDoses()"
+          [medicationNames]="medicationNames()"
           (episodeSelected)="goToEpisode($event)"
+          (showAllDosesRequested)="showEveryDose()"
         ></app-journal-chart>
       </section>
 
@@ -209,6 +213,22 @@ export class JournalPage implements OnInit {
   /** The patient's temperature bands, straight from the timeline payload to the chart. */
   temperatureRanges = computed(() => this.timeline()?.temperatureRanges ?? []);
 
+  /** The reader's explicit override of the chart's default marker selection. */
+  showAllDoses = signal(false);
+
+  /**
+   * Which dose markers the chart shows before anyone filters (api.md → "Chart overlay defaults").
+   *
+   * An active filter chip **replaces** the default rather than compounding with it: the reader has
+   * said exactly which doses they want, and narrowing that further by a household default would
+   * silently drop rows they explicitly asked for. So a chip clears the tags, and the chart draws
+   * every dose in the (already filtered) payload.
+   */
+  chartOverlayTags = computed<string[]>(() => {
+    if (this.selectedMedicationId() || this.selectedTag()) return [];
+    return this.timeline()?.temperatureOverlayTags ?? [];
+  });
+
   allTags = computed<string[]>(() => {
     const tags = new Set<string>();
     for (const m of this.medications()) {
@@ -217,7 +237,7 @@ export class JournalPage implements OnInit {
     return Array.from(tags).sort();
   });
 
-  private medicationNames = computed(() => new Map(this.medications().map((m) => [m.id, m.name])));
+  medicationNames = computed(() => new Map(this.medications().map((m) => [m.id, m.name])));
 
   private rows = computed<FeedRow[]>(() => {
     const units = unitsFor(this.auth.user());
@@ -352,21 +372,34 @@ export class JournalPage implements OnInit {
     this.chartOpen.set(!this.chartOpen());
   }
 
+  /**
+   * Widen past the chart's default marker selection to every dose the payload holds. Client-side
+   * only — the timeline always returned every dose, so this needs no refetch.
+   */
+  showEveryDose() {
+    this.showAllDoses.set(true);
+  }
+
   filterByMedication(medicationId: string) {
     this.selectedMedicationId.set(medicationId);
     this.selectedTag.set(null);
+    this.showAllDoses.set(false);
     this.load();
   }
 
   filterByTag(tag: string) {
     this.selectedTag.set(tag);
     this.selectedMedicationId.set(null);
+    this.showAllDoses.set(false);
     this.load();
   }
 
   clearFilters() {
     this.selectedMedicationId.set(null);
     this.selectedTag.set(null);
+    // Back to the household's default marker selection, not to every dose: clearing a filter
+    // returns the chart to how it opens.
+    this.showAllDoses.set(false);
     this.load();
   }
 

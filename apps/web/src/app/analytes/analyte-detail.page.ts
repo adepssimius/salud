@@ -2,7 +2,14 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { Analyte, AnalyteHistory, AnalyteRange, Patient } from '@salud/shared/types';
+import {
+  Analyte,
+  AnalyteHistory,
+  AnalyteRange,
+  ChartOverlayDefault,
+  ChartOverlayDefaultsResponse,
+  Patient,
+} from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 
@@ -74,6 +81,37 @@ const PAD = 8;
         </button>
       </form>
       <div class="error" *ngIf="headerError()">{{ headerError() }}</div>
+
+      <!-- Household-global like the header above, so it sits before the patient picker. Worded as
+           what it is: a viewing convenience, not a statement about medicine (P6). -->
+      <section>
+        <h2>Chart defaults</h2>
+        <p class="muted small">
+          Doses shown on this chart by default. Everything you record is always available — this
+          only decides what the chart draws before you filter it.
+        </p>
+        <ul class="row-list" *ngIf="chartDefaults().length; else noChartDefaults">
+          <li *ngFor="let overlay of chartDefaults()" class="overlay-row">
+            <span class="pill pill-neutral">{{ overlay.value }}</span>
+            <button type="button" class="link" (click)="removeChartDefault(overlay.value)" [disabled]="savingDefaults()">
+              Remove
+            </button>
+          </li>
+        </ul>
+        <ng-template #noChartDefaults>
+          <p class="muted small">No doses shown by default. The chart opens with readings only.</p>
+        </ng-template>
+        <form class="inline-form" (ngSubmit)="addChartDefault()">
+          <label class="field">
+            <span>Medication tag</span>
+            <input type="text" [(ngModel)]="newChartDefault" [ngModelOptions]="{ standalone: true }" placeholder="antipyretic" />
+          </label>
+          <button type="submit" class="secondary" [disabled]="!newChartDefault.trim() || savingDefaults()">
+            {{ savingDefaults() ? 'Saving…' : 'Add' }}
+          </button>
+        </form>
+        <div class="error" *ngIf="chartDefaultsError()">{{ chartDefaultsError() }}</div>
+      </section>
 
       <section>
         <h2>Ranges and history</h2>
@@ -185,7 +223,24 @@ const PAD = 8;
                 <title>{{ p.valueText }}{{ p.unit ? ' ' + p.unit : '' }} on {{ p.observedAt * 1000 | date: 'mediumDate' }}</title>
               </circle>
             </g>
+            <!-- Doses this chart shows by default. Raw positions only — never an annotation about
+                 what a dose did, here or anywhere near a marker (P6). -->
+            <g *ngFor="let d of plottedDoses()">
+              <line
+                [attr.x1]="d.x"
+                [attr.y1]="doseMarkerTop"
+                [attr.x2]="d.x"
+                [attr.y2]="doseMarkerBottom"
+                class="dose-marker"
+              >
+                <title>{{ d.title }}</title>
+              </line>
+            </g>
           </svg>
+          <p class="chart-legend small muted" *ngIf="plottedDoses().length">
+            <span class="legend-mark" aria-hidden="true"></span>
+            Showing {{ chartDefaultLegend() }} by default.
+          </p>
 
           <ul class="row-list" *ngIf="history()?.points?.length; else noPoints">
             <li *ngFor="let p of history()?.points">
@@ -292,6 +347,41 @@ const PAD = 8;
       .value-point {
         fill: #7dd3fc;
       }
+      /* Same amber as the journal chart's markers — one visual vocabulary for "a dose happened". */
+      .dose-marker {
+        stroke: #fbbf24;
+        stroke-width: 2;
+      }
+      .chart-legend {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0.25rem 0 0;
+      }
+      .legend-mark {
+        display: inline-block;
+        width: 2px;
+        height: 12px;
+        background: #fbbf24;
+      }
+      /* flex-direction is explicit for the same reason .inline-check states globally: the form
+         element rule's own column direction would otherwise win on this element regardless of
+         source order, and align-items: flex-end would then push both children to the right edge. */
+      .inline-form {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .inline-form .field {
+        max-width: 16rem;
+      }
+      .overlay-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
     `,
   ],
 })
@@ -311,15 +401,24 @@ export class AnalyteDetailPage implements OnInit {
   patientId = signal<string | null>(null);
   history = signal<AnalyteHistory | null>(null);
 
+  /**
+   * Which dose markers this metric's chart shows by default (api.md → "Chart overlay defaults").
+   * Household-global like the analyte itself, so it is not reloaded when the patient changes.
+   */
+  chartDefaults = signal<ChartOverlayDefault[]>([]);
+  newChartDefault = '';
+
   loadError = signal<string | null>(null);
   headerError = signal<string | null>(null);
   rangesError = signal<string | null>(null);
   patientsError = signal<string | null>(null);
   historyError = signal<string | null>(null);
   deleteError = signal<string | null>(null);
+  chartDefaultsError = signal<string | null>(null);
 
   savingHeader = signal(false);
   savingRange = signal(false);
+  savingDefaults = signal(false);
   deleting = signal(false);
   showRangeForm = signal(false);
 
@@ -415,6 +514,36 @@ export class AnalyteDetailPage implements OnInit {
 
   polylinePoints = computed(() => this.plotted().map((p) => `${p.x},${p.y}`).join(' '));
 
+  // Drawn along the bottom edge, clear of the value series above them.
+  readonly doseMarkerTop = CHART_HEIGHT - PAD * 2;
+  readonly doseMarkerBottom = CHART_HEIGHT;
+
+  /**
+   * The doses the API selected for this metric's chart defaults, positioned on the same time axis
+   * as the values. Presence only — what was given and when, never what it did (P6). Doses outside
+   * the plotted time span are dropped rather than clamped onto an edge, where they would read as
+   * having happened at a time they didn't.
+   */
+  plottedDoses = computed<Array<{ x: number; title: string }>>(() => {
+    const d = this.domain();
+    if (!d || this.mixedUnits()) return [];
+    return (this.history()?.doses ?? [])
+      .filter((dose) => dose.performedAt >= d.minT && dose.performedAt <= d.maxT)
+      .map((dose) => {
+        const amount = dose.amountMg != null ? ` · ${dose.amountMg} mg` : '';
+        const when = new Date(dose.performedAt * 1000).toLocaleString();
+        return { x: this.xFor(dose.performedAt), title: `${dose.medicationName}${amount} at ${when}` };
+      });
+  });
+
+  /** Names the configured default in display terms, e.g. "antipyretic doses". */
+  chartDefaultLegend = computed(() => {
+    const values = this.chartDefaults().map((o) => o.value);
+    if (!values.length) return 'doses';
+    const names = values.length === 1 ? values[0] : `${values.slice(0, -1).join(', ')} and ${values[values.length - 1]}`;
+    return `${names} doses`;
+  });
+
   /**
    * One band per row, spanning from its effective date to where the next row **in its own lineage**
    * takes over. Lineages are independent: a new reference range doesn't end a goal.
@@ -462,6 +591,51 @@ export class AnalyteDetailPage implements OnInit {
     this.analyteId = this.route.snapshot.paramMap.get('id') ?? '';
     this.loadAnalyte();
     this.loadPatients();
+    this.loadChartDefaults();
+  }
+
+  private loadChartDefaults() {
+    this.api.get<ChartOverlayDefaultsResponse>(`/analytes/${this.analyteId}/chart-defaults`).subscribe({
+      next: (res) => this.chartDefaults.set(res?.overlays ?? []),
+      error: (err) => this.chartDefaultsError.set(errorText(err, 'Could not load this chart\'s defaults.')),
+    });
+  }
+
+  addChartDefault() {
+    const value = this.newChartDefault.trim();
+    if (!value) return;
+    // Duplicates collapse server-side, so no client-side guard is needed here.
+    this.saveChartDefaults([...this.chartDefaults().map((o) => o.value), value]);
+  }
+
+  removeChartDefault(value: string) {
+    this.saveChartDefaults(this.chartDefaults().map((o) => o.value).filter((v) => v !== value));
+  }
+
+  /**
+   * The endpoint edits whole (api.md), so both add and remove send the full list — including the
+   * empty one, which is a valid choice meaning "no doses on this chart by default".
+   */
+  private saveChartDefaults(values: string[]) {
+    this.savingDefaults.set(true);
+    this.chartDefaultsError.set(null);
+    this.api
+      .put<ChartOverlayDefaultsResponse>(`/analytes/${this.analyteId}/chart-defaults`, {
+        overlays: values.map((value) => ({ kind: 'medication_tag' as const, value })),
+      })
+      .subscribe({
+        next: (res) => {
+          this.chartDefaults.set(res?.overlays ?? []);
+          this.newChartDefault = '';
+          this.savingDefaults.set(false);
+          // The history chart's markers are selected by these, so it has to be refetched.
+          this.loadHistory();
+        },
+        error: (err) => {
+          this.chartDefaultsError.set(errorText(err, 'Could not save this chart\'s defaults.'));
+          this.savingDefaults.set(false);
+        },
+      });
   }
 
   private loadPatients() {

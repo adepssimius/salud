@@ -15,6 +15,9 @@ interface DoseMarker {
   timestamp: number;
   amountMg: number | null;
   medicationId: string | null;
+  medicationName: string | null;
+  /** The medication's catalog tags, resolved by the API at read time. */
+  tags: string[];
   isAtypical: boolean;
 }
 
@@ -53,7 +56,7 @@ const MIN_SPAN_C = 1.5;
   imports: [CommonModule],
   template: `
     <svg
-      *ngIf="temperaturePoints().length || doseMarkers().length; else empty"
+      *ngIf="temperaturePoints().length || allDoseMarkersCount(); else empty"
       [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight"
       class="chart"
     >
@@ -109,10 +112,19 @@ const MIN_SPAN_C = 1.5;
           [class.atypical]="d.isAtypical"
           class="dose-marker"
         >
-          <title>{{ d.amountMg }} mg at {{ d.timestamp * 1000 | date: 'short' }}{{ d.isAtypical ? ' (atypical)' : '' }}</title>
+          <title>{{ doseTitle(d) }}</title>
         </line>
       </g>
     </svg>
+    <!-- Names which doses are drawn, in display terms. It says what is on the chart, never that
+         the doses did anything to the readings (P6). -->
+    <p class="chart-legend small muted" *ngIf="overlayLegend()">
+      <span class="legend-mark" aria-hidden="true"></span>
+      Showing {{ overlayLegend() }} by default.
+      <button type="button" class="link" *ngIf="dosesHiddenByDefault()" (click)="showAllDosesRequested.emit()">
+        Show all doses
+      </button>
+    </p>
     <ng-template #empty>
       <p class="muted small">No temperature readings or doses in range yet.</p>
     </ng-template>
@@ -150,6 +162,20 @@ const MIN_SPAN_C = 1.5;
       .dose-marker {
         stroke: #fbbf24;
         stroke-width: 2;
+      }
+      .chart-legend {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin: 0.25rem 0 0;
+      }
+      /* Matches the marker's own stroke, so the legend reads as the thing on the chart. */
+      .legend-mark {
+        display: inline-block;
+        width: 2px;
+        height: 12px;
+        background: #fbbf24;
       }
       /* Same relationship as .range-band on the analyte history chart: the recorded standard is the
          ground the series sits on, and a custom band sits lighter than the reference one. */
@@ -191,6 +217,9 @@ export class JournalChartComponent {
   private readonly entriesSignal = signal<TimelineEntry[]>([]);
   private readonly episodesSignal = signal<Episode[]>([]);
   private readonly rangesSignal = signal<ResolvedRange[]>([]);
+  private readonly overlayTagsSignal = signal<string[]>([]);
+  private readonly showAllDosesSignal = signal(false);
+  private readonly medicationNamesSignal = signal<Map<string, string>>(new Map());
 
   @Input({ required: true }) set entries(value: TimelineEntry[]) {
     this.entriesSignal.set(value ?? []);
@@ -208,8 +237,40 @@ export class JournalChartComponent {
     this.rangesSignal.set(value ?? []);
   }
 
+  /**
+   * The medication tags whose doses this chart shows by default (api.md → "Chart overlay
+   * defaults"). Empty disables the default selection entirely and every dose shows.
+   */
+  @Input() set overlayTags(value: string[]) {
+    this.overlayTagsSignal.set(value ?? []);
+  }
+
+  /** The reader's explicit "show every dose" override of the default above. */
+  @Input() set showAllDoses(value: boolean) {
+    this.showAllDosesSignal.set(!!value);
+  }
+
+  /** Medication id → name, so a marker's tooltip can name what was given. */
+  @Input() set medicationNames(value: Map<string, string>) {
+    this.medicationNamesSignal.set(value ?? new Map());
+  }
+
   /** Emits the episode id behind a clicked band; the page owns navigation. */
   @Output() episodeSelected = new EventEmitter<string>();
+
+  /** The reader asking to widen past the default selection; the page owns the flag. */
+  @Output() showAllDosesRequested = new EventEmitter<void>();
+
+  /**
+   * A marker's tooltip: what was given, how much, and when. Presence only — deliberately no
+   * language about what the dose did, on the marker or beside it (P6).
+   */
+  doseTitle(dose: DoseMarker): string {
+    const parts = [dose.medicationName, dose.amountMg != null ? `${dose.amountMg} mg` : null].filter(Boolean);
+    const what = parts.length ? parts.join(' · ') : 'Dose';
+    const when = new Date(dose.timestamp * 1000).toLocaleString();
+    return `${what} at ${when}${dose.isAtypical ? ' (atypical)' : ''}`;
+  }
 
   // Displayed in the caregiver's preferred unit (product.md:49: "graphs normalize to the preferred
   // unit"), converting from whatever unit each entry happened to be recorded in.
@@ -230,7 +291,8 @@ export class JournalChartComponent {
     return points.sort((a, b) => a.timestamp - b.timestamp);
   });
 
-  doseMarkers = computed<DoseMarker[]>(() =>
+  /** Every dose in range. What the chart *draws* is `doseMarkers` below, which may be a subset. */
+  private readonly allDoseMarkers = computed<DoseMarker[]>(() =>
     this.entriesSignal()
       .filter((e) => e.kind === 'intervention' && e.type === 'medication_dose')
       .map((e) => {
@@ -239,11 +301,54 @@ export class JournalChartComponent {
           timestamp: int.performedAt,
           amountMg: int.metadata?.amountMg ?? null,
           medicationId: int.metadata?.medicationId ?? null,
+          medicationName: this.medicationNamesSignal().get(int.metadata?.medicationId) ?? null,
+          tags: Array.isArray(int.medicationTags) ? int.medicationTags : [],
           isAtypical: !!int.metadata?.isAtypical,
         };
       })
       .sort((a, b) => a.timestamp - b.timestamp),
   );
+
+  /**
+   * The markers actually drawn: by default, doses whose medication carries one of this metric's
+   * configured overlay tags (data-model.md → ChartOverlayDefault).
+   *
+   * A **display default**, not a judgment — the app is saying "you probably want these visible
+   * together", never that the doses did anything to the readings, and no annotation on or near a
+   * marker ever says otherwise (P6). The reader overrides in both directions: `showAllDoses`
+   * widens back to everything the payload carries, and the page's filter chips replace the
+   * selection outright by clearing `overlayTags`.
+   *
+   * No configured tags means no default selection to apply, so everything shows — the same as
+   * before this feature existed.
+   */
+  doseMarkers = computed<DoseMarker[]>(() => {
+    const tags = this.overlayTagsSignal();
+    const all = this.allDoseMarkers();
+    if (!tags.length || this.showAllDosesSignal()) return all;
+    const wanted = new Set(tags);
+    return all.filter((d) => d.tags.some((tag) => wanted.has(tag)));
+  });
+
+  /** True when the default selection is hiding doses the payload carries — drives the legend. */
+  dosesHiddenByDefault = computed(
+    () => this.allDoseMarkers().length > this.doseMarkers().length,
+  );
+
+  /**
+   * Every dose in range, drawn or not. The chart renders whenever the payload holds *something*,
+   * so a default that happens to select nothing still shows the plot and its "Show all doses"
+   * affordance rather than collapsing to the empty state.
+   */
+  allDoseMarkersCount = computed(() => this.allDoseMarkers().length);
+
+  /** "antipyretic doses" / "antipyretic and analgesic doses" — names the default, nothing more. */
+  overlayLegend = computed(() => {
+    const tags = this.overlayTagsSignal();
+    if (!tags.length || this.showAllDosesSignal()) return null;
+    const names = tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(', ')} and ${tags[tags.length - 1]}`;
+    return `${names} doses`;
+  });
 
   private timeRange = computed<{ min: number; max: number }>(() => {
     const timestamps = [
