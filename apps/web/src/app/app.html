@@ -3,7 +3,7 @@
     <div class="brand">Salud</div>
     <nav class="nav-actions">
       <ng-container *ngIf="isAuthed(); else loggedOut">
-        <a routerLink="/dashboard">Dashboard</a>
+        <a routerLink="/dashboard">Home</a>
         <!-- The menu is a sibling of the toggle, not a child: a <button> may not contain the
              menu's own link and button. -->
         <div class="profile-wrap">
@@ -20,6 +20,7 @@
           </button>
           <div class="menu" role="menu" *ngIf="menuOpen()">
             <a routerLink="/profile" role="menuitem" (click)="closeMenu()">Edit profile</a>
+            <a routerLink="/manage" role="menuitem" (click)="closeMenu()">Manage</a>
             <button type="button" role="menuitem" (click)="logout()">Log out</button>
           </div>
         </div>
