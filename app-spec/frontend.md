@@ -5,7 +5,7 @@ This file captures UI and client-side behavior specifics. The product spec (`pro
 ## Information architecture (v2)
 
 **Status: partly built.** Shipped: the `/patients` list, the hub shell and its persistent header,
-the Journal / Meds / History / Share / Settings tabs, per-patient `accentColor` (server-assigned,
+the Journal / Photos / Meds / History / Share / Settings tabs, per-patient `accentColor` (server-assigned,
 carried on the hub header, the list rows and every patient-naming surface on Home), the bimodal
 Home with its night board, `/manage` (reached from the avatar menu) holding the catalogs and
 "New schedule", Quick Log, the bottom-bar/left-rail shell, and **the journal feed** — the
@@ -100,11 +100,13 @@ rules follow:
   (mirroring the ER Brief's allergies-in-the-header priority), active-episode pill(s), the
   stale-weight indicator, and an **ER Brief action**. The brief is a handoff artifact wanted in a
   hurry, not an access-control screen — it belongs one tap from every tab rather than inside one.
-- **Tabs: Now · Journal · Meds · History · Share**, plus a settings gear.
+- **Tabs: Now · Journal · Photos · Meds · History · Share**, plus a settings gear.
   - **Now** — the live state: the same content as this patient's Home sick card (below) with
     quick actions inline. The landing tab while an episode is active; a quiet patient lands on
     Journal instead.
   - **Journal** — the narrative timeline; supersedes `/patients/:id/timeline` (see "Journal").
+  - **Photos** — photo entries grouped by the site they record, and one site's progression over
+    time (see "Photos" → "Photos by site").
   - **Meds** — this patient's schedules (with adherence), last doses and next-allowed, and the
     **Reactions card + add-reaction flow**. Reactions warn at dose time; they belong beside meds,
     not on an edit form.
@@ -130,6 +132,7 @@ rules follow:
 /patients/:id                → redirects to now (episode active) or journal (quiet)
 /patients/:id/now
 /patients/:id/journal        supersedes /patients/:id/timeline
+/patients/:id/photos         photos by site (the progression view)
 /patients/:id/meds
 /patients/:id/history
 /patients/:id/care-team      care team (was `share`, which redirects)
@@ -653,6 +656,38 @@ unconditional by design (er-brief.md → Formats).
   - Timeline and episode views render `photo` entries as an inline thumbnail (fetched via
     `GET /api/files/:id`, same access control as every other patient-scoped read) rather than a
     text summary line.
+
+### Photos by site
+
+`/patients/:id/photos`, a patient-hub tab. Every photo entry already records *what* it is a photo
+of — `bodyLocation` and `side`, plus an optional `sizeCm` and `note` — but the journal shows each
+photo where it was logged, so a caregiver photographing a left and a right ear drum over several
+days cannot tell the two series apart, let alone read either one forwards. This tab is that read.
+
+- **Site list (the landing screen).** One row per photographed site, grouped by
+  `(bodyLocation, side)` — the same identity as the entry form's framing references: location
+  compared trimmed and case-insensitively, side exactly; the label shows the location in the
+  casing it was *recorded* in (the most recent photo's), with the side appended
+  ("ear drum · right") and omitted when it is `n/a`. Each row carries the site's most recent
+  thumbnail, its photo count, and the date of that latest photo. Rows are ordered by the recency
+  of their latest photo — the site currently being watched sits at the top.
+- **One site's progression.** Selecting a row replaces the list with that site's photos in
+  chronological order, **oldest → newest**: a progression is read forwards. Each photo renders
+  large and whole (contained, not cropped square — a cropped edge is exactly the detail being
+  compared), with its date, **who recorded it (P3)**, and its `sizeCm` and `note` when present.
+  `sizeCm` is stored canonically in cm and shown in the viewer's `preferredLengthUnit`, like every
+  other length. An "All sites" action returns to the list.
+- **Empty and defensive states.** A patient with no photo entries gets a plain sentence saying so,
+  not an empty grid; a failed load says so rather than reading as "no photos" (see Errors). A
+  photo whose metadata carries no body location — which the API's validation should prevent —
+  groups under a single "Unspecified site" rather than breaking the page, and one missing a
+  recognizable `side` is treated as `n/a`.
+- **Existing endpoints only**: `GET /api/patients/:id/observations?type=photo` for the entries
+  (whole observations come back, so non-photo entries saved in the same breath are ignored here),
+  and the authenticated blob fetch each thumbnail already does. Attribution resolves against the
+  care-team roster the hub has loaded — observations carry `recordedByUserId`, not a name.
+- **Entry points**: the hub's Photos tab, and a "Photos by site" link in the journal feed header,
+  where a caregiver looking at today's thumbnail is the one who asks for the series.
 
 ## Documents
 - The `document` entry mini-form attaches a file (PDF or image) to an observation — after-visit

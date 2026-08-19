@@ -158,6 +158,16 @@ describe('JournalPage', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
   });
 
+  it('links from the feed header to the photo progression view', () => {
+    const fixture = render();
+    const link = Array.from(fixture.nativeElement.querySelectorAll('.journal-feed-head .link')).find(
+      (b: any) => /photos/i.test(b.textContent),
+    ) as HTMLButtonElement;
+    expect(link).toBeDefined();
+    link.click();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'photos']);
+  });
+
   it('marks concurrent episodes separately rather than naming only one', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path === '/medications') return of(medications);

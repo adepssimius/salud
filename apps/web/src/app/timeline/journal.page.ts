@@ -114,7 +114,13 @@ function prefersChartOpen(): boolean {
       </section>
 
       <section class="card journal-feed-card">
-        <h2>Journal</h2>
+        <div class="journal-feed-head">
+          <h2>Journal</h2>
+          <!-- The feed shows a photo where it was logged; the progression of one site over days is
+               a different read, and this is where a caregiver looking at today's photo asks for it
+               (frontend.md → Photos → "Photos by site"). -->
+          <button type="button" class="link" (click)="goToPhotos()">Photos by site</button>
+        </div>
 
         <p class="error" *ngIf="error()">{{ error() }}</p>
 
@@ -384,6 +390,10 @@ export class JournalPage implements OnInit {
         this.error.set(errorText(err, 'Could not mark as seen.'));
       },
     });
+  }
+
+  goToPhotos() {
+    this.router.navigate(['/patients', this.patientId, 'photos']);
   }
 
   goToEpisode(episodeId: string) {

@@ -16,10 +16,11 @@ import { ApiClientService } from './api-client.service';
       rel="noopener"
       class="photo-thumb"
       [class.large]="large"
+      [class.full]="full"
     >
       <img [src]="objectUrl()" alt="photo entry" />
     </a>
-    <span *ngIf="objectUrl() && !link" class="photo-thumb" [class.large]="large">
+    <span *ngIf="objectUrl() && !link" class="photo-thumb" [class.large]="large" [class.full]="full">
       <img [src]="objectUrl()" alt="photo entry" />
     </span>
   `,
@@ -40,6 +41,19 @@ import { ApiClientService } from './api-client.service';
         width: 136px;
         height: 136px;
       }
+      /* The progression view is the one place the photo itself is the content rather than a
+         pointer to it, so it is shown whole — contained, not cropped square, because a lesion
+         edge cropped out of a comparison shot is exactly the detail being compared. */
+      .full {
+        display: block;
+      }
+      .full img {
+        width: 100%;
+        max-width: 320px;
+        height: auto;
+        max-height: 360px;
+        object-fit: contain;
+      }
     `,
   ],
 })
@@ -50,6 +64,8 @@ export class PhotoThumbnailComponent implements OnChanges, OnDestroy {
   /** false renders a plain image with no anchor — for use inside a card that is itself a button. */
   @Input() link = true;
   @Input() large = false;
+  /** Whole-image rendering for the photo progression view — see the `.full` rule above. */
+  @Input() full = false;
 
   objectUrl = signal<string | null>(null);
 

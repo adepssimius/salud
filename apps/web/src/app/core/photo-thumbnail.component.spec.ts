@@ -31,6 +31,19 @@ describe('PhotoThumbnailComponent', () => {
     expect(img.getAttribute('src')).toBe(fakeUrl);
   });
 
+  it('renders the photo whole in the progression variant', () => {
+    // The Photos page compares one site across days; a square crop can cut off the edge of the
+    // thing being compared, so `full` shows the image entire.
+    apiMock.getBlob.mockReturnValue(of(new Blob(['x'], { type: 'image/png' })));
+
+    const fixture = TestBed.createComponent(PhotoThumbnailComponent);
+    fixture.componentRef.setInput('fileId', 'f1');
+    fixture.componentRef.setInput('full', true);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.photo-thumb').classList).toContain('full');
+  });
+
   it('renders nothing when the fetch fails', () => {
     apiMock.getBlob.mockReturnValue(throwError(() => new Error('nope')));
 
