@@ -160,6 +160,25 @@ describe('EntryMetadataFormComponent', () => {
       comp.add();
       expect(emitted[0].metadata.unit).toBe('C');
     });
+
+    it('seeds the method from initialTempMethod, and resets back to it rather than to unknown', async () => {
+      await configure();
+      const fixture = TestBed.createComponent(EntryMetadataFormComponent);
+      const comp = fixture.componentInstance;
+      comp.initialTempMethod = 'tympanic';
+      const emitted: EntryDraft[] = [];
+      comp.entryAdded.subscribe((d: EntryDraft) => emitted.push(d));
+      fixture.detectChanges();
+
+      // Seeded, not locked — the select stays editable on the form.
+      expect(comp.tempMethod).toBe('tympanic');
+      comp.entryType = 'temperature';
+      comp.tempValue = 38.2;
+      comp.add();
+      expect(emitted[0].metadata.method).toBe('tympanic');
+      // Same-session stickiness, matching the unit toggle: the next entry keeps the habit.
+      expect(comp.tempMethod).toBe('tympanic');
+    });
   });
 
   describe('other explicit types', () => {

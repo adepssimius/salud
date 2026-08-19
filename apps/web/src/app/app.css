@@ -131,13 +131,9 @@
   color: var(--accent-focus);
 }
 
-.app-content {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  padding: 1.5rem;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-}
+/* .app-content is a bare layout slot (the grid's second column), deliberately unstyled: every
+   routed page draws its own `.card` (or equivalent), so chrome here rendered as a box within a
+   box around the whole page, and padding here double-gutters against .app-shell's. */
 
 /* ---- app body: rail + content ------------------------------------------- */
 

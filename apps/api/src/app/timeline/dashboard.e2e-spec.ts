@@ -92,6 +92,12 @@ describe('Dashboard (e2e)', () => {
     expect(medSummary.lastDoseAt).toBe(dose.body.performedAt);
     expect(medSummary.nextAllowedAt).toEqual(dose.body.metadata.nextAllowedAt);
     expect(medSummary.isAtypicalLastDose).toBe(dose.body.metadata.isAtypical);
+    // The repeat-dose prefill rides the episode-scoped array too: the sick card merges this with
+    // lastDoses and either side can win the merge (api.md → GET /api/dashboard).
+    expect(medSummary.lastEmbodimentId).toBe(embodimentId);
+    expect(medSummary.lastEmbodimentLabel).toBe('dashboard suspension');
+    expect(medSummary.lastAmountMg).toBe(120);
+    expect(medSummary.lastAmountMl).toBeNull();
   });
 
   it('lists upcoming schedules with an overdue flag', async () => {
@@ -272,6 +278,21 @@ describe('Dashboard (e2e)', () => {
       const row = dashboard.body.lastDoses.find((p: any) => p.patientId === pid);
       expect(row.doses[0].nextAllowedAt).toEqual(dose.body.metadata.nextAllowedAt);
       expect(row.doses[0].isAtypicalLastDose).toBe(dose.body.metadata.isAtypical);
+    });
+
+    it('carries the repeat-dose prefill: embodiment id, resolved label, and amounts', async () => {
+      const pid = await newPatient();
+      await logDose(pid, 1, { amountMg: 160, amountMl: 5 });
+
+      const dashboard = await request(app.getHttpServer())
+        .get('/api/dashboard')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const d = dashboard.body.lastDoses.find((p: any) => p.patientId === pid).doses[0];
+      expect(d.lastEmbodimentId).toBe(embodimentId);
+      expect(d.lastEmbodimentLabel).toBe('dashboard suspension');
+      expect(d.lastAmountMg).toBe(160);
+      expect(d.lastAmountMl).toBe(5);
     });
   });
 
@@ -646,6 +667,45 @@ describe('Dashboard (e2e)', () => {
       const row = await temperatureRow(pid);
       expect(row).toBeDefined();
       expect(row.points).toEqual([]);
+    });
+
+    describe('lastMethod — the Temp quick action\'s method prefill', () => {
+      it('reports the most recent known method, skipping unknown readings', async () => {
+        const pid = await newPatient('Method Patient');
+        await logTemp(pid, 5, { value: 38.0, unit: 'C', method: 'tympanic' }, { startEpisodeName: 'Method Fever' });
+        await logTemp(pid, 1, { value: 38.6, unit: 'C', method: 'unknown' });
+
+        const row = await temperatureRow(pid);
+        expect(row.lastMethod).toBe('tympanic');
+      });
+
+      it('looks past the 48h sparkline window and outside episodes — a per-patient habit, not a reading', async () => {
+        const pid = await newPatient('Habit Patient');
+        // The only known-method reading is 3 days old and attached to no episode.
+        await logTemp(pid, 72, { value: 37.0, unit: 'C', method: 'rectal' });
+        // The episode that makes this patient sick starts with a non-temperature observation.
+        await request(app.getHttpServer())
+          .post(`/api/patients/${pid}/observations`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            observedAt: new Date().toISOString(),
+            startEpisodeName: 'Habit Fever',
+            entries: [{ type: 'pain_score', metadata: { score: 4 } }],
+          })
+          .expect(201);
+
+        const row = await temperatureRow(pid);
+        expect(row.points).toEqual([]); // outside the sparkline window...
+        expect(row.lastMethod).toBe('rectal'); // ...but the habit still seeds the prefill
+      });
+
+      it('is null when no reading carries a known method — the form keeps its own unknown default', async () => {
+        const pid = await newPatient('Unknown Method Patient');
+        await logTemp(pid, 1, { value: 38.1, unit: 'C', method: 'unknown' }, { startEpisodeName: 'Unknown Fever' });
+
+        const row = await temperatureRow(pid);
+        expect(row.lastMethod).toBeNull();
+      });
     });
 
     it('never leaks a patient the caller is not on the care team for', async () => {

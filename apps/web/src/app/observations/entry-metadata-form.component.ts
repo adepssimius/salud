@@ -19,7 +19,9 @@ import {
   LengthUnit,
   ObservationType,
   PatientFileSummary,
+  TEMPERATURE_METHODS,
   TempUnit,
+  TemperatureMethod,
   UploadFileResponse,
   WeightUnit,
 } from '@salud/shared/types';
@@ -51,7 +53,6 @@ export interface PhotoReferenceGroup {
 export function photoSiteKey(bodyLocation: string, side: Side): string {
   return `${bodyLocation.trim().toLowerCase()}|${side}`;
 }
-type TemperatureMethod = 'oral' | 'tympanic' | 'axillary' | 'rectal' | 'temporal' | 'unknown';
 type SymptomSeverity = 'mild' | 'moderate' | 'severe';
 
 // The five types that are just "one number plus an optional note" share a single form driven by
@@ -471,6 +472,14 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
    */
   @Input() lockedType: ObservationType | null = null;
 
+  /**
+   * Seeds the temperature method select — Home's Temp action passes the patient's habitual method
+   * (frontend.md → Home). A starting value, not a lock: the select stays fully editable, and each
+   * added entry resets back to this rather than to 'unknown' (same thermometer, same session —
+   * the same stickiness the unit toggle already has).
+   */
+  @Input() initialTempMethod: TemperatureMethod | null = null;
+
   @Output() typeChange = new EventEmitter<ObservationType>();
   @Output() entryAdded = new EventEmitter<EntryDraft>();
 
@@ -491,7 +500,7 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
     // import flow exists to avoid (frontend.md → Documents). The API still accepts the type.
     'document',
   ];
-  temperatureMethods: TemperatureMethod[] = ['oral', 'tympanic', 'axillary', 'rectal', 'temporal', 'unknown'];
+  temperatureMethods = TEMPERATURE_METHODS;
   sides: Side[] = ['left', 'right', 'bilateral', 'n/a'];
   severities: SymptomSeverity[] = ['mild', 'moderate', 'severe'];
   painScores = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -505,6 +514,7 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
       this.entryType = this.lockedType;
       this.onTypeChange(this.lockedType);
     }
+    if (this.initialTempMethod) this.tempMethod = this.initialTempMethod;
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -866,7 +876,7 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
     this.numberValue = null;
     this.entryNote = '';
     this.tempValue = null;
-    this.tempMethod = 'unknown';
+    this.tempMethod = this.initialTempMethod ?? 'unknown';
     this.painScore = null;
     this.lesionLength = null;
     this.lesionWidth = null;
