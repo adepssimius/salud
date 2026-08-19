@@ -36,6 +36,12 @@
 - Moving an existing SQLite instance's data to Postgres: `yarn migrate:sqlite-to-postgres`
   (`tools/sqlite-to-postgres.ts`, `persistence.md`). Point `DATABASE_FILE` at the source file and
   `DATABASE_URL` at the (already-migrated, empty) Postgres target.
+- Moving attachments between storage backends: `yarn migrate:attachments`
+  (`apps/api/src/tools/migrate-attachments.ts`, `persistence.md`). Describe the destination with
+  the ordinary `FILE_STORAGE_DRIVER`/`S3_*` variables and the source with `MIGRATE_SOURCE_*`.
+  Always `--dry-run` first; it verifies every blob by SHA-256 at the destination and refuses to
+  report success on a partial copy. Required before flipping `FILE_STORAGE_DRIVER` on any instance
+  that already has attachments.
 - Verify new APIs (especially access control) with real curl requests in addition to tests.
 - Seed a test user in development with: `yarn seed:test-user`
   - Creates `test@example.com` with password `test` and default unit prefs.
