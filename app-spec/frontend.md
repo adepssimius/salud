@@ -686,6 +686,53 @@ Both pages carry a "History" section rendering `GET .../revisions` through the e
 entity detail view that did not exist until now. Read-only: who edited, when, and the prior
 snapshot. No diffing, no revert.
 
+### Editing an entry
+`PATCH /api/observations/:id` and `.../interventions/:id` have always existed and have always
+captured a `Revision`; until now nothing in the web exposed them, so a caregiver who mistyped a
+temperature had no way to fix it. The detail page is where that closes.
+
+- **Edit** turns the rendered entry into the same field set the entry form uses, reusing the entry
+  mini-forms (`entry-metadata-form.component.ts`) rather than a second set of inputs that would
+  drift from them. Same validation, same unit handling, same absurdity walls.
+- Saving `PATCH`es only what changed and re-renders; the History section gains the prior state
+  immediately, which is the visible proof the original is still in the record.
+- **A dose edit re-runs the dosing engine.** `isAtypical`, `atypicalReason`, `nextAllowedAt`,
+  `guidelineId` and the weight/age used are re-resolved server-side on `PATCH` — the client sends
+  the fields a caregiver changed and never those (400 `RESERVED_METADATA_KEY` if it tries). So the
+  page must re-read the response rather than assuming its optimistic copy is current: correcting
+  250 mg to 2500 mg can turn a normal dose atypical, and that verdict must appear.
+- **Editing a weight re-denormalizes** `patients.latestWeightKg`, guarded by recency exactly as
+  creation is — the page shows the resulting value rather than the one it sent.
+- Not editable from here: the entry's patient (that is the move action above) and its episode
+  links, which stay where they are created and resolved. `observedAt`/`performedAt` **is** editable,
+  since a backdated correction is the common case and the recency guard already handles it.
+
+### Removing and moving an entry
+The detail page is where an entry is removed or re-filed, because it is the one place a caregiver
+has the whole entry in front of them and can see what they are about to act on (api.md →
+"Removing and reassigning an entry").
+
+- **Delete** sits with the page's other actions, styled as the destructive action it is, behind a
+  confirm step naming what will be removed ("Remove this 160 mg acetaminophen dose?"). The confirm
+  says plainly that it can be undone — a caregiver hesitating over a mis-tap at 3 AM should not have
+  to guess whether they are about to lose something.
+- **A deleted entry still opens.** The page renders it with a banner — "Removed by Dana, 14 Aug" —
+  the entry greyed but fully readable, every other action hidden, and one button: **Restore**. This
+  is what makes the soft delete legible rather than a disappearance nobody can account for. Every
+  other surface (feed, chart, dashboard, ER Brief) simply omits it.
+- **Move to another patient** offers only patients the caller is on the care team for, and confirms
+  with both names ("Move to Nora?"), since picking the wrong child is the mistake this feature exists
+  to fix and a mis-tap here just makes a second one. The patient accent color (frontend.md →
+  "Patient identity") carries into that confirm, the same always-on wrong-chart guard used at entry.
+- **The two refusals are explained, not just reported.** `EVENT_STARTS_EPISODE` says the entry began
+  an episode and links to it; `EVENT_HAS_EPISODES` says the entry belongs to episodes and must be
+  unlinked first, listing them. Both get a sentence in `error-display.ts` like every other code —
+  and both are the app protecting a frame the caregiver built, so the copy says what to do next
+  rather than only what went wrong.
+- Deleting from the journal feed is deliberately **not** offered: a swipe-to-delete on a dense feed
+  of near-identical rows at 3 AM is how the wrong row gets removed. The feed links to the detail
+  page, and the detail page is where destructive actions live.
+
 ## ER Brief
 See `er-brief.md` for the full spec. `er-brief.page.ts` (authenticated, entry point from patient
 detail) renders the header/body response as a one-page-on-print document; `?mode=flash` swaps to a

@@ -707,6 +707,99 @@ the snapshot's contents do.
   - `overdue`: `nextDueAt` in the past while `status = 'active'` — the dashboard's "upcoming action"
     surfacing (F-4.1).
 
+## Removing and reassigning an entry
+
+Corrections above answer "this value was wrong". Two other things go wrong at 3 AM that an edit
+can't fix: an entry that should never exist (a mis-tap, a duplicate, a test row), and an entry
+filed on the wrong child. Both are Phase-1 realities for a household logging from a phone, and
+neither had an answer before.
+
+### Soft delete
+
+**A deleted observation or intervention is hidden, not destroyed.** Two columns on each of
+`observations` and `interventions`:
+
+- `deletedAt: datetime | null` — `null` means live. Non-null hides the row everywhere a caregiver
+  reads the record.
+- `deletedByUserId: uuid | null` — who removed it. Attributed like every other write (P3).
+
+This follows the correction rule rather than departing from it: "the original remains part of the
+record" (F-1.4). A mis-tap is recoverable, and the removal itself is visible rather than being an
+absence nobody can account for — which matters most in exactly the case the app exists for, a
+shared log where two caregivers must trust what they're reading.
+
+**Deleting is not a read-hiding trick; it changes computed answers, and every one of them must
+honor it.** The row is excluded from:
+
+- the timeline, the journal feed, the dashboard, What's-New, the ER Brief, the analyte history and
+  its chart, the photos-by-site view, and `GET .../recent-medications`;
+- **the dosing engine's daily total and interval checks** (`dosing.service.ts` sums prior doses of
+  the medication). This one is the point of the feature, not a detail: a dose logged twice by
+  mistake otherwise keeps counting toward `exceeds_max_per_day` and keeps pushing `nextAllowedAt`
+  out, so the app would answer "did I already give Tylenol?" with a number the caregiver has
+  already told it was wrong;
+- schedule adherence (`loggedCount`), and the medication catalog's dependency counts, which decide
+  whether a `DELETE` on a medication is refused as `MEDICATION_IN_USE`.
+
+A deleted row **stays** visible in `GET /api/observations/:id` / `.../interventions/:id` (with its
+`deletedAt`/`deletedBy` populated) so the detail page can show what was removed and offer to
+restore it, and in `Revision` history, which is the audit trail.
+
+**Frozen ER Brief snapshots are unaffected.** `er_brief_snapshots` stores its content frozen at
+generation time; a later delete does not reach back into a snapshot someone has already been
+handed. That is correct — the snapshot records what was shared, not what is true now.
+
+**Side effects a delete must settle**, none of which are optional:
+
+- **`patients.latestWeightKg` is recomputed** when the deleted observation held the `weight` entry
+  that set it. The denormalized value must fall back to the newest surviving weight, or to `null`
+  when none remains — a dose computed from a weight the household has retracted is the failure mode
+  this exists to prevent. Note `applyLatestWeightIfNewer` only ever moves the value forward, so a
+  delete cannot reuse it; this is a recompute from the surviving rows.
+- **Episode membership rows** (`episodes_events_pivot`) for the deleted event are dropped, so it no
+  longer appears in that episode's event list.
+- **An event that RESOLVED an episode reopens it**: the episode returns to `status: 'active'` and
+  its `endedAtType`/`endedAtId` clear. The resolution was an assertion made by an event that no
+  longer exists, and leaving the episode closed would strand it with a dangling `endedAtId`.
+- **An event that STARTED an episode cannot be deleted** — 409 `EVENT_STARTS_EPISODE`, with the
+  episode's `id` and `name` on the body. Episodes have no independent create path (they are started
+  by an event and only by an event, CLAUDE.md → Episode model), so deleting the starting event would
+  leave a frame with no beginning and no way to repair it. The caregiver's route is to resolve or
+  re-frame the episode first. This is the one refusal in the feature, and it exists because the
+  alternative silently corrupts the episode model.
+- **File assets are kept.** A deleted photo entry's blob stays, because a restore has to be able to
+  show it again. Blob cleanup remains what it is today: deleting the *patient* deletes their files.
+- **Advisories** raised by the event (`contextType`/`contextId`) are hidden alongside it. An
+  `atypical_dose` warning about a dose that no longer counts is noise, and worse, alarming noise.
+
+**Restore** puts the row back: `deletedAt`/`deletedByUserId` clear, the recomputed values above are
+recomputed again, and episode membership is *not* resurrected — the caregiver re-links it if they
+want it, because guessing at frames a person may have deliberately moved on from is worse than
+asking. A restore that would collide with the reopened-episode rule is not a special case: an
+episode resolved by another event in the meantime simply stays resolved by that event.
+
+### Reassignment
+
+**An entry can be moved to another patient** — the 3 AM "I logged that on the wrong child" case,
+which is squarely this app's origin story and today has no answer at all short of delete-and-retype.
+
+- The caller must be on the care team of **both** the source and the target patient. A target the
+  caller cannot see answers 404 `PATIENT_NOT_FOUND`, the same non-leaking answer every other
+  patient-scoped route gives (api.md → "Resource shape and access control").
+- **An entry linked to any episode cannot be moved** — 409 `EVENT_HAS_EPISODES`. Episodes belong to
+  one patient, and an integrity rule below already forbids an event referencing another patient's
+  episode; moving the event would violate it from the other direction. Unlink first, then move.
+- **File assets referenced by the entry move with it.** A photo entry's `FileAsset.patientId` is
+  what `GET /api/files/:id` authorizes against, so leaving the blob behind would move a visible
+  entry to a patient whose care team cannot open its own photo.
+- **Advisories** attached to the entry move with it, for the same reason: an advisory is
+  patient-scoped and would otherwise sit on the wrong child's list.
+- **Both patients' `latestWeightKg` are recomputed** when a `weight` entry moves — the source loses
+  it, the target may gain it.
+- The dosing engine's totals follow automatically, since they are computed per patient at read time.
+- A reassignment captures a `Revision` like any other correction, so the move is attributed and the
+  entry's history says where it came from.
+
 ## Data integrity rules
 - Observations/interventions must belong to at least one patient.
 - Episode start/end linkages come from `episodes_events_pivot`; a single event can start one episode and optionally resolve others.

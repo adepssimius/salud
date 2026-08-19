@@ -936,6 +936,56 @@ of the record (F-1.4, data-model.md → `Revision`).
     that field already carries its own dedicated attribution (`codeStatusSetByUserId`/
     `codeStatusSetAt`), a lighter-weight trail purpose-built for exactly this one field.
 
+## Removing and reassigning an entry
+
+Two failures an edit can't fix: an entry that should never have existed, and one filed on the wrong
+child (data-model.md → "Removing and reassigning an entry"). Both apply to observations and
+interventions, on the same routes and with the same semantics.
+
+- `DELETE /api/observations/:observationId`
+- `DELETE /api/interventions/:interventionId`
+  - **Soft delete**, attributed: sets `deletedAt`/`deletedByUserId` and captures a `Revision`.
+    Response `{ deleted: true }`. Any care-team member may delete; the revision trail, not a
+    permission gate, is what provides accountability (P4 — membership grants full read/write).
+  - The row disappears from every caregiver-facing read and from every computed answer — the
+    timeline, dashboard, What's-New, ER Brief, analyte history, photos view, recent-medications,
+    schedule adherence, catalog dependency counts, and **the dosing engine's daily total and
+    interval checks**. That last one is the point: a dose logged twice otherwise keeps counting
+    toward `exceeds_max_per_day` and keeps pushing `nextAllowedAt` out.
+  - Deleting is **idempotent**: deleting an already-deleted entry returns `{ deleted: true }`
+    without a second revision, rather than erroring. Two caregivers clearing the same mis-tap is a
+    race the app should absorb, not report.
+  - 409 `EVENT_STARTS_EPISODE` when the entry started an episode, with `{ episode: { id, name } }`
+    on the body. Episodes are started by an event and only by an event, so removing the starting
+    event would leave a frame with no beginning and no repair path.
+  - An entry that **resolved** an episode reopens it on delete (back to `active`, `endedAt*`
+    cleared). Its membership rows are dropped; its advisories are hidden with it; its file assets
+    are kept, since a restore has to be able to show them.
+  - `patients.latestWeightKg` is recomputed from surviving weights when a `weight` entry goes.
+- `POST /api/observations/:observationId/restore`
+- `POST /api/interventions/:interventionId/restore`
+  - Clears `deletedAt`/`deletedByUserId`, captures a `Revision`, recomputes the same derived values,
+    and returns the entry. Episode membership is **not** resurrected — the caregiver re-links it.
+    Restoring a live entry is a no-op returning the entry, matching delete's idempotence.
+- `PATCH /api/observations/:observationId/patient`
+- `PATCH /api/interventions/:interventionId/patient`
+  - Body `{ patientId }` — move the entry to another patient. Captures a `Revision`, so the move is
+    attributed and the history says where it came from. Response is the moved entry.
+  - The caller must be on **both** care teams. A target patient they are not a member of answers
+    404 `PATIENT_NOT_FOUND` — the same non-leaking answer as everywhere else; a bad id gets the
+    same. Moving an entry to the patient it already belongs to is a no-op returning the entry.
+  - 409 `EVENT_HAS_EPISODES` when the entry is linked to any episode, with `{ episodeIds }` on the
+    body. Episodes belong to one patient and an event may not reference another patient's episode
+    (data-model.md → "Data integrity rules"); unlink first, then move.
+  - The entry's file assets and advisories move with it. Both patients' `latestWeightKg` are
+    recomputed when a `weight` entry moves.
+  - A **deleted** entry can still be moved; the delete is a separate axis and survives the move.
+- A deleted entry stays readable at `GET /api/observations/:id` / `.../interventions/:id`, which
+  return `deletedAt` and `deletedBy: { id, displayName } | null` so a detail page can show what was
+  removed and offer to restore it. Every other read omits it entirely.
+- Frozen ER Brief snapshots are unaffected by a later delete or move — a snapshot records what was
+  shared, not what is true now (`er_brief_snapshots` stores its content frozen).
+
 ## Files
 
 Backs `photo` and `document` observation entries (§5.8, F-8.1), and the lab-import PDF. Nothing on
@@ -1261,6 +1311,8 @@ sentence silently falls back to that call site's generic message rather than rea
 | `SCHEDULE_EPISODE_CONDITION_CONFLICT` | 400 | an `InterventionSchedule` create/update with both `episodeId` and `conditionId` set |
 | `MEDICATION_ID_REQUIRED` | 400 | intervention or schedule create/update of type `medication_dose` missing `medicationId` |
 | `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |
+| `EVENT_STARTS_EPISODE` | 409 | deleting an observation/intervention that started an episode; body carries `episode` |
+| `EVENT_HAS_EPISODES` | 409 | reassigning an observation/intervention linked to any episode; body carries `episodeIds` |
 | `RESERVED_METADATA_KEY` | 400 | intervention create/update whose `metadata` names a key the service owns (the dosing engine's resolved fields, or a validated top-level field); body carries `keys` |
 | `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED` | 400 | schedule create with neither a frequency nor explicit times |
 | `FILE_REQUIRED` | 400 | `POST /api/files` with no file part |
