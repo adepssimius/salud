@@ -52,6 +52,32 @@ The API's near-empty CSP is load-bearing for exactly one route: `GET /api/files/
 user-uploaded bytes with their stored `contentType`. An uploaded SVG opened as a top-level document
 on this origin would otherwise be stored XSS.
 
+### Static caching
+
+`apps/web/nginx.conf` sets `Cache-Control` from a `map` on `$uri`:
+
+| Response | Policy |
+| --- | --- |
+| `index.html` — including `/` and every deep link, which `try_files` rewrites to it | `no-cache` |
+| Content-hashed bundles (`main-2N5A5CP3.js`, `styles-OLD5FDBE.css`) | `public, max-age=31536000, immutable` |
+| Unhashed files from `public/` (`favicon.ico`) | `no-cache` (they keep their names forever) |
+
+`index.html` is the only file whose name never changes between builds, so a browser holding a
+cached copy keeps loading whatever bundle hashes that copy referenced. The app pins itself to an
+old version and **no request reaches the cluster to explain it** — the access log is silent, the
+pods look healthy, and the served bundle is current. Before this, nginx sent `index.html` with only
+`ETag`/`Last-Modified` and no `Cache-Control`, which leaves browsers free to apply heuristic
+freshness. It surfaced the day OIDC went live: a stale bundle rendered the password form, and the
+API correctly answered `403 PASSWORD_AUTH_DISABLED`, which that bundle was too old to have a
+message for. `no-cache` does not stop caching — it forces revalidation, and an unchanged file still
+answers 304.
+
+**The single `add_header Cache-Control` sits at server level on purpose.** nginx inherits
+`add_header` into a block only when that block declares none of its own, so moving it into a
+`location` would silently drop the CSP and every security header above for exactly those
+responses — including on `index.html`, the one document whose policy matters most. If you ever add
+a per-location header here, re-declare the full set with it, or keep using the map.
+
 ## State
 
 The database is **Postgres**, on the cluster's shared CloudNativePG instance (`postgres-main`, ns
