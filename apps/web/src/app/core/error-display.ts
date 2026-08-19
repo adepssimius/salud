@@ -31,6 +31,12 @@ export const ERROR_SENTENCES = {
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
+  CONCENTRATION_INPUT_CONFLICT:
+    'Give the concentration one way or the other: either as it is printed (mg per mL) or as a single mg/mL figure, not both.',
+  CONCENTRATION_OUT_OF_RANGE:
+    "That works out to a concentration no medicine comes in. Check the mg and mL figures against the bottle.",
+  CONCENTRATION_PAIR_INCOMPLETE:
+    'A concentration needs both numbers — how many mg, and in how many mL. Fill in the missing one.',
   CONDITION_NOT_FOUND: 'That condition is no longer available. It may have been deleted.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   DOCUMENT_FILE_NOT_FOUND: 'That document could not be attached. Upload it again and retry.',

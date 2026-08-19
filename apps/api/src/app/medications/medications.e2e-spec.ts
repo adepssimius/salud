@@ -166,6 +166,105 @@ describe('Medications (e2e)', () => {
       .expect(200);
   });
 
+  // api.md -> "Concentration: the label pair vs. mg/mL". The whole point of the pair is that the
+  // caregiver never divides, so the arithmetic is asserted here rather than trusted.
+  it('derives concentrationMgPerMl from the printed mg-per-mL pair', async () => {
+    const { token } = await registerAndLogin(app);
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'concentration-pair-med' })
+      .expect(201);
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: '160 mg/5 mL suspension', concentrationMg: 160, concentrationVolumeMl: 5, unitType: 'ml' })
+      .expect(201);
+    expect(created.body.concentrationMgPerMl).toBe(32);
+    expect(created.body.concentrationMg).toBe(160);
+    expect(created.body.concentrationVolumeMl).toBe(5);
+
+    // A PATCH of one half re-derives against the stored other half.
+    const repatched = await request(app.getHttpServer())
+      .patch(`/api/embodiments/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ concentrationMg: 200 })
+      .expect(200);
+    expect(repatched.body.concentrationMgPerMl).toBe(40);
+    expect(repatched.body.concentrationVolumeMl).toBe(5);
+
+    // Setting the per-mL figure directly clears the printed pair — it no longer describes the row.
+    const direct = await request(app.getHttpServer())
+      .patch(`/api/embodiments/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ concentrationMgPerMl: 25 })
+      .expect(200);
+    expect(direct.body.concentrationMgPerMl).toBe(25);
+    expect(direct.body.concentrationMg).toBeNull();
+    expect(direct.body.concentrationVolumeMl).toBeNull();
+
+    // And nulling either half of the pair clears the derived figure with it.
+    const repaired = await request(app.getHttpServer())
+      .patch(`/api/embodiments/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ concentrationMg: 100, concentrationVolumeMl: 4 })
+      .expect(200);
+    expect(repaired.body.concentrationMgPerMl).toBe(25);
+    const cleared = await request(app.getHttpServer())
+      .patch(`/api/embodiments/${created.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ concentrationVolumeMl: null })
+      .expect(200);
+    expect(cleared.body.concentrationMgPerMl).toBeNull();
+    expect(cleared.body.concentrationMg).toBeNull();
+    expect(cleared.body.concentrationVolumeMl).toBeNull();
+  });
+
+  it('rejects contradictory, half-given and impossible concentrations', async () => {
+    const { token } = await registerAndLogin(app);
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'concentration-guard-med' })
+      .expect(201);
+
+    const conflict = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'x', unitType: 'ml', concentrationMgPerMl: 32, concentrationMg: 160, concentrationVolumeMl: 5 })
+      .expect(400);
+    expect(conflict.body.message).toBe('CONCENTRATION_INPUT_CONFLICT');
+
+    const incomplete = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'x', unitType: 'ml', concentrationMg: 160 })
+      .expect(400);
+    expect(incomplete.body.message).toBe('CONCENTRATION_PAIR_INCOMPLETE');
+
+    const outOfRange = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'x', unitType: 'ml', concentrationMg: 90000, concentrationVolumeMl: 0.001 })
+      .expect(400);
+    expect(outOfRange.body.message).toBe('CONCENTRATION_OUT_OF_RANGE');
+
+    // A patch supplying one half against a row that has no other half is the same failure.
+    const plain = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: '500 mg tablet', strengthMgPerUnit: 500, unitType: 'tablet' })
+      .expect(201);
+    expect(plain.body.concentrationMg).toBeNull();
+    const halfPatch = await request(app.getHttpServer())
+      .patch(`/api/embodiments/${plain.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ concentrationVolumeMl: 5 })
+      .expect(400);
+    expect(halfPatch.body.message).toBe('CONCENTRATION_PAIR_INCOMPLETE');
+  });
+
   it('rejects an embodiment on a nonexistent medication', async () => {
     const { token } = await registerAndLogin(app);
     const nonexistent = '00000000-0000-4000-8000-000000000000';

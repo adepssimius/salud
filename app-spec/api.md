@@ -755,12 +755,38 @@ gap completely, and `defaultActive: false` already covers "retire this, don't de
 
 ### Embodiments
 - `POST /api/medications/:medicationId/embodiments`
-  - Body: `{ label, concentrationMgPerMl?, strengthMgPerUnit?, unitType, notes? }`, plus the same
-    **cabinet fields** `PATCH` accepts: `atHome?`, `expiresAt?`, `runningLow?`.
+  - Body: `{ label, concentrationMgPerMl?, concentrationMg?, concentrationVolumeMl?,
+    strengthMgPerUnit?, unitType, notes? }`, plus the same **cabinet fields** `PATCH` accepts:
+    `atHome?`, `expiresAt?`, `runningLow?`.
 - `GET /api/medications/:medicationId/embodiments`
 - `PATCH /api/embodiments/:embodimentId`
   - Body: any subset of the create fields, plus **cabinet fields** (§Cabinet awareness below):
     `atHome?`, `expiresAt?`, `runningLow?`.
+
+#### Concentration: the label pair vs. mg/mL
+A liquid's concentration can be given either way, and the response always carries all three fields
+(see data-model.md → `MedicationEmbodiment`):
+- **As printed on the bottle** — `concentrationMg` + `concentrationVolumeMl` ("160 mg per 5 mL").
+  The server stores both and derives `concentrationMgPerMl` (rounded to 6 decimal places). This is
+  the preferred path: the division that produces 32 mg/mL is where a caregiver transcribing a label
+  makes an arithmetic error, and it is a dosing figure, so the server does it.
+- **Directly** — `concentrationMgPerMl` alone. The pair is stored as null, since no printed figures
+  back that number.
+
+Rules, enforced on create and on the **merged** row for `PATCH` (same stance as the guideline
+age-range rule above — a patch supplying one half of the pair is checked against the stored other
+half):
+- Supplying a non-null `concentrationMgPerMl` **and** a non-null pair field in the same request is
+  400 `CONCENTRATION_INPUT_CONFLICT`. Two sources for one number is a contradiction the server will
+  not silently pick a winner from.
+- A merged pair with exactly one half present is 400 `CONCENTRATION_PAIR_INCOMPLETE`. "160 mg per
+  ?" has no meaning, and treating the missing half as 1 would invent a tenfold dosing error.
+- A derived `concentrationMgPerMl` outside the same `0.001`–`10000` range the direct field accepts
+  is 400 `CONCENTRATION_OUT_OF_RANGE`.
+- Setting either half of the pair to `null` clears both **and** clears the derived
+  `concentrationMgPerMl` — the derived value has no independent existence once its inputs are gone.
+  Setting `concentrationMgPerMl` directly on a row that had a pair clears the pair for the same
+  reason in reverse: the stored printed figures would no longer describe the stored concentration.
 - `DELETE /api/embodiments/:embodimentId`
   - 409 `EMBODIMENT_IN_USE` when a guideline, reaction, schedule or logged dose still points at it.
     Same `dependents` body as above.
@@ -1142,7 +1168,7 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-49 codes are thrown today (50 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
+52 codes are thrown today (53 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
 implementation), all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
@@ -1185,6 +1211,9 @@ sentence silently falls back to that call site's generic message rather than rea
 | `PHOTO_FILE_NOT_FOUND` | 400 (array form) | a `photo` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
 | `EPISODE_ALREADY_RESOLVED` | 400 | a second, different event attempting to resolve an already-resolved episode |
 | `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |
+| `CONCENTRATION_INPUT_CONFLICT` | 400 | embodiment create/update sending both `concentrationMgPerMl` and a `concentrationMg`/`concentrationVolumeMl` value |
+| `CONCENTRATION_PAIR_INCOMPLETE` | 400 | embodiment create/update whose merged concentration pair has only one of `concentrationMg`/`concentrationVolumeMl` |
+| `CONCENTRATION_OUT_OF_RANGE` | 400 | embodiment create/update whose derived `concentrationMg ÷ concentrationVolumeMl` falls outside 0.001–10000 mg/mL |
 | `MEDICATION_NAME_TAKEN` | 409 | medication create/rename colliding case-insensitively with an existing `name` |
 | `MEDICATION_IN_USE` | 409 | `DELETE /api/medications/:id` with dependent rows; body carries `dependents` |
 | `EMBODIMENT_IN_USE` | 409 | `DELETE /api/embodiments/:id` with dependent rows; body carries `dependents` |

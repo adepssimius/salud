@@ -71,6 +71,13 @@
       "when": 1787130212036,
       "tag": "0009_eager_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787151720740,
+      "tag": "0010_conscious_hellcat",
+      "breakpoints": true
     }
   ]
 }

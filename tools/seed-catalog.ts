@@ -12,7 +12,11 @@ import * as schema from '../apps/api/src/db/schema';
 interface EmbodimentSeed {
   key: string;
   label: string;
-  concentrationMgPerMl?: number;
+  // Seeded the way the bottle prints it -- "160 mg per 5 mL", not the 32 mg/mL a human had to work
+  // out. The per-mL figure is derived here exactly as the API derives it
+  // (data-model.md -> MedicationEmbodiment).
+  concentrationMg?: number;
+  concentrationVolumeMl?: number;
   strengthMgPerUnit?: number;
   unitType: 'tablet' | 'capsule' | 'ml' | 'drop' | 'other';
   notes?: string;
@@ -53,7 +57,8 @@ const CATALOG: MedicationSeed[] = [
       {
         key: 'suspension',
         label: "160 mg/5 mL suspension (Children's Tylenol)",
-        concentrationMgPerMl: 32,
+        concentrationMg: 160,
+        concentrationVolumeMl: 5,
         unitType: 'ml',
       },
       {
@@ -96,7 +101,8 @@ const CATALOG: MedicationSeed[] = [
       {
         key: 'suspension',
         label: "100 mg/5 mL suspension (Children's Motrin)",
-        concentrationMgPerMl: 20,
+        concentrationMg: 100,
+        concentrationVolumeMl: 5,
         unitType: 'ml',
       },
       {
@@ -189,7 +195,12 @@ async function seedCatalog(db: any) {
         id: embodimentId,
         medicationId,
         label: emb.label,
-        concentrationMgPerMl: emb.concentrationMgPerMl ?? null,
+        concentrationMgPerMl:
+          emb.concentrationMg != null && emb.concentrationVolumeMl != null
+            ? Math.round((emb.concentrationMg / emb.concentrationVolumeMl) * 1e6) / 1e6
+            : null,
+        concentrationMg: emb.concentrationMg ?? null,
+        concentrationVolumeMl: emb.concentrationVolumeMl ?? null,
         strengthMgPerUnit: emb.strengthMgPerUnit ?? null,
         unitType: emb.unitType,
         notes: emb.notes ?? null,

@@ -86,6 +86,8 @@ describe('MedicationDetailPage', () => {
       medicationId: 'm1',
       label: 'x',
       concentrationMgPerMl: null,
+      concentrationMg: null,
+      concentrationVolumeMl: null,
       strengthMgPerUnit: null,
       unitType: 'tablet' as const,
       notes: null,
@@ -99,7 +101,9 @@ describe('MedicationDetailPage', () => {
     expect(apiMock.patch).toHaveBeenCalledWith('/embodiments/e1', { runningLow: true });
   });
 
-  it('creates an embodiment from the form', () => {
+  // The point of the pair: the form posts what the bottle prints, and the server does the
+  // division. A UI that divided here would just move the arithmetic error to the client.
+  it('creates an embodiment posting the printed concentration pair', () => {
     apiMock.post.mockReturnValue(of({ id: 'e2' }));
     const fixture = TestBed.createComponent(MedicationDetailPage);
     fixture.detectChanges();
@@ -108,16 +112,71 @@ describe('MedicationDetailPage', () => {
     comp.embodimentForm.setValue({
       label: '5mL syrup',
       unitType: 'ml',
-      concentrationMgPerMl: 32,
+      concentrationMg: 160,
+      concentrationVolumeMl: 5,
       strengthMgPerUnit: null,
     });
+    expect(comp.derivedConcentration()).toBe(32);
     comp.createEmbodiment();
     expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/embodiments', {
       label: '5mL syrup',
       unitType: 'ml',
-      concentrationMgPerMl: 32,
+      concentrationMg: 160,
+      concentrationVolumeMl: 5,
       strengthMgPerUnit: undefined,
     });
+  });
+
+  it('omits the concentration entirely for a solid form, rather than sending a bare 1 mL', () => {
+    apiMock.post.mockReturnValue(of({ id: 'e3' }));
+    const fixture = TestBed.createComponent(MedicationDetailPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    // The volume box defaults to 1; a tablet leaves the mg box empty, and "per 1 mL" alone means
+    // nothing -- sending it would 400 with CONCENTRATION_PAIR_INCOMPLETE.
+    comp.embodimentForm.setValue({
+      label: '500 mg tablet',
+      unitType: 'tablet',
+      concentrationMg: null,
+      concentrationVolumeMl: 1,
+      strengthMgPerUnit: 500,
+    });
+    comp.createEmbodiment();
+    expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/embodiments', {
+      label: '500 mg tablet',
+      unitType: 'tablet',
+      concentrationMg: undefined,
+      concentrationVolumeMl: undefined,
+      strengthMgPerUnit: 500,
+    });
+  });
+
+  it('does not flag the untouched form, where the volume box is pre-filled with 1', () => {
+    const fixture = TestBed.createComponent(MedicationDetailPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    // Regression: a symmetric "exactly one filled" check made the *starting* state incomplete
+    // (no mg, 1 mL), which disabled Add for every tablet.
+    expect(comp.concentrationPairIncomplete()).toBe(false);
+    expect(comp.embodimentForm.getRawValue().concentrationVolumeMl).toBe(1);
+  });
+
+  it('flags a half-filled concentration pair before it can be submitted', () => {
+    const fixture = TestBed.createComponent(MedicationDetailPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    comp.embodimentForm.setValue({
+      label: 'syrup',
+      unitType: 'ml',
+      concentrationMg: 160,
+      concentrationVolumeMl: null,
+      strengthMgPerUnit: null,
+    });
+    expect(comp.concentrationPairIncomplete()).toBe(true);
+    expect(comp.derivedConcentration()).toBeNull();
   });
 
   it('navigates back to the medications list', () => {

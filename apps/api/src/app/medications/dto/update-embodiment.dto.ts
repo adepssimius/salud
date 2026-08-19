@@ -9,11 +9,26 @@ export class UpdateEmbodimentDto {
   @IsNotEmpty()
   label?: string;
 
+  // Same pair-or-per-mL contract as create, but checked against the *merged* row: a PATCH carrying
+  // only `concentrationMg` is validated against the stored `concentrationVolumeMl`. Nulls are
+  // meaningful here -- nulling either half clears the pair and the derived figure together.
   @IsOptional()
   @IsNumber()
   @Min(0.001)
   @Max(10000)
   concentrationMgPerMl?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.001)
+  @Max(100000)
+  concentrationMg?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.001)
+  @Max(1000)
+  concentrationVolumeMl?: number | null;
 
   @IsOptional()
   @IsNumber()

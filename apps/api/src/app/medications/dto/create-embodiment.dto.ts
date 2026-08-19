@@ -18,11 +18,27 @@ export class CreateEmbodimentDto {
   @IsNotEmpty()
   label!: string;
 
+  // Two ways in, one stored truth. `concentrationMgPerMl` is the figure the dosing engine reads;
+  // the `concentrationMg` / `concentrationVolumeMl` pair is what the bottle actually prints
+  // ("160 mg per 5 mL"), from which the service derives the per-mL figure. Sending both forms is
+  // rejected rather than reconciled -- see api.md -> "Concentration: the label pair vs. mg/mL".
   @IsOptional()
   @IsNumber()
   @Min(0.001)
   @Max(10000)
   concentrationMgPerMl?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.001)
+  @Max(100000)
+  concentrationMg?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.001)
+  @Max(1000)
+  concentrationVolumeMl?: number | null;
 
   @IsOptional()
   @IsNumber()

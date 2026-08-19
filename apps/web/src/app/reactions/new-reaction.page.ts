@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
+import { concentrationText } from '../core/concentration-display';
 import {
   AdverseReaction,
   CreateReactionDto,
@@ -80,7 +81,7 @@ import {
             <select formControlName="embodimentId">
               <option value="">Choose a form…</option>
               <option *ngFor="let e of embodiments()" [value]="e.id">
-                {{ e.label }}<span *ngIf="e.concentrationMgPerMl"> — {{ e.concentrationMgPerMl }} mg/mL</span>
+                {{ e.label }}<span *ngIf="concentrationText(e) as conc"> — {{ conc }}</span>
               </option>
             </select>
           </label>
@@ -182,6 +183,8 @@ import {
   ],
 })
 export class NewReactionPage implements OnInit {
+  concentrationText = concentrationText;
+
   private readonly api = inject(ApiClientService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);

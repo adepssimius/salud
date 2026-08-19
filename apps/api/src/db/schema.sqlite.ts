@@ -265,7 +265,12 @@ export const medicationEmbodiments = sqliteTable('medication_embodiments', {
     .notNull()
     .references(() => medications.id),
   label: text('label').notNull(),
+  // Derived per-mL figure (what the dosing engine reads) plus the printed pair it came from,
+  // when the caregiver entered it as the bottle reads ("160 mg per 5 mL"). Keep all three in
+  // lockstep -- embodiments.service.ts is the only writer.
   concentrationMgPerMl: real('concentration_mg_per_ml'),
+  concentrationMg: real('concentration_mg'),
+  concentrationVolumeMl: real('concentration_volume_ml'),
   strengthMgPerUnit: real('strength_mg_per_unit'),
   unitType: text('unit_type', {
     enum: ['tablet', 'capsule', 'ml', 'drop', 'other'],

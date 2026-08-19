@@ -1,0 +1,59 @@
+meta {
+  name: Create Liquid Embodiment (printed mg/mL pair)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}/embodiments
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+}
+
+body:json {
+  {
+    "label": "160 mg/5 mL suspension",
+    "concentrationMg": 160,
+    "concentrationVolumeMl": 5,
+    "unitType": "ml"
+  }
+}
+
+script:post-response {
+  bru.setVar('liquidEmbodimentId', res.body.id);
+}
+
+assert {
+  concentrationMgPerMl: eq 32
+  concentrationMg: eq 160
+  concentrationVolumeMl: eq 5
+}
+
+docs {
+  Concentration goes in the way the bottle prints it — "160 mg per 5 mL" — and the server derives
+  `concentrationMgPerMl` (32). The division is a dosing calculation, so the API does it rather than
+  the caregiver transcribing a label; see api.md → "Concentration: the label pair vs. mg/mL".
+
+  The other way in is `concentrationMgPerMl` on its own, for a label already printed per mL. Sending
+  both forms in one request is 400 `CONCENTRATION_INPUT_CONFLICT`; sending half the pair (against a
+  row with no stored other half) is 400 `CONCENTRATION_PAIR_INCOMPLETE`.
+
+  A PATCH of one half re-derives against the stored other half, so
+  `PATCH { "concentrationMg": 200 }` on this embodiment yields 40 mg/mL. Nulling either half clears
+  the pair and the derived figure together.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

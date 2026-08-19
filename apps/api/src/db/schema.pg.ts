@@ -264,7 +264,12 @@ export const medicationEmbodiments = pgTable('medication_embodiments', {
     .notNull()
     .references(() => medications.id),
   label: text('label').notNull(),
+  // Derived per-mL figure (what the dosing engine reads) plus the printed pair it came from,
+  // when the caregiver entered it as the bottle reads ("160 mg per 5 mL"). Keep all three in
+  // lockstep -- embodiments.service.ts is the only writer.
   concentrationMgPerMl: doublePrecision('concentration_mg_per_ml'),
+  concentrationMg: doublePrecision('concentration_mg'),
+  concentrationVolumeMl: doublePrecision('concentration_volume_ml'),
   strengthMgPerUnit: doublePrecision('strength_mg_per_unit'),
   unitType: text('unit_type', {
     enum: ['tablet', 'capsule', 'ml', 'drop', 'other'],
