@@ -829,9 +829,19 @@ of the record (F-1.4, data-model.md → `Revision`).
 
 ## Files
 
-Backs `photo` and `document` observation entries (§5.8, F-8.1). `StorageService`'s local driver does
-the actual read/write; the API surface stays storage-agnostic so a later S3-backed driver needs no
-route changes (tooling.md → "File storage").
+Backs `photo` and `document` observation entries (§5.8, F-8.1), and the lab-import PDF. Nothing on
+this surface is image-specific: any content type is accepted, stored, and streamed back verbatim.
+
+`StorageService` is a facade over the configured `FileStorageDriver` — `local` or `s3` — and the
+routes below are identical on both. That was the design goal and it held: adding the S3 driver
+changed no route, no DTO, and no shared type (persistence.md → "File storage").
+
+**Bytes always proxy through the API, on both drivers.** There is a `getSignedUrl()` seam on the S3
+driver, deliberately unused: the web client fetches attachments as blobs with an `Authorization`
+header precisely because `<img src>` cannot carry one, and `GET /api/files/:id` is where the
+hardened CSP that neutralizes a malicious upload is applied (deployment.md → "Security headers").
+Redirecting to a presigned URL would move bytes off the API but drop both properties, so it is a
+deliberate later decision rather than a config toggle.
 
 - `POST /api/files`
   - Multipart upload (`file` field) plus a `patientId` form field — the web client always knows

@@ -6,7 +6,12 @@ import {
   databaseConnectionProvider,
 } from './database.providers';
 import { DatabaseService } from './database.service';
-import { storageConfigProvider, STORAGE_CONFIG_TOKEN } from '../storage/storage.providers';
+import {
+  FILE_STORAGE_DRIVER_TOKEN,
+  fileStorageDriverProvider,
+  storageConfigProvider,
+  STORAGE_CONFIG_TOKEN,
+} from '../storage/storage.providers';
 import { StorageService } from '../storage/storage.service';
 
 @Module({
@@ -15,6 +20,7 @@ import { StorageService } from '../storage/storage.service';
     databaseConnectionProvider,
     DatabaseService,
     storageConfigProvider,
+    fileStorageDriverProvider,
     StorageService,
   ],
   exports: [
@@ -22,6 +28,7 @@ import { StorageService } from '../storage/storage.service';
     DATABASE_CONNECTION_TOKEN,
     DatabaseService,
     STORAGE_CONFIG_TOKEN,
+    FILE_STORAGE_DRIVER_TOKEN,
     StorageService,
   ],
 })

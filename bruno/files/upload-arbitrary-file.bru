@@ -1,0 +1,49 @@
+meta {
+  name: Upload Arbitrary File
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}files
+  body: multipartForm
+  auth: inherit
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest("patients/list");
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:multipart-form {
+  patientId: {{patientId}}
+  file: @file(./files/fixtures/weights.csv) @contentType(text/csv)
+}
+
+script:post-response {
+  bru.setVar('arbitraryFileId', res.body.fileId);
+}
+
+assert {
+  fileId: isNotEmpty
+  url: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  Same endpoint as "Upload File", with a non-image, non-PDF payload. This surface is general
+  file storage (api.md → "Files"): there is no MIME allowlist, the content type is stored as
+  sent and echoed back verbatim on download, and both storage drivers hold opaque bytes.
+
+  The image-specific parts of the product live entirely in the web UI's `accept` attributes and
+  the thumbnail component, not here.
+}

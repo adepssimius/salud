@@ -66,6 +66,14 @@ Deployment is still pinned to one replica with `strategy: Recreate`** because of
 as before; the reason is now "the attachments volume is RWO," not "SQLite is a single-writer file."
 A rolling update would still put two pods on the same PVC.
 
+That pin is now a choice rather than a constraint. `FILE_STORAGE_DRIVER=s3` moves attachments off
+the PVC entirely (`persistence.md` → "File storage"), and with both the database and the blobs
+external the api has no node-local state left to serialize on — the RWO volume was the last thing
+holding it at `replicas: 1`. **This deployment has not made that switch**: attachments are still on
+Ceph RWO, and flipping the driver is a data migration, not a config change, since nothing dual-reads
+`file_assets.bucket`. Ceph RGW on the same cluster is the obvious target if and when it's worth
+doing; the trigger would be wanting rolling updates, not capacity.
+
 See "Self-hosting" below for the other supported configuration — SQLite, zero extra infrastructure
 — which is what this same image runs with no environment configuration at all.
 
@@ -131,6 +139,14 @@ the 1Password Connect operator, everything else is a literal.
 | `NODE_ENV` | `production` — also switches on the fail-fast checks below |
 | `PORT` | `3000` |
 | `DATA_DIR` | `/data` — attachments only now; the database itself is Postgres, see "State" |
+| `FILE_STORAGE_DRIVER` | unset (`local`). `s3` switches attachments to object storage — see "State". Any other value refuses to boot |
+| `FILE_STORAGE_LOCAL_BASE_PATH` | unset (`$DATA_DIR/attachments`) |
+| `S3_BUCKET` | unset. **Required** when `FILE_STORAGE_DRIVER=s3`; missing it refuses to boot |
+| `S3_REGION` | unset (`us-east-1`) — the value Ceph RGW and MinIO expect |
+| `S3_ENDPOINT` | unset (real AWS). Set to an S3-compatible endpoint, e.g. Ceph RGW on this cluster |
+| `S3_FORCE_PATH_STYLE` | unset — `true` when `S3_ENDPOINT` is set, `false` otherwise. Override only for a store that wants the non-default addressing |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | unset. Both or neither; neither falls through to the AWS default credential chain. Would come from `salud-secrets` |
+| `S3_PREFIX` | unset. Optional key prefix within the bucket |
 | `DB_CLIENT` | `postgres` |
 | `DATABASE_URL` | assembled in the container command from `salud-secrets`' `dbUsername`/`dbPassword`/`dbDatabase` against `postgresql.databases.svc.cluster.local:5432`, percent-encoding the password so it's never stored as a second, fully-formed connection string |
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |

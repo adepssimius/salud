@@ -60,6 +60,11 @@ export async function createTestApp(
   process.env.DATA_DIR = tmpDir;
   process.env.DB_CLIENT = dialect;
   process.env.JWT_SECRET = 'test-secret';
+  // Pin the storage driver rather than inheriting the ambient env: a developer with
+  // FILE_STORAGE_DRIVER=s3 exported in their shell would otherwise point all 23 e2e suites at a
+  // real bucket. Attachments land under the per-suite tmpDir via DATA_DIR above.
+  process.env.FILE_STORAGE_DRIVER = 'local';
+  delete process.env.FILE_STORAGE_LOCAL_BASE_PATH;
   if (dialect === 'pglite') {
     // A per-suite directory rather than the default in-memory instance, so two suites that
     // happen to run in the same worker process can never see each other's rows.
