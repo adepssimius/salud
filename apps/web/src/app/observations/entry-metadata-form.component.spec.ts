@@ -1,6 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
-import { EntryDraft, EntryMetadataFormComponent, toCm, toKg } from './entry-metadata-form.component';
+import {
+  EntryDraft,
+  EntryMetadataFormComponent,
+  PhotoReferenceGroup,
+  toCm,
+  toKg,
+} from './entry-metadata-form.component';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { TempUnit, LengthUnit, WeightUnit } from '@salud/shared/types';
@@ -10,7 +16,13 @@ describe('EntryMetadataFormComponent', () => {
   let authMock: any;
 
   function configure(prefs: { temp?: TempUnit; weight?: WeightUnit; length?: LengthUnit } = {}) {
-    apiMock = { post: jest.fn() };
+    apiMock = {
+      post: jest.fn(),
+      // The framing-reference cards render photo thumbnails, which fetch through the client.
+      getBlob: jest.fn().mockReturnValue(of(new Blob(['x'], { type: 'image/png' }))),
+    };
+    (URL as any).createObjectURL = jest.fn().mockReturnValue('blob:http://localhost/fake');
+    (URL as any).revokeObjectURL = jest.fn();
     authMock = {
       user: jest.fn().mockReturnValue({
         id: 'u1',
@@ -298,6 +310,126 @@ describe('EntryMetadataFormComponent', () => {
       comp.onPhotoFileSelected({ target: input } as unknown as Event);
       expect(apiMock.post).not.toHaveBeenCalled();
       expect(comp.error()).toBe('Select a patient before adding a photo.');
+    });
+  });
+
+  // frontend.md → Photos, F-8.2 v2
+  describe('framing references', () => {
+    const rightEar: PhotoReferenceGroup = {
+      bodyLocation: 'ear drum',
+      side: 'right',
+      fileId: 'f-right',
+      timestamp: 1700000100,
+      count: 2,
+    };
+    const palms: PhotoReferenceGroup = {
+      bodyLocation: 'palms',
+      side: 'n/a',
+      fileId: 'f-palms',
+      timestamp: 1700000000,
+      count: 1,
+    };
+
+    async function createWithGroups(groups: PhotoReferenceGroup[]) {
+      await configure();
+      const created = create();
+      created.comp.entryType = 'photo';
+      created.comp.referenceGroups = groups;
+      created.fixture.detectChanges();
+      return created;
+    }
+
+    it('renders one card per site with label, count, and no side when n/a', async () => {
+      const { fixture } = await createWithGroups([rightEar, palms]);
+      const cards = fixture.nativeElement.querySelectorAll('.ref-card');
+      expect(cards.length).toBe(2);
+      expect(cards[0].textContent).toContain('ear drum · right');
+      expect(cards[0].textContent).toContain('2 photos');
+      expect(cards[1].textContent).toContain('palms');
+      expect(cards[1].textContent).not.toContain('n/a');
+    });
+
+    it('prefills nothing without a tap — the strip is purely informational', async () => {
+      const { fixture, comp } = await createWithGroups([rightEar, palms]);
+      expect(comp.selectedReference()).toBeNull();
+      expect(comp.bodyLocation).toBe('');
+      expect(comp.side).toBe('n/a');
+      expect(fixture.nativeElement.textContent).not.toContain('Frame it like this one');
+    });
+
+    it('tapping a card selects it, prefills location and side only, and shows the frame-it hint', async () => {
+      const { fixture, comp } = await createWithGroups([rightEar, palms]);
+      comp.photoSize = null;
+      comp.toggleReference(rightEar);
+      fixture.detectChanges();
+
+      expect(comp.bodyLocation).toBe('ear drum');
+      expect(comp.side).toBe('right');
+      expect(comp.photoSize).toBeNull();
+      expect(comp.entryNote).toBe('');
+      expect(fixture.nativeElement.textContent).toContain('Frame it like this one');
+    });
+
+    it('tapping the selected card again deselects it', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.toggleReference(rightEar);
+      expect(comp.selectedReference()).toBeNull();
+    });
+
+    it('clears the selection when the prefilled side is edited away — a different site must not influence framing', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.onPhotoSideInput('left');
+      expect(comp.selectedReference()).toBeNull();
+      // The caregiver's edit itself is kept — only the reference goes.
+      expect(comp.side).toBe('left');
+      expect(comp.bodyLocation).toBe('ear drum');
+    });
+
+    it('clears the selection when the prefilled location is edited away', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.onPhotoLocationInput('ear canal');
+      expect(comp.selectedReference()).toBeNull();
+      expect(comp.bodyLocation).toBe('ear canal');
+    });
+
+    it('keeps the selection while typing lands back on the same site', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.onPhotoLocationInput('ear drum');
+      expect(comp.selectedReference()).not.toBeNull();
+    });
+
+    it('clears the selection after the entry is added', async () => {
+      const { comp, emitted } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.photoUploadedFileId.set('file-1');
+      comp.add();
+      expect(emitted.length).toBe(1);
+      expect(comp.selectedReference()).toBeNull();
+    });
+
+    it('drops the selection when the entry type changes away from photo', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+      comp.onTypeChange('lesion_size');
+      expect(comp.selectedReference()).toBeNull();
+    });
+
+    it('re-points the selection at the same site when groups refresh, and drops it when the site is gone', async () => {
+      const { comp } = await createWithGroups([rightEar]);
+      comp.toggleReference(rightEar);
+
+      const refreshedRightEar: PhotoReferenceGroup = { ...rightEar, fileId: 'f-right-newer', count: 3 };
+      comp.referenceGroups = [refreshedRightEar];
+      comp.ngOnChanges({ referenceGroups: {} } as any);
+      expect(comp.selectedReference()).toBe(refreshedRightEar);
+
+      comp.referenceGroups = [palms];
+      comp.ngOnChanges({ referenceGroups: {} } as any);
+      expect(comp.selectedReference()).toBeNull();
     });
   });
 

@@ -206,7 +206,9 @@ describe('NewObservationPage', () => {
     expect(routerMock.navigateByUrl).toHaveBeenCalledWith('/dashboard');
   });
 
-  it('shows a framing hint from the most recent photo entry in the selected episode', () => {
+  // frontend.md → Photos, F-8.2 v2: one framing reference per photographed site, not one per
+  // episode — a right ear and a left ear logged in the same observation are different series.
+  it('builds one framing reference group per (bodyLocation, side), newest-first with counts', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path.includes('/timeline')) {
         return of({
@@ -214,11 +216,26 @@ describe('NewObservationPage', () => {
           weightPrompt: { needsUpdate: false, lastRecordedAt: null, daysSince: null },
           entries: [
             {
+              id: 'obs-2',
+              kind: 'observation',
+              type: 'photo',
+              timestamp: 1700000100,
+              display: {
+                entries: [
+                  { type: 'photo', metadata: { fileId: 'right-new', bodyLocation: 'ear drum', side: 'right' } },
+                  { type: 'photo', metadata: { fileId: 'left-only', bodyLocation: 'ear drum', side: 'left' } },
+                ],
+              },
+            },
+            {
               id: 'obs-1',
               kind: 'observation',
               type: 'photo',
               timestamp: 1700000000,
-              display: { entries: [{ type: 'photo', metadata: { fileId: 'old-file' } }] },
+              display: {
+                // Different casing/whitespace, same site: groups with obs-2's right-ear photo.
+                entries: [{ type: 'photo', metadata: { fileId: 'right-old', bodyLocation: ' Ear Drum ', side: 'right' } }],
+              },
             },
           ],
         });
@@ -231,7 +248,23 @@ describe('NewObservationPage', () => {
     comp.form.patchValue({ patientId: 'p1', episodeSelection: ['ep1'] });
     comp.onEntryTypeChange('photo');
 
-    expect(comp.framingHintFileId()).toBe('old-file');
+    expect(comp.framingReferences()).toEqual([
+      { bodyLocation: 'ear drum', side: 'right', fileId: 'right-new', timestamp: 1700000100, count: 2 },
+      { bodyLocation: 'ear drum', side: 'left', fileId: 'left-only', timestamp: 1700000100, count: 1 },
+    ]);
+  });
+
+  it('clears the framing references when no episode is selected', () => {
+    apiMock.get.mockReturnValue(of([]));
+    const fixture = TestBed.createComponent(NewObservationPage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.framingReferences.set([
+      { bodyLocation: 'ear drum', side: 'right', fileId: 'f1', timestamp: 1700000000, count: 1 },
+    ]);
+    comp.form.patchValue({ patientId: 'p1', episodeSelection: [] });
+    comp.onEntryTypeChange('photo');
+    expect(comp.framingReferences()).toEqual([]);
   });
 
   it('prefills the patient and pre-checks the episode to resolve, arriving from episode-detail\'s "Resolve" action', () => {

@@ -107,9 +107,10 @@ Load-bearing; every feature decision traces back to one of these.
       too.
     - **Corrections**: entries can be edited after the fact; the prior state is always retained
       and attributed, never silently overwritten (F-1.4).
-    - **Photos**: attach to the timeline and to episodes like any other event, with a same-episode
-      framing hint so a progression series stays comparable. No inventory-style attachment
-      management — photos ride the existing entries model.
+    - **Photos**: attach to the timeline and to episodes like any other event, with same-episode
+      framing references — one per photographed site (body location + side), selectable to match
+      framing and pre-fill those fields — so a progression series stays comparable. No
+      inventory-style attachment management — photos ride the existing entries model.
     - **Lab report ingestion**: import a lab's own report file (Quest Diagnostics PDF first;
       format-pluggable parser layer) into one observation — one `lab_result` entry per analyte,
       the original PDF attached as a `document` entry. Parse → preview → confirm; only what the
