@@ -10,6 +10,11 @@
 ## File storage
 - File storage backend must be selectable via environment variables with associated configuration (e.g., bucket/path, credentials).
 - Default to local filesystem storage when no env overrides are set.
+- Two drivers ship and both are fully supported: `local` (default, filesystem) and `s3` (any
+  S3-compatible object store — AWS, Ceph RGW, MinIO, R2), selected by `FILE_STORAGE_DRIVER`.
+  `persistence.md` → "File storage" is the authoritative description: the driver contract, the full
+  env var table, the fail-fast boot validation, and why switching drivers on a populated instance
+  is a data migration rather than a config change.
 
 ## API documentation/testing
 - Use Bruno collections under `bruno/` to document and exercise APIs.

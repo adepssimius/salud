@@ -124,10 +124,14 @@ Load-bearing; every feature decision traces back to one of these.
 
 ## Non-functional requirements
 - Email/password authentication, HTTPS assumed.
-- Data stored locally (SQLite/File) in MVP; design interfaces to lift to PostgreSQL/S3 later.
+- Data stored locally (SQLite/File) with no configuration at all; both lifts are now built rather
+  than designed-for — `DB_CLIENT=postgres` and `FILE_STORAGE_DRIVER=s3` are supported, env-selected,
+  and equally first-class (persistence.md).
 - Dosing alerts shown client-side; no back-end hard stop.
 - No field-level encryption.
-- No photo size limits enforced; store as uploaded.
+- Uploads are capped at 20 MB and stored as uploaded — no resizing, re-encoding, or thumbnail
+  generation. (The original MVP note said "no size limits enforced"; multer's cap has been in place
+  since the files endpoint shipped, and `api.md` documents the 413 it produces.)
 
 ## Success metrics (qualitative)
 - Logging an observation or dose on mobile takes <30 seconds.

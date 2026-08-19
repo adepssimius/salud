@@ -48,10 +48,10 @@ export class FilesService {
     const db = this.db.db as any;
     const id = randomUUID();
     const relativePath = `${id}${path.extname(file.originalname)}`;
-    await this.storage.write(relativePath, file.buffer);
+    await this.storage.write(relativePath, file.buffer, file.mimetype);
     await db.insert(fileAssets).values({
       id,
-      bucket: 'local',
+      bucket: this.storage.bucketLabel,
       path: relativePath,
       contentType: file.mimetype,
       sizeBytes: file.size,
@@ -135,7 +135,7 @@ export class FilesService {
       throw new NotFoundException('FILE_NOT_FOUND');
     }
     return {
-      stream: this.storage.createReadStream(row.path),
+      stream: await this.storage.createReadStream(row.path),
       contentType: row.contentType,
     };
   }

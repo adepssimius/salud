@@ -87,6 +87,50 @@ describe('Files (e2e)', () => {
       .expect(404);
   });
 
+  // The surface is content-agnostic by design (api.md → Files): nothing about it is image- or
+  // PDF-specific, and the local/s3 drivers both store opaque bytes. This is the regression guard
+  // for anyone tempted to add a MIME allowlist at the controller.
+  it('round-trips an arbitrary non-image, non-PDF file with its content type intact', async () => {
+    const bytes = Buffer.from('date,weight_kg\n2026-08-18,18.4\n');
+
+    const upload = await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', bytes, { filename: 'weights.csv', contentType: 'text/csv' })
+      .expect(201);
+
+    const download = await request(app.getHttpServer())
+      .get(`/api/files/${upload.body.fileId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    // Express appends `; charset=utf-8` to text/* types on its way out, so match the prefix.
+    // The stored value is the uploaded one verbatim, as the listing assertion below shows.
+    expect(download.headers['content-type']).toMatch(/^text\/csv/);
+    // Superagent parses a text/* response into `text` rather than buffering it, unlike the
+    // image/pdf cases above — the byte-for-byte check is the same, just off a different field.
+    expect(download.text).toBe(bytes.toString());
+
+    const list = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/files`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(list.body.find((f: any) => f.id === upload.body.fileId).contentType).toBe('text/csv');
+  });
+
+  // Multer's 20 MB limit answers with framework prose and no error code — api.md → Error codes
+  // lists it among the three surfaces clients must recognize by shape rather than code-match.
+  it('rejects an upload over the 20 MB limit with a 413', async () => {
+    const tooBig = Buffer.alloc(20 * 1024 * 1024 + 1, 0);
+
+    await request(app.getHttpServer())
+      .post('/api/files')
+      .set('Authorization', `Bearer ${token}`)
+      .field('patientId', patientId)
+      .attach('file', tooBig, { filename: 'huge.bin', contentType: 'application/octet-stream' })
+      .expect(413);
+  });
+
   it('rejects an upload with no patientId', async () => {
     await request(app.getHttpServer())
       .post('/api/files')

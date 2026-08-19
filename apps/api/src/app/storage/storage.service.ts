@@ -1,58 +1,47 @@
 import { Inject, Injectable } from '@nestjs/common';
-import fs from 'fs';
-import path from 'path';
-import { STORAGE_CONFIG_TOKEN } from './storage.providers';
+import { Readable } from 'stream';
+import { FILE_STORAGE_DRIVER_TOKEN, STORAGE_CONFIG_TOKEN } from './storage.providers';
 import { FileStorageConfig } from './storage.config';
+import { FileStorageDriver } from './file-storage.driver';
 
+/**
+ * Facade over the configured FileStorageDriver. Deliberately adds nothing but delegation: it stays
+ * the single injected dependency for `files.service.ts`, `lab-imports.service.ts` and
+ * `patients.service.ts` so none of them knows, or can branch on, which backend is live.
+ */
 @Injectable()
 export class StorageService {
   constructor(
     @Inject(STORAGE_CONFIG_TOKEN)
     private readonly config: FileStorageConfig,
-  ) {
-    this.ensureBasePath();
-  }
+    @Inject(FILE_STORAGE_DRIVER_TOKEN)
+    private readonly driverImpl: FileStorageDriver,
+  ) {}
 
+  /** Diagnostics only (health/startup logging) — no service should branch on this. */
   get driver() {
     return this.config.driver;
   }
 
-  get basePath() {
-    return this.config.basePath;
+  /** Recorded in `file_assets.bucket` on write; see FileStorageDriver.bucketLabel. */
+  get bucketLabel() {
+    return this.driverImpl.bucketLabel;
   }
 
-  // Ensure the directory exists; errors bubble so misconfiguration is obvious.
-  private ensureBasePath() {
-    if (this.config.driver !== 'local') {
-      return;
-    }
-    fs.mkdirSync(this.config.basePath, { recursive: true });
+  async write(relativePath: string, buffer: Buffer, contentType?: string): Promise<void> {
+    await this.driverImpl.write(relativePath, buffer, contentType);
   }
 
-  resolveLocalPath(relativePath: string) {
-    if (this.config.driver !== 'local') {
-      throw new Error('Local path resolution is only available for local driver');
-    }
-    return path.join(this.config.basePath, relativePath);
+  async createReadStream(relativePath: string): Promise<Readable> {
+    return await this.driverImpl.createReadStream(relativePath);
   }
 
-  async write(relativePath: string, buffer: Buffer): Promise<void> {
-    const fullPath = this.resolveLocalPath(relativePath);
-    await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
-    await fs.promises.writeFile(fullPath, buffer);
-  }
-
-  createReadStream(relativePath: string): fs.ReadStream {
-    return fs.createReadStream(this.resolveLocalPath(relativePath));
-  }
-
-  // Whole-file read for consumers that must parse the bytes (lab imports). Kept on this service so
-  // a later object-storage driver only changes this file, not its callers.
+  // Whole-file read for consumers that must parse the bytes (lab imports).
   async read(relativePath: string): Promise<Buffer> {
-    return await fs.promises.readFile(this.resolveLocalPath(relativePath));
+    return await this.driverImpl.read(relativePath);
   }
 
   async delete(relativePath: string): Promise<void> {
-    await fs.promises.rm(this.resolveLocalPath(relativePath), { force: true });
+    await this.driverImpl.delete(relativePath);
   }
 }

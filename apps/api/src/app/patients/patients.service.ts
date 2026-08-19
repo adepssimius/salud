@@ -93,9 +93,11 @@ export class PatientsService {
 
     // After COMMIT, best-effort. A failed unlink must not roll back the delete, and an unlinked
     // blob whose row was rolled back would be the worse of the two failures. These are clinical
-    // photos of a child on a volume nothing ever garbage-collects, so leaving them is a privacy
-    // problem rather than housekeeping (data-model.md → Data integrity rules).
-    if (this.storage.driver === 'local' && blobRows.length) {
+    // photos of a child on a store nothing ever garbage-collects, so leaving them is a privacy
+    // problem rather than housekeeping (data-model.md → Data integrity rules). Driver-agnostic:
+    // this used to skip the cleanup entirely unless the driver was 'local', which under s3 would
+    // have orphaned every blob — the exact failure this comment is about.
+    if (blobRows.length) {
       await Promise.allSettled(
         blobRows.map((r: any) => this.storage.delete(r.path)),
       );
