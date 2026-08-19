@@ -550,6 +550,25 @@ describe('ER Brief (e2e)', () => {
       expect(res.body.toString()).toContain('advance directive');
     });
 
+    /**
+     * This route serves caregiver-uploaded bytes with their stored content type, to a reader with
+     * no account — the same stored-XSS shape `GET /api/files/:id` carries, minus the login. An
+     * uploaded SVG opened as a top-level document would be XSS on this origin without the
+     * sandboxing CSP, so security.md states the route inherits it and this pins that it does.
+     * The header comes from app-wide helmet (app.security.ts), which is why the suite builds its
+     * app through applyAppSecurity rather than a bare testing module.
+     */
+    it('serves the frozen file under the hardened CSP', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/er-brief/shared/${snapshotToken}/files/${docFileId}`)
+        .expect(200);
+
+      const csp = res.headers['content-security-policy'];
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain('sandbox');
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+    });
+
     // One code for every failure: a valid token gives no signal to probe other files with.
     it('404s SNAPSHOT_NOT_FOUND for a file that was not frozen into this snapshot', async () => {
       const res = await request(app.getHttpServer())
