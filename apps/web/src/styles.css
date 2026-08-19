@@ -368,13 +368,17 @@ h2 {
   gap: 0.4rem;
 }
 
+/* Three sides, not the border shorthand: the leading edge belongs to the global .accent-rail
+   utility, and a shorthand here would quietly paint over it — same rule the patient list follows. */
 .nb-row {
   display: grid;
   grid-template-columns: minmax(4rem, 7rem) 1fr;
   gap: 0.5rem 0.75rem;
   align-items: start;
   padding: 0.5rem 0.65rem;
-  border: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   border-radius: var(--radius-input);
   background: var(--surface-sunken);
 }
@@ -382,6 +386,9 @@ h2 {
 .nb-patient {
   font-weight: 700;
   overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .nb-meds {
@@ -420,6 +427,14 @@ h2 {
   color: var(--success-text);
 }
 
+/* Compact on the board only. At full size the flag pushed a longer countdown ("in 4h 59m") onto a
+   second line while a shorter one stayed put, so two rows stopped lining up — which is the one
+   thing this grid is for. */
+.nb-med .pill {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+}
+
 /* On a phone the name column costs more than it explains — one caregiver, two bedrooms, and the
    whole width is needed for "medication … countdown". */
 @media (max-width: 560px) {
@@ -436,7 +451,9 @@ h2 {
   flex-direction: column;
   gap: 0.6rem;
   padding: 0.85rem;
-  border: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
   border-radius: var(--radius-card);
   background: var(--surface);
 }
@@ -450,6 +467,9 @@ h2 {
 
 .sick-name {
   font-size: 1.15rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .episode-pill {

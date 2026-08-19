@@ -514,6 +514,93 @@ describe('DashboardPage', () => {
       });
     });
 
+    // The identity color is a safety affordance, not decoration: with two children sick on the
+    // same medication at different weight-based doses, it is the always-on guard against reading
+    // the wrong card (frontend.md → "Patient identity").
+    describe('accent colors', () => {
+      it('carries the patient token on the sick card and the night-board row', () => {
+        const fixture = render({
+          activeEpisodes: [
+            episode({ patientId: 'p1', patientName: 'Ada', accentColor: 'teal', medications: [dose()] }),
+            episode({
+              patientId: 'p2',
+              patientName: 'Bo',
+              episodeId: 'ep2',
+              accentColor: 'amber',
+              medications: [dose({ nextAllowedAt: nowSec() - 60 })],
+            }),
+          ],
+        });
+
+        const card = fixture.nativeElement.querySelector('.sick-card');
+        expect(card.classList).toContain('accent-rail');
+        const row = fixture.nativeElement.querySelector('.nb-row');
+        expect(row.classList).toContain('accent-rail');
+        // Bo sorts first (can give now), so both surfaces should be showing Bo's amber.
+        expect(card.textContent).toContain('Bo');
+        expect(card.classList).toContain('accent-amber');
+        expect(row.classList).toContain('accent-amber');
+      });
+
+      it('gives two sick patients different tokens — the whole point of the color', () => {
+        const fixture = render({
+          activeEpisodes: [
+            episode({ patientId: 'p1', patientName: 'Ada', accentColor: 'teal', medications: [dose()] }),
+            episode({
+              patientId: 'p2',
+              patientName: 'Bo',
+              episodeId: 'ep2',
+              accentColor: 'amber',
+              medications: [dose({ nextAllowedAt: nowSec() + 90000 })],
+            }),
+          ],
+        });
+        const classes = Array.from(fixture.nativeElement.querySelectorAll('.sick-card')).map((c: any) =>
+          Array.from(c.classList).find((k: any) => k.startsWith('accent-') && k !== 'accent-rail'),
+        );
+        expect(classes).toEqual(['accent-teal', 'accent-amber']);
+        expect(new Set(classes).size).toBe(2);
+      });
+
+      it('puts a dot beside every patient name it renders, cards and strips alike', () => {
+        const fixture = render({
+          activeEpisodes: [episode({ accentColor: 'violet', medications: [dose()] })],
+          lastDoses: [{ patientId: 'p2', patientName: 'Bo', accentColor: 'rose', doses: [] }],
+          whatsNew: [
+            {
+              patientId: 'p2',
+              patientName: 'Bo',
+              accentColor: 'rose',
+              since: 1700000000,
+              eventCount: 2,
+              advisoryCount: 0,
+              nowDueCount: 0,
+            },
+          ],
+        });
+        expect(fixture.nativeElement.querySelector('.sick-card .accent-dot')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.nb-patient, .sick-name')).not.toBeNull();
+
+        const stripRow = fixture.nativeElement.querySelector('.dose-list li');
+        expect(stripRow.classList).toContain('accent-rose');
+        expect(stripRow.querySelector('.accent-dot')).not.toBeNull();
+
+        const newsRow = fixture.nativeElement.querySelector('.schedule-list li');
+        expect(newsRow.classList).toContain('accent-rose');
+        expect(newsRow.querySelector('.accent-dot')).not.toBeNull();
+      });
+
+      it('degrades to no color rather than a wrong one when the token is absent', () => {
+        const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
+        const card = fixture.nativeElement.querySelector('.sick-card');
+        const tokens = Array.from(card.classList).filter(
+          (k: any) => k.startsWith('accent-') && k !== 'accent-rail',
+        );
+        expect(tokens).toEqual([]);
+        expect(fixture.componentInstance.accentClass(undefined)).toBe('');
+      });
+    });
+
     describe('night board', () => {
       // A factory, not a constant: the relative-time labels are computed against the clock at render
       // time, and a payload built when the describe block was evaluated would drift a second or two

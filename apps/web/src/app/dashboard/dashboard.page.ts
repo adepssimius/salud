@@ -7,7 +7,7 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relative-time';
 import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { DashboardPayload, DashboardTemperaturePoint } from '@salud/shared/types';
+import { DashboardPayload, DashboardTemperaturePoint, PatientAccentColor } from '@salud/shared/types';
 
 // The sparkline canvas. Small on purpose: it is a glance at the shape of the last two nights, not
 // the timeline's chart. The x-domain is the fixed 48-hour window rather than the patient's own
@@ -46,6 +46,7 @@ interface SparkPoint {
 interface SickCard {
   patientId: string;
   patientName: string;
+  accentColor: PatientAccentColor;
   episodes: SickEpisode[];
   medications: SickMedication[];
   points: SparkPoint[];
@@ -86,8 +87,8 @@ interface SickCard {
       <section class="night-board-section" *ngIf="showNightBoard()">
         <h2>Who can have what</h2>
         <div class="night-board">
-          <div class="nb-row" *ngFor="let c of sickCards()">
-            <div class="nb-patient">{{ c.patientName }}</div>
+          <div class="nb-row accent-rail" *ngFor="let c of sickCards()" [ngClass]="accentClass(c.accentColor)">
+            <div class="nb-patient"><span class="accent-dot"></span>{{ c.patientName }}</div>
             <div class="nb-meds">
               <p class="muted small" *ngIf="!c.medications.length">No doses logged.</p>
               <!-- Countdown last, so every row's number ends at the same right edge and the board
@@ -104,9 +105,9 @@ interface SickCard {
 
       <section class="sick-cards" *ngIf="sickCards().length">
         <ul class="sick-list">
-          <li class="sick-card" *ngFor="let c of sickCards()">
+          <li class="sick-card accent-rail" *ngFor="let c of sickCards()" [ngClass]="accentClass(c.accentColor)">
             <div class="sick-head">
-              <strong class="sick-name">{{ c.patientName }}</strong>
+              <strong class="sick-name"><span class="accent-dot"></span>{{ c.patientName }}</strong>
               <button
                 type="button"
                 class="episode-pill"
@@ -163,8 +164,10 @@ interface SickCard {
       <section class="last-doses" *ngIf="quietLastDoses().length">
         <h2>Last doses</h2>
         <ul class="dose-list">
-          <li *ngFor="let p of quietLastDoses()">
-            <div class="row-main"><strong>{{ p.patientName }}</strong></div>
+          <li *ngFor="let p of quietLastDoses()" [ngClass]="accentClass(p.accentColor)">
+            <div class="row-main">
+              <strong><span class="accent-dot"></span>{{ p.patientName }}</strong>
+            </div>
 
             <!-- The confident negative. At 3 AM the negative *is* the answer; a hidden row is
                  ambiguous between "nobody gave anything" and "the app doesn't know". -->
@@ -185,10 +188,10 @@ interface SickCard {
       <section *ngIf="whatsNewSummaries().length">
         <h2>While you were asleep</h2>
         <ul class="schedule-list">
-          <li *ngFor="let w of whatsNewSummaries()">
+          <li *ngFor="let w of whatsNewSummaries()" [ngClass]="accentClass(w.accentColor)">
             <button type="button" class="row-link" (click)="goToWhatsNew(w.patientId)">
               <div class="row-main">
-                <strong>{{ w.patientName }}</strong>
+                <strong><span class="accent-dot"></span>{{ w.patientName }}</strong>
               </div>
               <!-- Every clause is conditional: a patient with no new events but a fired advisory
                    should read "1 advisory fired", not "0 new events · 1 advisory fired". -->
@@ -369,6 +372,13 @@ interface SickCard {
         align-items: center;
         gap: 0.5rem;
       }
+      /* The strip and what's-new rows name a patient too, so they carry the dot — the association
+         between a color and a child is only learnable if it is the same everywhere. */
+      .row-main strong {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
       .episode-card {
         width: 100%;
         text-align: left;
@@ -444,6 +454,7 @@ export class DashboardPage implements OnInit {
         ({
           patientId: ep.patientId,
           patientName: ep.patientName,
+          accentColor: ep.accentColor,
           episodes: [],
           medications: [],
           points: [],
@@ -659,6 +670,20 @@ export class DashboardPage implements OnInit {
 
   doseReady(ts: number | null) {
     return ts != null && ts <= Math.floor(Date.now() / 1000);
+  }
+
+  /**
+   * The patient's identity color, same mechanism the hub header and the patient list already use:
+   * an `accent-{token}` class sets the CSS custom properties that `.accent-rail` and `.accent-dot`
+   * read (styles.css → patient accent colors).
+   *
+   * Guarded rather than assumed. The token now arrives on every dashboard row that names a
+   * patient, but a payload from an older API would leave it undefined, and the failure mode to
+   * avoid is a *wrong* color rather than a missing one — no class means the utilities fall back to
+   * neutral, which reads as "no color", not as some other child.
+   */
+  accentClass(token: PatientAccentColor | undefined | null) {
+    return token ? `accent-${token}` : '';
   }
 }
 
