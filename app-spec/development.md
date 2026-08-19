@@ -51,6 +51,11 @@
     guideline each — enough for dose guidance, atypical detection and schedules to be exercisable.
     Without it every dose-guidance feature is inert, since the catalog starts empty.
   - Idempotent: skips a medication whose `name` already exists. Honors the same DB env config.
+  - Also seeds the two chart overlay defaults those tags anticipate — antipyretic doses on the
+    `temperature` chart, analgesic doses on the `pain_score` chart (data-model.md →
+    ChartOverlayDefault) — idempotent on the (analyte, kind, value) triple. Like everything here it
+    is a script a human runs, never a boot step, so a default a caregiver deleted stays deleted
+    unless someone deliberately re-runs the seed.
   - **This is a script, never a boot-time seed.** `main.ts` applies migrations at boot but must not
     write rows — a deployed instance's catalog is the household's data, and inserting into it on
     every pod restart is a surprise write nobody asked for.
