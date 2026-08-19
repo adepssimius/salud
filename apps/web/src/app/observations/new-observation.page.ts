@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -6,14 +6,32 @@ import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { EntryDraft, EntryMetadataFormComponent } from './entry-metadata-form.component';
+import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { entrySummary, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
 import { Advisory, Observation, ObservationType, Patient, TimelineResponse, UnitPreference } from '@salud/shared/types';
 
+/** The verbs Quick Log can hand off here, and the heading each one gets. */
+const VERB_HEADINGS: Record<string, string> = {
+  temperature: 'Log temperature',
+  pain_score: 'Log pain',
+  note: 'Add a note',
+  photo: 'Add a photo',
+};
+
+const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note', 'photo'];
+
 @Component({
   selector: 'app-new-observation-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, PhotoThumbnailComponent, EntryMetadataFormComponent],
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    FormsModule,
+    PhotoThumbnailComponent,
+    EntryMetadataFormComponent,
+    EpisodeAttachmentComponent,
+  ],
   template: `
     <div class="card" *ngIf="firedAdvisories().length; else formCard">
       <h1>Observation saved</h1>
@@ -39,13 +57,19 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
 
     <ng-template #formCard>
     <div class="card">
-      <h1>New Observation</h1>
-      <p class="muted">Log an observation with one or more measurement entries.</p>
+      <h1>{{ heading() }}</h1>
+      <p class="muted" *ngIf="!compact()">Log an observation with one or more measurement entries.</p>
 
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-        <label class="field">
+        <!-- Pinned identity: which chart this lands on is never off-screen, and the save button
+             names it again at the point of commitment (frontend.md → "Patient identity"). -->
+        <div class="for-patient" *ngIf="compact() && patientName()">
+          <span class="muted small">For</span>
+          <span class="for-patient-name">{{ patientName() }}</span>
+        </div>
+        <label class="field" *ngIf="!compact()">
           <span>Patient</span>
           <select formControlName="patientId" (change)="onPatientChange($event)">
             <option value="">Select a patient</option>
@@ -63,32 +87,22 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
           <textarea rows="2" formControlName="text"></textarea>
         </label>
 
-        <div class="field">
-          <span>Episodes</span>
-          <div class="episode-list">
-            <label class="inline-check" *ngFor="let ep of activeEpisodes()">
-              <input type="checkbox" [value]="ep.id" [checked]="isEpisodeSelected(ep.id)" (change)="toggleEpisode(ep.id, $event)" />
-              <span>{{ ep.name }}</span>
-            </label>
-            <label class="inline-check">
-              <input type="checkbox" [checked]="createNewEpisode()" (change)="toggleCreateNew($event)" />
-              <span>Create new episode</span>
-            </label>
-          </div>
-          <label class="field" *ngIf="createNewEpisode()">
-            <span>New episode name</span>
-            <input type="text" formControlName="startEpisodeName" placeholder="e.g. Fever" />
-          </label>
-        </div>
-
-        <label class="field inline-check">
-          <input type="checkbox" formControlName="resolveSelected" />
-          <span>Resolve selected episodes</span>
-        </label>
+        <app-episode-attachment
+          [episodes]="activeEpisodes()"
+          [selectedIds]="selectedEpisodeIds()"
+          [createNew]="createNewEpisode()"
+          [newEpisodeName]="form.getRawValue().startEpisodeName"
+          [resolveSelected]="!!form.getRawValue().resolveSelected"
+          (selectedIdsChange)="setEpisodeSelection($event)"
+          (createNewChange)="setCreateNew($event)"
+          (newEpisodeNameChange)="form.patchValue({ startEpisodeName: $event })"
+          (resolveSelectedChange)="form.patchValue({ resolveSelected: $event })"
+        ></app-episode-attachment>
 
         <app-entry-metadata-form
           [patientId]="form.getRawValue().patientId"
           [framingHintFileId]="framingHintFileId()"
+          [lockedType]="lockedEntryType()"
           (typeChange)="onEntryTypeChange($event)"
           (entryAdded)="addEntry($event)"
         ></app-entry-metadata-form>
@@ -105,7 +119,7 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
         <div class="actions">
           <button type="button" class="secondary" (click)="cancel()">Cancel</button>
           <button type="submit" class="primary" [disabled]="form.invalid || entries().length === 0 || saving()">
-            {{ saving() ? 'Saving…' : 'Save observation' }}
+            {{ saving() ? 'Saving…' : saveLabel() }}
           </button>
         </div>
       </form>
@@ -118,11 +132,6 @@ import { Advisory, Observation, ObservationType, Patient, TimelineResponse, Unit
         max-width: 720px;
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
-      }
-      .episode-list {
-        display: flex;
-        flex-wrap: wrap;
         gap: 0.75rem;
       }
       .entries {
@@ -182,8 +191,11 @@ export class NewObservationPage implements OnInit {
   private readonly fb = inject(FormBuilder);
 
   patients = signal<Patient[]>([]);
-  activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
+  activeEpisodes = signal<EpisodeOption[]>([]);
   createNewEpisode = signal(false);
+  /** Set by Quick Log: one verb, one entry type, no patient dropdown. */
+  compact = signal(false);
+  lockedEntryType = signal<ObservationType | null>(null);
   saving = signal(false);
   error = signal<string | null>(null);
   entries = signal<EntryDraft[]>([]);
@@ -193,6 +205,21 @@ export class NewObservationPage implements OnInit {
   // photo is actually being composed.
   entryType: ObservationType = 'temperature';
   framingHintFileId = signal<string | null>(null);
+
+  selectedEpisodeIds = computed(() => this.formEpisodeIds());
+  private formEpisodeIds = signal<string[]>([]);
+
+  patientName = computed(
+    () => this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null,
+  );
+
+  /** Every write names its patient at the point of commitment — never a bare "Save" (P3). */
+  saveLabel = computed(() => {
+    const name = this.patientName();
+    return name ? `Save for ${name}` : 'Save observation';
+  });
+
+  heading = computed(() => VERB_HEADINGS[this.lockedEntryType() ?? ''] ?? 'New Observation');
 
   form = this.fb.nonNullable.group({
     patientId: ['', [Validators.required]],
@@ -216,9 +243,19 @@ export class NewObservationPage implements OnInit {
       .slice(0, 16);
     this.form.patchValue({ observedAt: localIso });
 
-    const patientIdParam = this.route.snapshot.queryParamMap.get('patientId');
+    const params = this.route.snapshot.queryParamMap;
+    const patientIdParam = params.get('patientId');
     if (patientIdParam) this.form.patchValue({ patientId: patientIdParam });
-    this.resolveEpisodeIdParam = this.route.snapshot.queryParamMap.get('resolveEpisodeId');
+    this.resolveEpisodeIdParam = params.get('resolveEpisodeId');
+
+    // Quick Log's handoff: one verb already chosen, so the form renders its compact single-purpose
+    // layout over the same codepath rather than a second implementation of it.
+    const entryTypeParam = params.get('entryType');
+    if (entryTypeParam && OBSERVATION_VERBS.includes(entryTypeParam as ObservationType)) {
+      this.lockedEntryType.set(entryTypeParam as ObservationType);
+      this.entryType = entryTypeParam as ObservationType;
+    }
+    this.compact.set(params.get('compact') === '1' && !!patientIdParam);
 
     const user = this.auth.user();
     if (!user && this.auth.token) {
@@ -257,19 +294,38 @@ export class NewObservationPage implements OnInit {
   }
 
   private loadEpisodes(patientId: string) {
-    this.api.get<Array<{ id: string; name: string }>>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
+    this.api.get<EpisodeOption[]>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
       next: (eps) => {
         this.activeEpisodes.set(eps);
         if (this.resolveEpisodeIdParam && eps.some((ep) => ep.id === this.resolveEpisodeIdParam)) {
-          this.form.patchValue({
-            episodeSelection: [this.resolveEpisodeIdParam],
-            resolveSelected: true,
-          });
+          this.setEpisodeSelection([this.resolveEpisodeIdParam]);
+          this.form.patchValue({ resolveSelected: true });
           this.resolveEpisodeIdParam = null; // only ever apply this once, on the first successful load
+          return;
         }
+        // A visible default, never a silent inference (P5): exactly one active episode is
+        // pre-attached — zero taps — and the chip stays on screen for the caregiver to reject
+        // before saving. Two or more, and the app declines to guess.
+        this.setEpisodeSelection(eps.length === 1 ? [eps[0].id] : []);
       },
-      error: () => this.activeEpisodes.set([]),
+      error: () => {
+        this.activeEpisodes.set([]);
+        this.setEpisodeSelection([]);
+      },
     });
+  }
+
+  setEpisodeSelection(ids: string[]) {
+    this.formEpisodeIds.set(ids);
+    const withNew = this.createNewEpisode() ? [...ids, '__new__'] : ids;
+    this.form.patchValue({ episodeSelection: withNew });
+    if (this.entryType === 'photo') this.refreshFramingHint();
+  }
+
+  setCreateNew(checked: boolean) {
+    this.createNewEpisode.set(checked);
+    if (!checked) this.form.patchValue({ startEpisodeName: '' });
+    this.setEpisodeSelection(this.formEpisodeIds());
   }
 
   addEntry(draft: EntryDraft) {
@@ -319,37 +375,6 @@ export class NewObservationPage implements OnInit {
     const next = [...this.entries()];
     next.splice(idx, 1);
     this.entries.set(next);
-  }
-
-  isEpisodeSelected(id: string): boolean {
-    return this.form.getRawValue().episodeSelection.includes(id);
-  }
-
-  toggleEpisode(id: string, event: Event) {
-    const checked = (event.target as HTMLInputElement).checked;
-    const current = new Set(this.form.getRawValue().episodeSelection);
-    if (checked) {
-      current.add(id);
-    } else {
-      current.delete(id);
-    }
-    this.form.patchValue({ episodeSelection: Array.from(current) });
-    if (this.entryType === 'photo') this.refreshFramingHint();
-  }
-
-  toggleCreateNew(event: Event) {
-    const checked = (event.target as HTMLInputElement).checked;
-    this.createNewEpisode.set(checked);
-    if (checked) {
-      const current = new Set(this.form.getRawValue().episodeSelection);
-      current.add('__new__');
-      this.form.patchValue({ episodeSelection: Array.from(current) });
-    } else {
-      const current = new Set(this.form.getRawValue().episodeSelection);
-      current.delete('__new__');
-      this.form.patchValue({ episodeSelection: Array.from(current), startEpisodeName: '' });
-    }
-    if (this.entryType === 'photo') this.refreshFramingHint();
   }
 
   submit() {

@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, Output, inject, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, Output, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiClientService } from '../core/api-client.service';
@@ -77,10 +77,12 @@ export function toCm(value: number, unit: LengthUnit): number {
   standalone: true,
   imports: [CommonModule, FormsModule, PhotoThumbnailComponent],
   template: `
-    <div class="entry-builder">
-      <h3>Add entry</h3>
+    <div class="entry-builder" [class.compact]="!!lockedType">
+      <!-- Compact single-purpose layout: arriving from Quick Log with one verb already chosen, the
+           type picker and the builder's framing are noise (frontend.md → Quick Log). -->
+      <h3 *ngIf="!lockedType">Add entry</h3>
 
-      <label class="field">
+      <label class="field" *ngIf="!lockedType">
         <span>Type</span>
         <select [(ngModel)]="entryType" name="entryType" (ngModelChange)="onTypeChange($event)">
           <option *ngFor="let t of types" [value]="t">{{ t }}</option>
@@ -285,7 +287,7 @@ export function toCm(value: number, unit: LengthUnit): number {
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <button type="button" class="secondary" (click)="add()">Add entry</button>
-      <div class="muted small">At least one entry is required.</div>
+      <div class="muted small" *ngIf="!lockedType">At least one entry is required.</div>
     </div>
   `,
   styles: [
@@ -296,6 +298,10 @@ export function toCm(value: number, unit: LengthUnit): number {
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
+      }
+      .entry-builder.compact {
+        border-top: none;
+        padding-top: 0;
       }
       h3 {
         margin: 0;
@@ -361,12 +367,17 @@ export function toCm(value: number, unit: LengthUnit): number {
     `,
   ],
 })
-export class EntryMetadataFormComponent {
+export class EntryMetadataFormComponent implements OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
 
   @Input() patientId = '';
   @Input() framingHintFileId: string | null = null;
+  /**
+   * Set when Quick Log picked the verb: the type is fixed and its picker disappears. Applied once,
+   * in ngOnInit — the caregiver is still free to change nothing, since there is nothing to change.
+   */
+  @Input() lockedType: ObservationType | null = null;
 
   @Output() typeChange = new EventEmitter<ObservationType>();
   @Output() entryAdded = new EventEmitter<EntryDraft>();
@@ -396,6 +407,13 @@ export class EntryMetadataFormComponent {
 
   entryType: ObservationType = 'temperature';
   error = signal<string | null>(null);
+
+  ngOnInit(): void {
+    if (this.lockedType) {
+      this.entryType = this.lockedType;
+      this.onTypeChange(this.lockedType);
+    }
+  }
 
   // Shared across the number-driven types
   numberValue: number | null = null;

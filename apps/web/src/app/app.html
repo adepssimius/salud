@@ -1,10 +1,13 @@
-<main class="app-shell">
+<main class="app-shell" [class.shell-authed]="isAuthed()">
   <header class="app-header">
     <div class="brand">Salud</div>
     <nav class="nav-actions">
       <ng-container *ngIf="isAuthed(); else loggedOut">
-        <a routerLink="/dashboard">Home</a>
-        <!-- The menu is a sibling of the toggle, not a child: a <button> may not contain the
+        <!-- No link list here any more: navigation lives in the bottom bar (mobile) and the left
+             rail (desktop). A top-right link row is a desktop pattern on the device this product
+             is primarily for (frontend.md → "Information architecture (v2)" → App shell) — Home
+             is a bottom-bar slot and a rail link now, so its header link retires with the row.
+             The menu is a sibling of the toggle, not a child: a <button> may not contain the
              menu's own link and button. -->
         <div class="profile-wrap">
           <button
@@ -20,6 +23,8 @@
           </button>
           <div class="menu" role="menu" *ngIf="menuOpen()">
             <a routerLink="/profile" role="menuitem" (click)="closeMenu()">Edit profile</a>
+            <!-- Monthly setup, off the urgent screen: the avatar menu is Manage's mobile home,
+                 the rail bottom its desktop one. -->
             <a routerLink="/manage" role="menuitem" (click)="closeMenu()">Manage</a>
             <button type="button" role="menuitem" (click)="logout()">Log out</button>
           </div>
@@ -31,7 +36,65 @@
       </ng-template>
     </nav>
   </header>
-  <section class="app-content">
-    <router-outlet></router-outlet>
-  </section>
+
+  <div class="app-body">
+    <!-- Desktop only (CSS): the patient list stays visible, Home at the top, Manage at the bottom. -->
+    <nav class="side-rail" *ngIf="isAuthed()" aria-label="Primary">
+      <a routerLink="/dashboard" routerLinkActive="active" class="rail-link">Home</a>
+      <button type="button" class="primary rail-add" (click)="openQuickLog()">＋ Quick log</button>
+
+      <div class="rail-section">
+        <span class="rail-label">Patients</span>
+        <a
+          *ngFor="let p of patients()"
+          [routerLink]="['/patients', p.id]"
+          routerLinkActive="active"
+          class="rail-link"
+          >{{ p.fullName }}</a
+        >
+        <a routerLink="/patients" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }" class="rail-link rail-muted"
+          >All patients</a
+        >
+      </div>
+
+      <div class="rail-section rail-bottom">
+        <a routerLink="/manage" routerLinkActive="active" class="rail-link">Manage</a>
+      </div>
+    </nav>
+
+    <section class="app-content">
+      <router-outlet></router-outlet>
+    </section>
+  </div>
+
+  <!-- Mobile only (CSS). Three slots, all thumb-reachable, the `+` in the centre. -->
+  <nav class="bottom-bar" *ngIf="isAuthed()" aria-label="Primary">
+    <a routerLink="/dashboard" routerLinkActive="active" class="bottom-link">
+      <span class="bottom-icon" aria-hidden="true">🏠</span>
+      <span>Home</span>
+    </a>
+    <button
+      type="button"
+      class="bottom-add"
+      data-testid="quick-log-open"
+      aria-label="Quick log"
+      (click)="openQuickLog()"
+    >
+      ＋
+    </button>
+    <a routerLink="/patients" routerLinkActive="active" class="bottom-link">
+      <span class="bottom-icon" aria-hidden="true">👥</span>
+      <span>Patients</span>
+    </a>
+  </nav>
+
+  <!-- Deferred so the sheet and its dependencies stay out of the initial bundle; the *ngIf is what
+       tears it down again, since a `when` trigger never reverts on its own. -->
+  @defer (when quickLogOpen()) {
+    <app-quick-log-sheet
+      *ngIf="quickLogOpen()"
+      [lockedPatientId]="hubPatientId()"
+      (dismiss)="closeQuickLog()"
+    ></app-quick-log-sheet>
+  }
 </main>

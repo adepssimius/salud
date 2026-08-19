@@ -291,3 +291,172 @@ describe('Interventions (e2e)', () => {
       .expect(400);
   });
 });
+
+
+// api.md → Timeline & dashboard → GET /api/patients/:patientId/recent-medications, the Quick Log
+// "recents first" source (frontend.md → "Information architecture (v2)" → Quick Log).
+describe('Recent medications (e2e)', () => {
+  let app: INestApplication;
+  let close: () => Promise<void>;
+  let token: string;
+
+  const auth = () => ({ Authorization: `Bearer ${token}` });
+
+  async function createMedication(name: string) {
+    const res = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set(auth())
+      .send({ name })
+      .expect(201);
+    return res.body.id as string;
+  }
+
+  async function createEmbodiment(medicationId: string, label: string) {
+    const res = await request(app.getHttpServer())
+      .post(`/api/medications/${medicationId}/embodiments`)
+      .set(auth())
+      .send({ label, concentrationMgPerMl: 32, unitType: 'ml' })
+      .expect(201);
+    return res.body.id as string;
+  }
+
+  async function logDose(patientId: string, body: Record<string, unknown>) {
+    const res = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/interventions`)
+      .set(auth())
+      .send({ type: 'medication_dose', doseSource: 'override', ...body })
+      .expect(201);
+    return res.body;
+  }
+
+  async function recents(patientId: string) {
+    const res = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/recent-medications`)
+      .set(auth())
+      .expect(200);
+    return res.body as any[];
+  }
+
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+  beforeAll(async () => {
+    ({ app, close } = await createTestApp('recent-medications'));
+    ({ token } = await registerAndLogin(app));
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  it('carries the last amount, embodiment and frozen nextAllowedAt for the prefill', async () => {
+    const patientId = await createPatient(app, token);
+    const medicationId = await createMedication(`recents-prefill-${Date.now()}`);
+    const embodimentId = await createEmbodiment(medicationId, 'infant suspension 160mg/5mL');
+
+    const dose = await logDose(patientId, {
+      performedAt: new Date().toISOString(),
+      medicationId,
+      medicationEmbodimentId: embodimentId,
+      amountMg: 160,
+      amountMl: 5,
+    });
+
+    const body = await recents(patientId);
+    expect(body.length).toBe(1);
+    expect(body[0]).toMatchObject({
+      medicationId,
+      lastAmountMg: 160,
+      lastAmountMl: 5,
+      lastEmbodimentId: embodimentId,
+      lastEmbodimentLabel: 'infant suspension 160mg/5mL',
+      onActiveSchedule: false,
+    });
+    // Frozen at log time, exactly the dashboard's semantics — not recomputed on read.
+    expect(body[0].nextAllowedAt).toEqual(dose.metadata.nextAllowedAt);
+    expect(body[0].isAtypicalLastDose).toBe(!!dose.metadata.isAtypical);
+    expect(Number.isInteger(body[0].lastDoseAt)).toBe(true);
+  });
+
+  it('orders most-recent-dose-first and drops doses older than the 14-day window', async () => {
+    const patientId = await createPatient(app, token);
+    const stamp = Date.now();
+    const older = await createMedication(`recents-older-${stamp}`);
+    const newer = await createMedication(`recents-newer-${stamp}`);
+    const ancient = await createMedication(`recents-ancient-${stamp}`);
+
+    await logDose(patientId, { performedAt: daysAgo(3), medicationId: older, amountMg: 100 });
+    await logDose(patientId, { performedAt: daysAgo(1), medicationId: newer, amountMg: 200 });
+    await logDose(patientId, { performedAt: daysAgo(20), medicationId: ancient, amountMg: 300 });
+
+    const body = await recents(patientId);
+    expect(body.map((r) => r.medicationId)).toEqual([newer, older]);
+  });
+
+  it('includes an active schedule\'s medication with null last* fields, ordered last', async () => {
+    const patientId = await createPatient(app, token);
+    const stamp = Date.now();
+    const givenId = await createMedication(`recents-given-${stamp}`);
+    const scheduledId = await createMedication(`recents-scheduled-${stamp}`);
+
+    await logDose(patientId, { performedAt: new Date().toISOString(), medicationId: givenId, amountMg: 100 });
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set(auth())
+      .send({
+        type: 'medication_dose',
+        label: 'Amoxicillin course',
+        medicationId: scheduledId,
+        doseMg: 250,
+        frequencyHours: 8,
+        startAt: new Date().toISOString(),
+      })
+      .expect(201);
+
+    const body = await recents(patientId);
+    expect(body.map((r) => r.medicationId)).toEqual([givenId, scheduledId]);
+    expect(body[1]).toMatchObject({
+      medicationId: scheduledId,
+      lastDoseAt: null,
+      lastAmountMg: null,
+      lastAmountMl: null,
+      lastEmbodimentId: null,
+      lastEmbodimentLabel: null,
+      nextAllowedAt: null,
+      isAtypicalLastDose: false,
+      onActiveSchedule: true,
+    });
+  });
+
+  // The wrong-chart guard, and the reason this endpoint exists per patient rather than per
+  // household (api.md; frontend.md → "Patient identity"). Two children on the same medication at
+  // different weight-based amounts is the normal concurrent-illness case.
+  it('never merges another patient\'s doses of the same medication', async () => {
+    const sibling = await createPatient(app, token);
+    const other = await createPatient(app, token);
+    const medicationId = await createMedication(`recents-shared-${Date.now()}`);
+
+    await logDose(sibling, { performedAt: new Date().toISOString(), medicationId, amountMg: 160 });
+    await logDose(other, { performedAt: new Date().toISOString(), medicationId, amountMg: 320 });
+
+    expect((await recents(sibling))[0].lastAmountMg).toBe(160);
+    expect((await recents(other))[0].lastAmountMg).toBe(320);
+  });
+
+  it('returns an empty array for a patient with no doses and no schedules', async () => {
+    const patientId = await createPatient(app, token);
+    expect(await recents(patientId)).toEqual([]);
+  });
+
+  // Non-disclosure, not authorization: a caregiver off the care team must not learn the patient
+  // exists (CLAUDE.md → Access control).
+  it('404s PATIENT_NOT_FOUND for a caller who is not on the care team', async () => {
+    const patientId = await createPatient(app, token);
+    const stranger = await registerAndLogin(app);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/patients/${patientId}/recent-medications`)
+      .set('Authorization', `Bearer ${stranger.token}`)
+      .expect(404);
+    expect(res.body.message).toBe('PATIENT_NOT_FOUND');
+  });
+});

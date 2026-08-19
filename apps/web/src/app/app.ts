@@ -1,29 +1,67 @@
-import { Component, HostListener, OnInit, inject, signal, computed } from '@angular/core';
-import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
+import { Component, HostListener, OnInit, effect, inject, signal, computed } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from './core/auth.service';
+import { ApiClientService } from './core/api-client.service';
+import { QuickLogSheetComponent } from './quick-log/quick-log-sheet.component';
+import { Patient } from '@salud/shared/types';
+
+/** `/patients/<uuid>` — anything deeper is still inside that patient's hub. */
+const HUB_PATH = /^\/patients\/([0-9a-fA-F-]{36})(\/|$)/;
 
 @Component({
-  imports: [RouterOutlet, RouterLink, CommonModule],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, CommonModule, QuickLogSheetComponent],
   selector: 'app-root',
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
 export class App implements OnInit {
   private readonly auth = inject(AuthService);
+  private readonly api = inject(ApiClientService);
   private readonly router = inject(Router);
 
   protected title = 'web';
   protected menuOpen = signal(false);
+  protected quickLogOpen = signal(false);
   protected currentPath = signal<string>('');
+  protected patients = signal<Patient[]>([]);
   protected user = this.auth.user;
   protected isAuthed = computed(() => !!this.user());
   protected isLoginRoute = computed(() => this.currentPath().startsWith('/login'));
   protected isRegisterRoute = computed(() => this.currentPath().startsWith('/register'));
 
+  /**
+   * Inside a patient hub the `+` is already scoped to that patient, so Quick Log skips the "who is
+   * this for?" step entirely — the hub answered it (frontend.md → "Information architecture (v2)"
+   * → App shell). Read off the URL rather than from PatientHubStore, which is provided on the
+   * `patients/:id` route and so is not injectable from the shell above it.
+   */
+  protected hubPatientId = computed(() => HUB_PATH.exec(this.currentPath())?.[1] ?? null);
+
+  private loadedPatientsFor: string | null = null;
+
+  constructor() {
+    // The rail's patient list follows the *session*, not the page load. The shell is constructed
+    // on the login screen, where there is no session yet, so fetching only in ngOnInit left the
+    // rail empty for the whole of the first visit — until a full reload. Keyed on the user id so
+    // a profile edit (which re-emits the same user) doesn't refetch.
+    effect(() => {
+      const user = this.user();
+      if (!user) {
+        this.patients.set([]);
+        this.loadedPatientsFor = null;
+        return;
+      }
+      if (this.loadedPatientsFor === user.id) return;
+      this.loadedPatientsFor = user.id;
+      this.loadPatients();
+    });
+  }
+
   ngOnInit(): void {
     if (this.auth.token && !this.user()) {
       this.auth.me().subscribe({
+        // The effect above picks the patient list up once `user` lands.
         error: () => {
           // If token invalid, log out silently
           this.auth.logout();
@@ -36,6 +74,14 @@ export class App implements OnInit {
         this.currentPath.set(evt.urlAfterRedirects);
         this.menuOpen.set(false);
       }
+    });
+  }
+
+  /** The rail's patient list. A failure leaves the rail's other links working rather than erroring. */
+  private loadPatients(): void {
+    this.api.get<Patient[]>('/patients').subscribe({
+      next: (res) => this.patients.set(res),
+      error: () => this.patients.set([]),
     });
   }
 
@@ -54,10 +100,21 @@ export class App implements OnInit {
   @HostListener('document:keydown.escape')
   onEscape() {
     this.closeMenu();
+    this.closeQuickLog();
+  }
+
+  openQuickLog() {
+    this.menuOpen.set(false);
+    this.quickLogOpen.set(true);
+  }
+
+  closeQuickLog() {
+    this.quickLogOpen.set(false);
   }
 
   logout() {
     this.auth.logout();
     this.menuOpen.set(false);
+    this.quickLogOpen.set(false);
   }
 }

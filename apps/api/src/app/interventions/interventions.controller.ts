@@ -51,6 +51,16 @@ export class InterventionsController {
     });
   }
 
+  // Declared before `patients/:patientId/interventions/:id` only for readability — Nest matches on
+  // the literal path segment, so there is no ordering hazard here.
+  @Get('patients/:patientId/recent-medications')
+  async recentMedications(
+    @Request() req: any,
+    @Param('patientId', new ParseUUIDPipe({ version: '4' })) patientId: string,
+  ) {
+    return await this.interventions.recentMedications(patientId, req.user.userId);
+  }
+
   @Get('patients/:patientId/interventions/:id')
   async getForPatient(
     @Request() req: any,
