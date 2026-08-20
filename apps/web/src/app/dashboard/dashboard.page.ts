@@ -422,6 +422,10 @@ interface SickCard {
       }
       .row-link {
         flex: 1;
+        /* A flex item's min-width resolves to auto, i.e. its longest unbreakable word — so a schedule
+           label refused to shrink and pushed "Log dose" past the right edge of a 320px screen.
+           This is the row that says a dose is overdue; it may not be the one that overflows. */
+        min-width: 0;
         text-align: left;
         background: none;
         border: none;
@@ -432,6 +436,16 @@ interface SickCard {
         flex-direction: column;
         gap: 0.2rem;
         padding: 0;
+      }
+      /* And when the label genuinely cannot share a line, the button drops below it rather than
+         off the screen. */
+      @media (max-width: 560px) {
+        .schedule-list li {
+          flex-wrap: wrap;
+        }
+        .schedule-list li > .secondary.small {
+          margin-left: auto;
+        }
       }
       .row-main {
         display: flex;

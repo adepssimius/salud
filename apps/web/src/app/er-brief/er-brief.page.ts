@@ -155,7 +155,13 @@ import {
             <h2>Current medication situation</h2>
             <!-- Six columns have a ~414px intrinsic minimum, so at 375px the page itself scrolled
                  sideways and the "next allowed" column went off the edge -- on the screen most
-                 likely opened one-handed in a waiting room. Scroll the table, not the page. -->
+                 likely opened one-handed in a waiting room. Scroll the table, not the page.
+                 Under 560px it stops being a table at all and each schedule becomes a labelled
+                 block: six columns squeezed into 390px wrapped every cell onto three lines, which
+                 is a table only in the markup. Print still gets the real one (er-brief.md ->
+                 "the medication-situation table must not force the page to scroll sideways on a
+                 phone... a paramedic reads a printout in columns"), which is why data-label
+                 duplicates each <th> rather than replacing it. -->
             <div class="table-scroll">
             <table>
               <thead>
@@ -163,12 +169,12 @@ import {
               </thead>
               <tbody>
                 <tr *ngFor="let s of b.body.activeSchedules">
-                  <td>{{ s.label }}</td>
-                  <td>{{ s.medicationName || '—' }}</td>
-                  <td>{{ s.lastDoseMg !== null ? (s.lastDoseMg + ' mg') : '—' }}</td>
-                  <td>{{ s.lastDoseMgPerKg !== null ? s.lastDoseMgPerKg : '—' }}</td>
-                  <td>{{ s.lastDoseAt ? (s.lastDoseAt * 1000 | date: 'short') : '—' }}</td>
-                  <td>{{ s.nextAllowedAt ? (s.nextAllowedAt * 1000 | date: 'short') : '—' }}</td>
+                  <td class="cell-primary">{{ s.label }}</td>
+                  <td data-label="Medication">{{ s.medicationName || '—' }}</td>
+                  <td data-label="Last dose">{{ s.lastDoseMg !== null ? (s.lastDoseMg + ' mg') : '—' }}</td>
+                  <td data-label="mg/kg">{{ s.lastDoseMgPerKg !== null ? s.lastDoseMgPerKg : '—' }}</td>
+                  <td data-label="When">{{ s.lastDoseAt ? (s.lastDoseAt * 1000 | date: 'short') : '—' }}</td>
+                  <td data-label="Next allowed">{{ s.nextAllowedAt ? (s.nextAllowedAt * 1000 | date: 'short') : '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -343,6 +349,9 @@ import {
         border-radius: var(--radius-control);
         font-weight: 700;
         cursor: pointer;
+        /* Copy and Revoke came out 23px. Revoke destroys a link someone may already have handed
+           to a clinician, so it is the last control in the app that should be a near miss. */
+        min-height: 1.5rem;
       }
       .tiny {
         padding: 0.25rem 0.55rem;
@@ -365,13 +374,9 @@ import {
       .page.flash .protocol-banner {
         font-size: 1.3rem;
       }
-      .table-scroll {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .table-scroll table {
-        min-width: 414px;
-      }
+      /* .table-scroll (wrapper, min-width, and the phone stacking) is the global vocabulary in
+         styles.css now — the shared brief needed the identical rules, and the phone override has to
+         beat this page's own min-width, which a local copy would not. */
       /* Paper only — see the footer's comment in the template. */
       .print-footer {
         display: none;

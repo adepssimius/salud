@@ -32,14 +32,22 @@ import { RouterLink } from '@angular/router';
         flex-direction: column;
         gap: 0.75rem;
       }
+      /* The padding belongs to the anchor, not the li. On the li it drew a row-shaped box whose
+         tappable area was only the words inside it — 19px tall, and a tap on the obvious-looking
+         rest of the row did nothing. Now the anchor fills the row it appears to be. */
       .row-list li {
-        padding: 0.6rem 0.75rem;
         border-radius: var(--radius-input);
         border: 1px solid var(--border);
       }
       a.link {
+        display: block;
+        padding: 0.7rem 0.75rem;
         text-decoration: none;
         font-weight: 600;
+      }
+      a.link:hover {
+        background: var(--surface-raised);
+        border-radius: var(--radius-input);
       }
     `,
   ],

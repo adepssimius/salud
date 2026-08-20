@@ -109,11 +109,11 @@ import { BriefCareDocumentsComponent } from './brief-care-documents.component';
             </thead>
             <tbody>
               <tr *ngFor="let sc of s.payload.body.activeSchedules">
-                <td>{{ sc.label }}</td>
-                <td>{{ sc.medicationName || '—' }}</td>
-                <td>{{ sc.lastDoseMg !== null ? (sc.lastDoseMg + ' mg') : '—' }}</td>
-                <td>{{ sc.lastDoseMgPerKg ?? '—' }}</td>
-                <td>{{ sc.nextAllowedAt ? (sc.nextAllowedAt * 1000 | date: 'short') : '—' }}</td>
+                <td class="cell-primary">{{ sc.label }}</td>
+                <td data-label="Medication">{{ sc.medicationName || '—' }}</td>
+                <td data-label="Last dose">{{ sc.lastDoseMg !== null ? (sc.lastDoseMg + ' mg') : '—' }}</td>
+                <td data-label="mg/kg">{{ sc.lastDoseMgPerKg ?? '—' }}</td>
+                <td data-label="Next allowed">{{ sc.nextAllowedAt ? (sc.nextAllowedAt * 1000 | date: 'short') : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -144,6 +144,15 @@ import { BriefCareDocumentsComponent } from './brief-care-documents.component';
         gap: 1rem;
         color: #e2e8f0;
         padding: 1.5rem;
+      }
+      /* This route renders inside the app shell, which already provides a gutter, so the two
+         stacked to 75px of a 390px screen. The shell's is enough on a phone; the extra inset is a
+         desktop nicety, not a structural one. */
+      @media (max-width: 560px) {
+        .page {
+          padding-inline: 0;
+          padding-block: 0.5rem;
+        }
       }
       .error {
         font-size: 1.1rem;
@@ -207,8 +216,6 @@ import { BriefCareDocumentsComponent } from './brief-care-documents.component';
         font-size: 0.9rem;
       }
       table {
-        width: 100%;
-        border-collapse: collapse;
         font-size: 0.9rem;
       }
       th,
@@ -217,13 +224,9 @@ import { BriefCareDocumentsComponent } from './brief-care-documents.component';
         padding: 0.4rem 0.5rem;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
-      .table-scroll {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .table-scroll table {
-        min-width: 414px;
-      }
+      /* Wrapper, width and the phone stacking come from the global .table-scroll in styles.css —
+         the authenticated brief had the same rules, and only one of them can own the phone
+         override without a specificity fight. */
       /* This page had no print styles at all. It needs them now that the table scrolls -- and it
          is the copy most likely to be printed, being the one handed to a clinician. */
       .print-footer {
