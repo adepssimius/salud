@@ -41,8 +41,11 @@ describe('EpisodeAttachmentComponent', () => {
     const fixture = render([{ id: 'ep1', name: 'Fever – Aug 2026' }], ['ep1']);
     const el = fixture.nativeElement as HTMLElement;
     // The whole phrase, not its halves: asserting 'Adding to' and the name separately passes
-    // happily on "Adding toFever – Aug 2026", which is what Angular's whitespace collapsing
-    // actually rendered until the &ngsp; in the template.
+    // happily on "Adding toFever – Aug 2026", which is what the chip actually rendered for a
+    // while. The cause was not whitespace collapsing (the &ngsp; that used to sit here never
+    // helped) — .pill is an inline-flex box and flex strips collapsible white space off the ends
+    // of a text item. The &nbsp; in the template is what survives it. JS \s matches U+00A0, so
+    // the normalization below still reduces it to the plain space this asserts.
     expect(el.querySelector('.pill')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
       'Adding to Fever – Aug 2026',
     );

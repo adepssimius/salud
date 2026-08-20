@@ -32,10 +32,15 @@ export interface EpisodeOption {
     <div class="episode-attachment" *ngIf="episodes.length || createNew">
       <ng-container *ngIf="isSingle(); else picker">
         <div class="attached" *ngIf="isSelected(episodes[0].id); else reattach">
-          <!-- &ngsp; not a plain space: Angular's default whitespace collapsing trims the trailing
-               space off this text node, and the chip renders "Adding toFever". -->
+          <!-- &nbsp;, and it has to be that rather than a plain space or the &ngsp; that was here
+               before. The chip rendered "Adding toFever" and whitespace collapsing was never the
+               cause: .pill is an inline-flex box, so this text and the <strong> are two flex items,
+               and flex strips *collapsible* white space from the ends of a text item. A no-break
+               space is not collapsible, so it survives — and unlike a CSS gap it is a real
+               character, which is what a screen reader reads out and what copies to the clipboard.
+               The spec asserts the whole phrase for exactly this reason. -->
           <span class="pill">
-            Adding to&ngsp;<strong>{{ episodes[0].name }}</strong>
+            Adding to&nbsp;<strong>{{ episodes[0].name }}</strong>
           </span>
           <button
             type="button"
@@ -107,8 +112,18 @@ export interface EpisodeOption {
         display: flex;
         align-items: center;
         gap: 0.35rem;
+        /* An episode name is the caregiver's own sentence and can be long. On a phone the chip and
+           its detach button wrap rather than run off the form. */
+        flex-wrap: wrap;
       }
+      /* A bare ✕ glyph measured 11px across. The character stays small; the button around it is
+         what the thumb has to find, and detaching the wrong episode is a real cost. */
       .chip-remove {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.75rem;
+        min-height: 1.75rem;
         font-size: 0.85rem;
         line-height: 1;
       }

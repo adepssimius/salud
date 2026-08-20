@@ -134,8 +134,12 @@ import { Analyte } from '@salud/shared/types';
         flex-wrap: wrap;
         margin: 0.6rem 0;
       }
+      /* .pill is a static label shape; worn by a button it also has to be a target, and at 22px
+         tall it was under the 24px minimum. */
       .kind-filter .pill {
         cursor: pointer;
+        min-height: 1.75rem;
+        padding-inline: 0.7rem;
         border: 1px solid var(--border);
         background: transparent;
         color: inherit;

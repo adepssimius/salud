@@ -77,6 +77,14 @@
   --radius-control: 10px;
   --radius-input: 8px;
   --radius-pill: 999px;
+
+  /*
+   * The shell's side gutter, as a token because two files need to agree on it: app.css sets the
+   * padding with it, and anything that wants to bleed to the screen edge (the hub's tab strip)
+   * cancels it with the same value. The phone override lives in the phone block at the foot of
+   * this file, so both sides move together.
+   */
+  --shell-gutter: 1.5rem;
 }
 
 /*
@@ -128,6 +136,9 @@
   font-weight: 700;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+  /* 44px, the size a thumb actually hits. Padding alone left the shorter labels ("Add", "Temp")
+     at 38px, and every one of those is on a path someone walks one-handed at 3 AM (P7). */
+  min-height: 2.75rem;
 }
 
 .primary {
@@ -152,6 +163,40 @@
   box-shadow: var(--accent-glow);
 }
 
+/*
+ * Text-shaped controls: buttons that read as prose. "Show chart", "← Patient", a journal row's link
+ * through to its event, an episode divider, an attachment link. They came out 15–21px tall, which is
+ * a miss waiting to happen on a feed of forty rows scrolled with a thumb.
+ *
+ * 2.75rem would be wrong for these — `.link` is used inline inside sentences (the ER Brief's is),
+ * and a 44px inline-block would space the surrounding prose out. WCAG 2.2's 24px minimum is the
+ * right floor, bought with vertical padding so the text stays on its own baseline. Full-size targets
+ * stay where a control is unmistakably a control: the buttons above, the chips, the bottom bar.
+ *
+ * Not inside the phone media query, twice over: a 768px tablet is a touch device that would
+ * otherwise be excluded, and the 24px minimum is an accessibility floor rather than a small-screen
+ * accommodation. It costs a mouse user nothing.
+ */
+.link,
+.feed-text-link,
+.episode-divider,
+.feed-attachments a {
+  padding-block: 0.3rem;
+  min-height: 1.5rem;
+}
+
+/* The divider is already a full-width row, so the padding alone clears 24px; the tightened margin
+   keeps that padding from opening a gap between the days it separates. */
+.episode-divider {
+  margin-block: 0.5rem 0.15rem;
+}
+
+/* A sick card's episode chip is a link into that episode, not a label — one of the few controls on
+   the screen this product exists for, and it measured 22px. */
+.episode-pill {
+  min-height: 1.75rem;
+}
+
 /* ---- form controls ----------------------------------------------------- */
 
 input,
@@ -162,6 +207,33 @@ textarea {
   border: 1px solid var(--border);
   background: var(--surface-raised);
   color: var(--text);
+  /*
+   * Form controls do not inherit type. Without this they render in the UA's own font at its own
+   * size — ~13.3px of Arial next to the shell's 16px Inter — which is why a `datetime-local`
+   * printed "08/19/2026, 11:32 PM" in a monospace-ish face while its label sat in the page font.
+   *
+   * On iOS it is worse than a mismatch: Safari zooms the viewport when a control under 16px takes
+   * focus, and never zooms back. On the device this product is primarily for (P7), every entry
+   * form was one tap away from a page the caregiver then had to pinch back into place. `inherit`
+   * resolves to the shell's 1rem, so the threshold is cleared by construction rather than by a
+   * magic number that a future type-scale change could quietly drop below it again.
+   */
+  font: inherit;
+  /*
+   * …but never below 16px, whatever it inherits. `em` in a font-size resolves against the parent,
+   * so this reads "the inherited size, floored at 1rem". Login and Profile set `.field { font-size:
+   * 0.95rem }` to quieten their labels, and plain `inherit` handed that 15.2px straight to the
+   * control — back under the zoom threshold by a fifth of a pixel. A floor makes the guarantee
+   * structural rather than something every future type-scale tweak has to remember.
+   */
+  font-size: max(1rem, 1em);
+  /* A thumb-sized target in a dark room (P7), and it makes every control on a form the same
+     height whether the UA gave it a picker button or not. */
+  min-height: 2.75rem;
+  /* Number and date inputs carry an intrinsic `size`, so in a flex or grid cell they refuse to
+     shrink and push their row off a narrow screen. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Only three of thirteen form pages had a focus ring. Hoisting it gives the other ten one. */
@@ -185,6 +257,11 @@ input[type='radio'] {
   margin: 0;
   width: auto;
   accent-color: var(--accent-bright);
+  /* The text-field sizing above would blow a toggle up to a 44px box. The tap target comes from
+     .inline-check's padded label instead, which is what the finger actually lands on. */
+  min-height: 0;
+  /* Both dimensions, or a checkbox in a flex row gets squashed to a sliver by its neighbours. */
+  flex: none;
 }
 
 .field {
@@ -316,6 +393,100 @@ h2 {
   text-transform: capitalize;
   min-width: 90px;
   color: var(--accent-soft);
+}
+
+/* ---- data tables (er-brief, shared-brief) -------------------------------
+   The two brief pages had hand-rolled the identical wrapper. It is global now because the phone
+   treatment below has to override `min-width`, and a page-local copy of that would win on
+   specificity and quietly keep the old behaviour. A page adopting this deletes its own
+   `.table-scroll` rules; the two did not differ.
+
+   Lab import keeps its own `.table-wrap` and is deliberately not folded in here: its table carries
+   a checkbox column, `colspan` panel headings and conditional sub-rows, none of which survive being
+   stacked — and importing a PDF of lab results is a desk task, not a one-handed 3 AM one, so
+   scrolling it sideways is the right trade there. */
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Below this the columns collapse to one word per line and the table stops being readable as
+   columns at all — at which point scrolling it is the better trade. */
+.table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 26rem;
+}
+
+/*
+ * Phones: stop pretending. A five- or six-column table in 390px is three lines of wrapped text per
+ * cell, and the reader has to hold the header row in their head to know which is which. Each row
+ * becomes a labelled block instead, with the first cell as its heading.
+ *
+ * `screen and` is load-bearing: print resolves max-width against the paper's ~816px page box today,
+ * so this would not apply anyway, but the ER Brief's printout is what a paramedic reads in columns
+ * (er-brief.md → Web) and that must not depend on how a UA sizes a print page box.
+ *
+ * Cells opt in by carrying `data-label`. One that doesn't — the row's own name — renders as the
+ * block's heading, which is why the label is not simply generated for every cell.
+ */
+@media screen and (max-width: 560px) {
+  .table-scroll table,
+  .table-scroll tbody,
+  .table-scroll tr,
+  .table-scroll td {
+    display: block;
+  }
+
+  .table-scroll thead {
+    display: none;
+  }
+
+  .table-scroll table {
+    min-width: 0;
+  }
+
+  .table-scroll tr {
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface-sunken);
+  }
+
+  /*
+   * `tr td` rather than `td`, and it is not stylistic. Both brief pages style `th, td` locally,
+   * which Angular emits as `td[_ngcontent-x]` — (0,1,1), the same as `.table-scroll td`, and
+   * component styles are appended after this sheet, so a tie goes to the page. Padding,
+   * text-align and border-bottom would all have kept their table values inside a layout that is
+   * no longer a table. The extra `tr` makes it (0,1,2) and settles it.
+   */
+  .table-scroll tr td {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.15rem 0;
+    border-bottom: none;
+    text-align: right;
+  }
+
+  .table-scroll tr td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: left;
+  }
+
+  /* The row's identity, so it reads as the block's title rather than as a value with a missing
+     label. */
+  .table-scroll tr td.cell-primary {
+    display: block;
+    margin-bottom: 0.3rem;
+    text-align: left;
+    font-weight: 700;
+  }
 }
 
 /* ---- tab bar (patient hub) ---------------------------------------------
@@ -1016,4 +1187,215 @@ h2 {
 .watermark-ack {
   padding: 0.35rem 0.75rem;
   font-size: 0.8rem;
+}
+
+/* ==========================================================================
+   Phone layout
+   ==========================================================================
+
+   The product's founding scene is a parent logging a dose one-handed, in the dark, on a phone
+   (product.md → origin story; P7). The vocabulary above was written desktop-first and then made to
+   survive a narrow screen; this block is where it is actually *fitted* to one.
+
+   560px rather than a device width, because it is the breakpoint two pages already stack their
+   detail rows at, and one number is easier to reason about than three. Everything here is a
+   phone-only override of a rule defined above — nothing new is introduced, so a rule can always be
+   read as "the desktop shape, adjusted" rather than as a second design.
+
+   Note the specificity rule from the top of this file: a page's own `.card-header` (0,2,0) still
+   beats these (0,1,0), media query or not. That is the intended escape hatch — a page with a
+   genuinely different narrow-screen shape overrides locally — but it also means a global fix here
+   is silently inert for any page that already declares the same property. */
+
+@media (max-width: 560px) {
+  :root {
+    /* Every 8px recovered here is 8px of content. At 1.5rem the shell and a card's own padding
+       together took 88px of a 390px screen — 23% of the width, before a word of the record. */
+    --shell-gutter: 0.85rem;
+  }
+
+  /* ---- surfaces ---- */
+
+  .card {
+    padding: 0.9rem;
+  }
+
+  /*
+   * The desktop shape puts a title and its action button on one line. At this width that leaves
+   * the description a ~40% column and spells it down three ragged lines beside a two-line button
+   * ("Manage care team / access and / relationships." next to "Add / caregiver"). Stacked, both
+   * get the full width and the button becomes a real target.
+   *
+   * A one-column grid rather than `flex-direction: column`, and the reason is six pages: they all
+   * declare `.card-header { align-items: center }` to centre the title against its button in the
+   * desktop *row*, and that declaration beats this one on specificity. Turned into a column it
+   * keeps applying — on the other axis — and centres every child horizontally, so the button ends
+   * up floating in the middle at half width. In a grid, `align-items` aligns each item within its
+   * own auto-sized row track, which is a no-op, and `justify-items` (stretch by default) is what
+   * decides the width. Same result, and the six pages need no edit to say what they already meant.
+   */
+  .card-header {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .header-actions > * {
+    flex: 1 1 8rem;
+  }
+
+  /* …except a destructive one. Stretching Delete to the full width put the single irreversible
+     control on the Settings tab directly under the card's title, larger than Save — the opposite
+     of the emphasis it should carry. It keeps its own width and sits at the start. */
+  .card-header > .danger,
+  .header-actions > .danger {
+    flex: none;
+    justify-self: start;
+  }
+
+  /* ---- forms ---- */
+
+  /* Two buttons hugging the right edge is a mouse layout: it puts the most-used control of the
+     screen in the hardest corner to reach and sizes it to its label. Sharing the row full-width
+     keeps the reading order (Cancel then Save) while making both thumb-sized. */
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .actions > button,
+  .actions > .primary,
+  .actions > .secondary {
+    flex: 1 1 9rem;
+  }
+
+  /* The tap target for a checkbox is its label, not the 16px box — so the label has to be big
+     enough to be one. */
+  .inline-check {
+    min-height: 2.75rem;
+  }
+
+  /* ---- tab bar ---- */
+
+  /*
+   * Six tabs wrap to three ragged rows at this width, which reads as three unrelated groups rather
+   * than one strip and costs ~90px of vertical space above every hub tab's content. A single
+   * swipeable row is the pattern a phone user already knows.
+   *
+   * It bleeds to the screen edge deliberately: a strip that ends flush with the last visible tab
+   * looks complete, and the reader never discovers Settings. Running under the gutter leaves the
+   * next tab visibly clipped, which is what says "there is more this way".
+   */
+  .tab-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * var(--shell-gutter));
+    padding-inline: var(--shell-gutter);
+    scroll-padding-inline: var(--shell-gutter);
+    /* Momentum scrolling on iOS, and it stops a horizontal swipe on the strip from being claimed
+       by the page's vertical scroll. */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-link {
+    /* Without this the flex container shrinks each tab to fit and the strip never scrolls —
+       "Care team" would break onto two lines instead. */
+    flex: none;
+    scroll-snap-align: start;
+    min-height: 2.5rem;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* ---- event lists ---- */
+
+  /*
+   * `.events li` is a flex row of timestamp, kind and summary, each column reserved by a min-width.
+   * At this width the summary can never fit beside them, so it wraps to its own line and the
+   * reserved columns leave a gap the width of "Observation" hanging after every row. Two honest
+   * lines — when and what kind, then what happened — say the same thing in less space, and the
+   * rule between rows is what keeps them from reading as one run-on list.
+   */
+  .events li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    /* Overrides the base rule's single 0.6rem: that gap is a column separator, and reused as a row
+       separator it opens the two lines of one event wider than the space between two events. */
+    gap: 0.1rem 0.5rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .events li:last-child {
+    border-bottom: none;
+  }
+
+  .events li > :nth-child(n + 3) {
+    grid-column: 1 / -1;
+  }
+
+  /* The reserved columns are what pushed the summary onto its own line with a gap beside it; on
+     two lines the timestamp and kind size themselves. */
+  .ts,
+  .kind {
+    min-width: 0;
+    font-size: 0.8rem;
+  }
+
+  /* ---- home / sick cards ---- */
+
+  /*
+   * The sparkline is drawn into a viewBox, so widening it costs nothing and buys resolution on the
+   * one curve the screen exists to show — at 180px in a 320px column it was a third of the card's
+   * width and the rest was air. The x-domain stays the fixed 48-hour window, so two cards on the
+   * same screen are still drawn to the same scale and still comparable.
+   *
+   * aspect-ratio rather than a fixed height, because the default preserveAspectRatio would
+   * letterbox a 180×44 drawing inside a 320×56 box and hand back the width just gained.
+   */
+  .spark-plot {
+    flex: 1 1 12rem;
+    min-width: 0;
+    align-items: flex-start;
+  }
+
+  .spark {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    aspect-ratio: 180 / 44;
+  }
+
+  /* The plot no longer sets the row's height by stretching, so the scale has to ask for it — its
+     two labels are positioned by space-between and would otherwise collapse together. */
+  .spark-scale {
+    align-self: stretch;
+  }
+
+  /* Reading on the left, the button that adds the next one on the right, on the line under the
+     curve they both belong to. */
+  .spark-wrap > .secondary {
+    margin-left: auto;
+  }
+
+  /* ---- type ---- */
+
+  /* Long words in caregiver-entered text — a hyphenated surname, a pasted medication name — are
+     the one thing that can still push a column wider than the screen. */
+  h1,
+  h2,
+  .feed-text,
+  .nb-patient,
+  .sick-name {
+    overflow-wrap: anywhere;
+  }
 }

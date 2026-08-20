@@ -12,8 +12,17 @@
   /* Wider than v1's 960px: the desktop rail takes a column, leaving content near its old width. */
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem 1.5rem 3rem;
+  /* The side value is --shell-gutter (styles.css) rather than a literal, because the hub's tab
+     strip cancels exactly this much to bleed to the screen edge on a phone. The token narrows
+     under 560px; the top does too, since a phone has no vertical room to spare either. */
+  padding: 2rem var(--shell-gutter) 3rem;
   position: relative;
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    padding-top: 1rem;
+  }
 }
 
 /* Clearance for the fixed bottom bar. */
@@ -69,7 +78,12 @@
 .profile {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
+  /* The header's only control, and on a phone the only route to Profile, Manage and Log out — so
+     it gets a full target rather than the 33px its padding alone produced. */
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   padding: 0.35rem 0.65rem;
   border-radius: var(--radius-pill);
   background: var(--surface-raised);
@@ -141,8 +155,10 @@
   display: block;
 }
 
+/* Only when the rail is actually in the DOM — see app.html. Signed out there is one child, and a
+   single child of this grid lands in the 13.5rem track. */
 @media (min-width: 900px) {
-  .app-body {
+  .app-body-railed {
     display: grid;
     grid-template-columns: 13.5rem minmax(0, 1fr);
     gap: 1.5rem;

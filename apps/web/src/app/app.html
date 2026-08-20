@@ -37,7 +37,11 @@
     </nav>
   </header>
 
-  <div class="app-body">
+  <!-- The two-column grid is conditional on the rail, not just on the width: the rail is only
+       rendered when signed in, and a grid with `13.5rem minmax(0, 1fr)` puts its single remaining
+       child in the *first* track. Every signed-out desktop route — login, register, and the public
+       `/brief/:token` a clinician opens — was rendering in a 216px column because of it. -->
+  <div class="app-body" [class.app-body-railed]="isAuthed()">
     <!-- Desktop only (CSS): the patient list stays visible, Home at the top, Manage at the bottom. -->
     <nav class="side-rail" *ngIf="isAuthed()" aria-label="Primary">
       <a routerLink="/dashboard" routerLinkActive="active" class="rail-link">Home</a>

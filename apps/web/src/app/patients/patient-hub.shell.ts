@@ -1,6 +1,7 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { ActivatedRoute, NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter } from 'rxjs/operators';
 import { AuthService } from '../core/auth.service';
 import { formatAge, isWeightStale, weightAgeDays } from '../core/patient-display';
 import { PatientHubStore } from './patient-hub.store';
@@ -50,7 +51,7 @@ import { PatientHubStore } from './patient-hub.store';
 
       <p class="error" *ngIf="store.error()">{{ store.error() }}</p>
 
-      <nav class="tab-bar">
+      <nav class="tab-bar" #tabBar>
         <a class="tab-link" routerLink="journal" routerLinkActive="active">Journal</a>
         <a class="tab-link" routerLink="photos" routerLinkActive="active">Photos</a>
         <a class="tab-link" routerLink="meds" routerLinkActive="active">Meds</a>
@@ -112,11 +113,13 @@ import { PatientHubStore } from './patient-hub.store';
   ],
   providers: [],
 })
-export class PatientHubShell implements OnInit {
+export class PatientHubShell implements OnInit, AfterViewInit {
   protected readonly store = inject(PatientHubStore);
   private readonly auth = inject(AuthService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+
+  @ViewChild('tabBar') private tabBar?: ElementRef<HTMLElement>;
 
   ready = signal(false);
 
@@ -149,6 +152,37 @@ export class PatientHubShell implements OnInit {
     } else {
       this.start(patientId);
     }
+  }
+
+  /**
+   * Keep the active tab on screen.
+   *
+   * Below 560px the tab bar is a single scrolling row rather than three wrapped ones, which buys
+   * back ~90px above every tab's content — but the tab you are actually on can then start off
+   * past the right edge. Landing on Care team showed "Journal Photos Meds History" with nothing
+   * highlighted, which reads as being on no tab at all.
+   *
+   * scrollLeft rather than scrollIntoView: the latter also scrolls the nearest scrollable
+   * ancestor, so arriving at a hub tab would jump the page down past the identity header.
+   */
+  ngAfterViewInit(): void {
+    this.revealActiveTab();
+    this.router.events
+      .pipe(filter((e) => e instanceof NavigationEnd))
+      .subscribe(() => this.revealActiveTab());
+  }
+
+  private revealActiveTab(): void {
+    // A tick, because routerLinkActive applies its class during the change detection run that
+    // follows navigation — read any sooner and the previous tab is still the active one.
+    setTimeout(() => {
+      const bar = this.tabBar?.nativeElement;
+      const active = bar?.querySelector<HTMLElement>('.tab-link.active');
+      if (!bar || !active) return;
+      const overflowRight = active.offsetLeft + active.offsetWidth - (bar.scrollLeft + bar.clientWidth);
+      if (overflowRight > 0) bar.scrollLeft += overflowRight + 16;
+      else if (active.offsetLeft < bar.scrollLeft) bar.scrollLeft = Math.max(0, active.offsetLeft - 16);
+    });
   }
 
   goToErBrief() {

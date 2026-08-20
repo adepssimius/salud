@@ -56,7 +56,9 @@ interface UserSearchResult {
                 <div class="name">{{ member.user.displayName || member.user.email }}</div>
                 <div class="muted small">{{ member.user.email }}</div>
               </td>
-              <td>
+              <!-- data-label carries the column heading for the stacked phone layout, where the
+                   <thead> is hidden and each cell has to name itself. -->
+              <td data-label="Relationship">
                 <select
                   name="role-{{ member.user.id }}"
                   [(ngModel)]="member.role"
@@ -65,7 +67,7 @@ interface UserSearchResult {
                   <option *ngFor="let role of roles" [value]="role">{{ role }}</option>
                 </select>
               </td>
-              <td>
+              <td class="owner-cell">
                 <span class="pill pill-success" *ngIf="member.user.id === store.patient()?.ownedById">Owner</span>
                 <button
                   type="button"
@@ -80,6 +82,7 @@ interface UserSearchResult {
                 <button
                   type="button"
                   class="icon-button"
+                  aria-label="Remove caregiver"
                   [disabled]="member.user.id === store.patient()?.ownedById"
                   (click)="removeCaregiver(member)"
                 >
@@ -177,13 +180,84 @@ interface UserSearchResult {
         background: transparent;
         color: var(--text);
         cursor: pointer;
+        /* A 20px glyph is not a target. The button around it is. */
+        min-width: 2.75rem;
+        min-height: 2.75rem;
+        font-size: 1.1rem;
+      }
+      .icon-button:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+
+      /*
+       * The phone layout: four columns of caregiver, relationship, ownership and a delete button
+       * do not fit in 390px. Unmodified this table measured 470px and took the whole page sideways
+       * with it — the app's only real horizontal-scroll break, and on the tab where a co-parent is
+       * added.
+       *
+       * Each row becomes a card instead. The <thead> goes (a heading row is meaningless once there
+       * is one cell per line) and the cells that are not self-describing name themselves from
+       * data-label. The table markup itself stays: this *is* tabular on a desktop, and print and
+       * screen-reader table semantics both survive a display:block on the parts.
+       */
+      @media (max-width: 560px) {
+        .care-table,
+        .care-table tbody,
+        .care-table tr,
+        .care-table td {
+          display: block;
+        }
+        .care-table thead {
+          display: none;
+        }
+        .care-table tr {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          gap: 0.4rem;
+          /* Room for the delete button, which is pinned to the corner rather than given a row of
+             its own — it is the least-used control here and should not read as a fourth field. */
+          padding: 0.7rem 3rem 0.7rem 0.75rem;
+          margin-bottom: 0.5rem;
+          border: 1px solid var(--border);
+          border-radius: var(--radius-control);
+          background: var(--surface-raised);
+        }
+        .care-table td {
+          padding: 0;
+          border-bottom: none;
+        }
+        .care-table td[data-label]::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 0.2rem;
+          color: var(--text-muted);
+          font-size: 0.8rem;
+        }
+        .care-table select {
+          width: 100%;
+        }
+        /* An empty cell still generates a block, which would leave a gap under rows where the
+           caregiver is neither the owner nor removable. */
+        .care-table .owner-cell:empty {
+          display: none;
+        }
+        .care-table .actions-cell {
+          position: absolute;
+          top: 0.35rem;
+          right: 0.35rem;
+        }
       }
       .tiny {
         padding: 0.35rem 0.6rem;
+        min-height: 2.25rem;
         border: none;
         border-radius: var(--radius-control);
         background: var(--neutral-bg);
         color: var(--text);
+        font: inherit;
+        font-size: 0.85rem;
         font-weight: 700;
         cursor: pointer;
       }
@@ -202,12 +276,33 @@ interface UserSearchResult {
         left: 50%;
         transform: translateX(-50%);
         width: min(520px, 92vw);
+        /* A search that returns eight people used to run the Add button off the bottom of the
+           screen with nothing to scroll — the dialog had no height bound at all. */
+        max-height: 70vh;
+        overflow-y: auto;
         background: var(--bg-elevated);
         border: 1px solid var(--border-strong);
         border-radius: var(--radius-card);
         padding: 1rem;
         z-index: 50;
         box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+      }
+
+      /* A centred dialog on a phone starts under the notch and ends above the keyboard. The same
+         bottom sheet the Quick Log uses is the shape this device already expects, and it puts the
+         action row inside thumb reach instead of at the top of the screen. */
+      @media (max-width: 560px) {
+        .modal {
+          top: auto;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          width: auto;
+          transform: none;
+          max-height: 85vh;
+          border-radius: var(--radius-card) var(--radius-card) 0 0;
+          padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+        }
       }
       .modal-header {
         display: flex;
@@ -229,6 +324,15 @@ interface UserSearchResult {
       .inline {
         display: flex;
         gap: 0.5rem;
+      }
+      /* An email field carries an intrinsic width of ~20 characters, so without this the Search
+         button beside it is pushed past the sheet's edge on a phone. */
+      .inline input {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .inline .secondary {
+        flex: none;
       }
       .search-results {
         list-style: none;
