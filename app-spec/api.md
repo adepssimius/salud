@@ -63,8 +63,13 @@ string and silently violates this rule.
     `/login?error=oidc_state` or `/login?error=oidc_forbidden`.
 - `POST /api/auth/oidc/exchange`
   - Unguarded. Body: `{ code }` — the one-time handoff code from the callback redirect above.
-    Response: `{ token, user }`, identical shape to login/register. Answers `404
-    OIDC_HANDOFF_NOT_FOUND` for an unknown, expired (~60s), or already-used code.
+    Response: `{ token, user }`, identical shape to login/register. The JWT is minted here, not at
+    the callback, so the parked handoff never holds a credential (security.md → "OIDC login").
+  - A refusal is a `404` naming which of three things happened, never a single collapsed code:
+    `OIDC_HANDOFF_EXPIRED` (issued, but more than five minutes ago), `OIDC_HANDOFF_ALREADY_USED`
+    (single-use, and already spent), `OIDC_HANDOFF_NOT_FOUND` (never issued, or swept). The three
+    must keep distinct sentences in `error-display.ts`, and the `/oidc-complete` page's generic
+    fallback must not reuse any of them — see the note under "Error codes".
 
 ## Resource shape and access control
 
@@ -1235,7 +1240,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | Code | Status | Where |
 | --- | --- | --- |
 | `PATIENT_NOT_FOUND` | 404 | any patient-scoped route, non-member or unknown id |
-| `USER_NOT_FOUND` | 400 / 404 / 401 | 400 adding a caregiver with a `userId` that no longer resolves (stale search result); 404 transferring patient ownership to an unknown user; 401 `GET /users/me` when the account no longer exists |
+| `USER_NOT_FOUND` | 400 / 404 / 401 | 400 adding a caregiver with a `userId` that no longer resolves (stale search result); 404 transferring patient ownership to an unknown user; 401 `GET /users/me` when the account no longer exists; 401 `POST /api/auth/oidc/exchange` if the account vanished mid-login (defensive — the `oidc_handoffs` foreign key prevents it) |
 | `EPISODE_NOT_FOUND` | 404 | episode routes, and episode ids referenced from observations/interventions |
 | `OBSERVATION_NOT_FOUND` | 404 | observation get/update |
 | `INTERVENTION_NOT_FOUND` | 404 | intervention get/update |
@@ -1251,7 +1256,9 @@ sentence silently falls back to that call site's generic message rather than rea
 | `EMAIL_TAKEN` | 409 | registration with an email already in use |
 | `INVALID_CREDENTIALS` | 401 | login with a wrong email/password pair |
 | `PASSWORD_AUTH_DISABLED` | 403 | `POST /api/auth/register`\|`login` once OIDC is the active login path |
-| `OIDC_HANDOFF_NOT_FOUND` | 404 | `POST /api/auth/oidc/exchange` with an unknown, expired, or already-used handoff code |
+| `OIDC_HANDOFF_NOT_FOUND` | 404 | `POST /api/auth/oidc/exchange` with a handoff code the server never issued (or has swept) |
+| `OIDC_HANDOFF_EXPIRED` | 404 | `POST /api/auth/oidc/exchange` with a handoff code older than its five-minute TTL |
+| `OIDC_HANDOFF_ALREADY_USED` | 404 | `POST /api/auth/oidc/exchange` with a handoff code that has already been redeemed |
 | `SELF_RELATIONSHIP_ALREADY_EXISTS` | 400 | care team: adding a second "self" relationship |
 | `CANNOT_REMOVE_OWNER` | 400 | care team: removing the patient's owner |
 | `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation create with an empty `entries` array (interventions have no `entries` field) |

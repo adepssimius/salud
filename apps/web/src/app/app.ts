@@ -59,7 +59,15 @@ export class App implements OnInit {
   }
 
   ngOnInit(): void {
-    if (this.auth.token && !this.user()) {
+    // Skipped while an OIDC sign-in is mid-flight. A caregiver signing in again usually still has
+    // yesterday's expired JWT in localStorage, and this bootstrap would spend it on /users/me at
+    // the same moment /oidc-complete is exchanging its handoff code. The 401 comes back, the
+    // interceptor treats it as a dead session and calls logout() — which clears the token the
+    // exchange just stored and bounces the caregiver to /login off a sign-in that had in fact
+    // succeeded. There is nothing to bootstrap on that route anyway: it establishes the session
+    // itself, and the `effect` in the constructor picks the user up the moment it lands.
+    const signInInFlight = (this.router.url ?? '').startsWith('/oidc-complete');
+    if (this.auth.token && !this.user() && !signInInFlight) {
       this.auth.me().subscribe({
         // The effect above picks the patient list up once `user` lands.
         error: () => {

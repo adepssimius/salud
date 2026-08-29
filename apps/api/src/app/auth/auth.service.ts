@@ -93,14 +93,17 @@ export class AuthService {
 
   /**
    * Called from the OIDC callback (auth/oidc/oidc.controller.ts) once the ID token is verified
-   * and the required-group check has passed. Matches an existing account first by `sub`, then by
-   * `email`, then provisions a new one — see security.md → "OIDC login" for why `sub` is
-   * authoritative once matched (an LDAP email edit shouldn't silently create a duplicate account
-   * or misroute an old email if it's later reused) while `email` is still the right key the very
-   * first time a subject is seen, to link a pre-existing password-registered account rather than
-   * duplicate it.
+   * and the required-group check has passed. Returns the user, not a session — the callback has
+   * nowhere safe to put a JWT (security.md → "OIDC login": the bearer token never travels in a
+   * redirect), so `issueSessionForUserId` mints it at redemption instead.
+   *
+   * Matches an existing account first by `sub`, then by `email`, then provisions a new one — see
+   * security.md → "OIDC login" for why `sub` is authoritative once matched (an LDAP email edit
+   * shouldn't silently create a duplicate account or misroute an old email if it's later reused)
+   * while `email` is still the right key the very first time a subject is seen, to link a
+   * pre-existing password-registered account rather than duplicate it.
    */
-  async loginOrProvisionOidc(claims: { sub: string; email: string; name?: string }) {
+  async resolveOidcUser(claims: { sub: string; email: string; name?: string }) {
     const db = this.db.db as any;
 
     const bySubject = await db
@@ -114,14 +117,14 @@ export class AuthService {
         await db.update(users).set({ email: claims.email }).where(eq(users.id, user.id));
         user.email = claims.email;
       }
-      return this.issueToken(this.pickUser(user));
+      return this.pickUser(user);
     }
 
     const byEmail = await db.select().from(users).where(eq(users.email, claims.email)).limit(1);
     if (byEmail.length) {
       const user = byEmail[0];
       await db.update(users).set({ oidcSubject: claims.sub }).where(eq(users.id, user.id));
-      return this.issueToken(this.pickUser(user));
+      return this.pickUser(user);
     }
 
     const id = randomUUID();
@@ -133,7 +136,28 @@ export class AuthService {
       ...AuthService.DEFAULT_PREFS,
     };
     await db.insert(users).values({ ...newUser, oidcSubject: claims.sub });
-    return this.issueToken(newUser);
+    return newUser;
+  }
+
+  /**
+   * Mints the session for an already-resolved user id — the redemption half of the OIDC handoff
+   * (auth/oidc/oidc.service.ts). Splitting it from `resolveOidcUser` above is what lets the parked
+   * handoff row hold a user id and no credential: the JWT is created here, when the SPA actually
+   * redeems its code, so the token's day starts when the caregiver gets the session rather than
+   * when Authelia redirected, and nothing bearer-shaped is ever written to the database.
+   *
+   * USER_NOT_FOUND here is defensive rather than a live path: `oidc_handoffs.user_id` is a foreign
+   * key with no cascade, so an account cannot be deleted while one of its handoff rows is still
+   * around, and once the row is swept the code is unredeemable anyway. It is not reachable by
+   * guessing a code either — the caller has already matched a live, unredeemed, unexpired row.
+   */
+  async issueSessionForUserId(userId: string) {
+    const db = this.db.db as any;
+    const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!rows.length) {
+      throw new UnauthorizedException('USER_NOT_FOUND');
+    }
+    return this.issueToken(this.pickUser(rows[0]));
   }
 
   private issueToken(user: {

@@ -49,4 +49,5 @@ export const {
   advisories,
   erBriefSnapshots,
   revisions,
+  oidcHandoffs,
 } = schema;

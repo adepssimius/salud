@@ -28,9 +28,19 @@ script:post-response {
 docs {
   Exchanges the one-time handoff code from GET auth/oidc/callback's redirect
   (/oidc-complete?code=...) for the real session -- the JWT itself never appears in that redirect
-  (security.md → "OIDC login"). The code is single-use and expires in about a minute, so this only
-  works run manually right after walking the login flow in a browser and copying the code out of
-  the final redirect's query string.
+  (security.md → "OIDC login"). The code is single-use and expires five minutes after the callback
+  issued it, so this only works run manually right after walking the login flow in a browser and
+  copying the code out of the final redirect's query string.
+
+  Run it twice with the same code to see single-use enforced: the second call answers 404
+  OIDC_HANDOFF_ALREADY_USED. A code the server never issued answers 404 OIDC_HANDOFF_NOT_FOUND,
+  and one presented after its five minutes answers 404 OIDC_HANDOFF_EXPIRED. Those are three
+  distinct codes on purpose -- they were one until a two-replica handoff outage proved that
+  collapsing them makes the failure unreadable from the screen.
+
+  The handoff lives in the oidc_handoffs table, not in the serving pod's memory, so it does not
+  matter which replica answers this versus which one answered the callback. That is the whole
+  point: with salud-api on replicas: 2 an in-process store failed roughly half of all logins.
 }
 
 settings {

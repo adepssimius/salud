@@ -492,3 +492,28 @@ export const revisions = sqliteTable('revisions', {
     .references(() => users.id),
   editedAt: integer('edited_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
+
+// The one-time code the OIDC callback hands the browser, redeemed by POST /api/auth/oidc/exchange
+// (security.md → "OIDC login"). This was an in-memory Map on OidcService until salud-api went to
+// replicas: 2 — the callback and the exchange are two independent HTTP requests, load-balanced
+// separately, so roughly half of all logins parked the code on one pod and asked the other for it.
+// The row is shared state precisely so it does not matter which pod serves either leg, and it
+// outlives the rolling deploy that would strand an in-process login even at one replica.
+//
+// It holds no credential: only which user the code grants a session for. The JWT is minted at
+// redemption, so nothing bearer-shaped is ever at rest here and the session's day starts when the
+// caregiver actually gets it, not when Authelia redirected.
+export const oidcHandoffs = sqliteTable('oidc_handoffs', {
+  id: text('id').primaryKey(),
+  // SHA-256 of the code, never the code itself — a read of this table yields nothing redeemable.
+  // Unique so a colliding insert fails loudly rather than silently overwriting a live login.
+  codeHash: text('code_hash').notNull().unique(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id),
+  // Set by the conditional UPDATE that redeems the code. Single-use is enforced by that statement
+  // matching only rows where this is still null, so two pods racing the same code cannot both win.
+  redeemedAt: integer('redeemed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+});

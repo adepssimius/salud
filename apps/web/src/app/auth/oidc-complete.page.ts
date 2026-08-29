@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
-import { errorText } from '../core/error-display';
+import { apiErrorCode, errorText } from '../core/error-display';
 
 // Lands here after GET /auth/oidc/callback redirects the browser with a one-time handoff code
 // (security.md → "OIDC login") — this page's only job is to exchange it for the real session and
@@ -54,11 +54,25 @@ export class OidcCompletePage implements OnInit {
       return;
     }
     this.auth.completeOidc(code).subscribe({
-      next: () => this.router.navigateByUrl('/dashboard'),
-      error: (err) =>
-        this.error.set(
-          errorText(err, 'This sign-in link has expired or was already used. Try signing in again.'),
-        ),
+      // `replaceUrl`, so the spent code does not stay in history. Handoff codes are single-use by
+      // design, so without this the back gesture — one swipe away on the phone this app is built
+      // for — lands right back here and replays a code the server has already retired, turning a
+      // successful sign-in into an error screen.
+      next: () => this.router.navigateByUrl('/dashboard', { replaceUrl: true }),
+      error: (err) => {
+        // A code that was already spent while a session is live is not a failure worth a red
+        // screen: it is what a back navigation or a second tab looks like once the first one
+        // succeeded. Go where the caregiver was trying to go.
+        if (apiErrorCode(err) === 'OIDC_HANDOFF_ALREADY_USED' && this.auth.token) {
+          this.router.navigateByUrl('/dashboard', { replaceUrl: true });
+          return;
+        }
+        // The fallback is deliberately NOT any mapped code's sentence. It used to be word-for-word
+        // the OIDC_HANDOFF_NOT_FOUND text, so an ingress 502 or a validation error was
+        // indistinguishable on screen from an expired link — which is exactly how a two-replica
+        // handoff bug hid behind "this link expired" (security.md → "OIDC login").
+        this.error.set(errorText(err, 'Sign-in could not be completed. Try signing in again.'));
+      },
     });
   }
 }

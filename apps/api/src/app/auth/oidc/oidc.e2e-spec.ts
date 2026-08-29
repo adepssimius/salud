@@ -1,6 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { createHash } from 'crypto';
+import { eq } from 'drizzle-orm';
 import { createTestApp } from '../../../testing/create-test-app';
+import { DatabaseService } from '../../persistence/database.service';
+import { AuthService } from '../auth.service';
+import { oidcHandoffs } from '../../../db/schema';
 import { applyAppSecurity } from '../../app.security';
 import { OidcService } from './oidc.service';
 // Jest resolves this to auth/oidc/__mocks__/openid-client.ts (jest.config.ts →
@@ -142,13 +147,14 @@ describe('OIDC routes (e2e)', () => {
     expect(exchangeRes.body.user.email).toContain('oidc-new-');
     expect(exchangeRes.body.user.displayName).toBe('New OIDC User');
 
-    // The handoff code is single-use.
+    // The handoff code is single-use, and says so specifically: a spent code is not the same
+    // situation as one that was never issued, and the caregiver is told a different sentence.
     await request(app.getHttpServer())
       .post('/api/auth/oidc/exchange')
       .send({ code: handoffCode })
       .expect(404)
       .expect((res) => {
-        expect(res.body.message).toBe('OIDC_HANDOFF_NOT_FOUND');
+        expect(res.body.message).toBe('OIDC_HANDOFF_ALREADY_USED');
       });
   });
 
@@ -203,5 +209,91 @@ describe('OIDC routes (e2e)', () => {
 
   it('rejects a malformed exchange body before touching the handoff store', async () => {
     await request(app.getHttpServer()).post('/api/auth/oidc/exchange').send({}).expect(400);
+  });
+
+  /**
+   * The regression this whole change exists for.
+   *
+   * salud-api runs replicas: 2 (k8s-infra → apps/salud/prod/api-deployment.yaml). The callback and
+   * the exchange are two independent HTTP requests, load-balanced separately, so the pod that
+   * parks a handoff code is routinely not the pod asked to redeem it. While the store was an
+   * in-process Map, that made roughly half of all production logins fail with "this sign-in link
+   * has expired or was already used" on the first click.
+   *
+   * A second OidcService built on the same DatabaseService is the smallest honest stand-in for
+   * that second pod: separate instance, separate (empty) in-process state, one shared database.
+   * It must be able to redeem what the app's own instance parked, and — the other half of the
+   * guarantee — the two must not both be able to redeem it.
+   */
+  describe('across two api instances (the replicas: 2 case)', () => {
+    let otherPod: OidcService;
+    let userId: string;
+
+    beforeEach(async () => {
+      otherPod = new OidcService(app.get(DatabaseService));
+      const auth = app.get(AuthService);
+      const user = await auth.resolveOidcUser({
+        sub: `authelia|two-pods-${Date.now()}`,
+        email: `two-pods-${Date.now()}@example.com`,
+      });
+      userId = user.id;
+    });
+
+    it('redeems on one instance a code parked by another', async () => {
+      const code = await app.get(OidcService).parkForHandoff(userId);
+
+      const result = await otherPod.redeemHandoff(code);
+
+      expect(result).toEqual({ ok: true, userId });
+    });
+
+    it('lets exactly one of two instances racing the same code win', async () => {
+      const code = await app.get(OidcService).parkForHandoff(userId);
+
+      // Both in flight at once, which is what a double-submitting browser behind a round-robin
+      // service looks like. Single-use is enforced by the conditional UPDATE, not by ordering.
+      const [first, second] = await Promise.all([
+        app.get(OidcService).redeemHandoff(code),
+        otherPod.redeemHandoff(code),
+      ]);
+
+      const winners = [first, second].filter((r) => r.ok);
+      expect(winners).toHaveLength(1);
+      expect(winners[0]).toEqual({ ok: true, userId });
+      expect([first, second].find((r) => !r.ok)).toEqual({
+        ok: false,
+        reason: 'already_used',
+      });
+    });
+
+    it('refuses an expired code as expired rather than as never-issued', async () => {
+      const code = await app.get(OidcService).parkForHandoff(userId);
+      // Age the row past its TTL in place: nothing here should depend on a real five-minute wait,
+      // and the retention window (an hour) deliberately keeps the row around to say "expired".
+      await (app.get(DatabaseService).db as any)
+        .update(oidcHandoffs)
+        .set({ expiresAt: new Date(Date.now() - 1000) })
+        .where(eq(oidcHandoffs.userId, userId));
+
+      expect(await otherPod.redeemHandoff(code)).toEqual({ ok: false, reason: 'expired' });
+    });
+
+    it('never stores the handoff code itself, only a hash of it', async () => {
+      const code = await app.get(OidcService).parkForHandoff(userId);
+
+      const rows = await (app.get(DatabaseService).db as any)
+        .select()
+        .from(oidcHandoffs)
+        .where(eq(oidcHandoffs.userId, userId));
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].codeHash).not.toBe(code);
+      expect(rows[0].codeHash).toBe(createHash('sha256').update(code).digest('hex'));
+      // And nothing bearer-shaped: the row names a user, it does not carry a session. Matching
+      // the JWT shape (three base64url segments) rather than the column list, so this keeps
+      // holding if someone later adds a column to this table.
+      const jwtShaped = /\b[\w-]+\.[\w-]+\.[\w-]+\b/;
+      expect(JSON.stringify(rows[0])).not.toMatch(jwtShaped);
+    });
   });
 });

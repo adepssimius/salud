@@ -10,7 +10,7 @@ Two images, two Deployments, one origin.
 
 | | |
 | --- | --- |
-| `ghcr.io/adepssimius/salud-api` | NestJS, port 3000, `replicas: 1` |
+| `ghcr.io/adepssimius/salud-api` | NestJS, port 3000, `replicas: 2` |
 | `ghcr.io/adepssimius/salud-web` | nginx serving the Angular bundle, port 80, `replicas: 2` |
 
 An nginx Ingress splits the single host: `/api` → the api Service, `/` → the web Service. The
@@ -86,19 +86,25 @@ item, database/role provisioned by `apps/databases/cnpg/init-jobs/salud-job.yaml
 deployment continuous WAL archiving and weekly base backups with 30-day retention for free — real
 point-in-time recovery, which the previous SQLite-on-a-PVC setup had none of.
 
-Attachments (`persistence.md`) are unaffected by that move and still live on a 10Gi ReadWriteOnce
-Ceph volume mounted at `/data/attachments` — only the database file left that volume. **The api
-Deployment is still pinned to one replica with `strategy: Recreate`** because of that volume, same
-as before; the reason is now "the attachments volume is RWO," not "SQLite is a single-writer file."
-A rolling update would still put two pods on the same PVC.
+Attachments (`persistence.md`) have also moved off the node: `FILE_STORAGE_DRIVER=s3` points them
+at the `salud-attachments` bucket on Ceph RGW, provisioned by an ObjectBucketClaim, with the
+endpoint and credentials read from the ConfigMap and Secret Rook generates for the claim. The 10Gi
+ReadWriteOnce Ceph PVC that used to hold `/data` is gone, and with it `DATA_DIR`.
 
-That pin is now a choice rather than a constraint. `FILE_STORAGE_DRIVER=s3` moves attachments off
-the PVC entirely (`persistence.md` → "File storage"), and with both the database and the blobs
-external the api has no node-local state left to serialize on — the RWO volume was the last thing
-holding it at `replicas: 1`. **This deployment has not made that switch**: attachments are still on
-Ceph RWO, and flipping the driver is a data migration, not a config change, since nothing dual-reads
-`file_assets.bucket`. Ceph RGW on the same cluster is the obvious target if and when it's worth
-doing; the trigger would be wanting rolling updates, not capacity.
+**The api Deployment therefore runs `replicas: 2` with `strategy: RollingUpdate`.** With the
+database and the blobs both external, the api holds no node-local state, and the deploy no longer
+costs a downtime window on every image bump. Two consequences that application code must respect:
+
+- **Nothing may live in a single pod's memory across requests.** Any two requests from the same
+  browser can land on different pods, and there is no session affinity on the Ingress. This is not
+  hypothetical — the OIDC login handoff was an in-process map written when this was `replicas: 1`,
+  and moving to two replicas broke roughly half of all logins until it became a database table
+  (`security.md` → "OIDC login"). Anything cache- or handoff-shaped belongs in Postgres.
+- **A rolling update replaces pods under in-flight work**, so even state that would survive at one
+  replica does not survive a deploy.
+
+Migrations stay safe under this: drizzle's Postgres migrator takes its own advisory lock, so two
+pods starting together cannot race each other's migrations.
 
 See "Self-hosting" below for the other supported configuration — SQLite, zero extra infrastructure
 — which is what this same image runs with no environment configuration at all.
@@ -110,8 +116,9 @@ This deployment (Postgres, above) is one configuration of a generally self-hosta
 "fallback." A self-hoster with no interest in running a Postgres cluster gets a working instance
 from the SQLite default with zero database configuration: point `DATA_DIR` at a persistent volume
 and go — `/data/salud.db` plus `/data/attachments`, one process, no separate database service to
-run or back up. The `replicas: 1` / `strategy: Recreate` posture applies for the same reason it
-does here, just with the database file itself also on that volume.
+run or back up. That configuration **must** stay at `replicas: 1` / `strategy: Recreate`: SQLite is
+a single-writer file and local attachments sit on a ReadWriteOnce volume. This deployment moved off
+both, which is what let it go to two replicas — see "State".
 
 Moving from that starting point to Postgres later — outgrowing a single-file database, wanting
 managed backups — is supported, not a one-way door requiring a fresh install:
@@ -150,42 +157,52 @@ image with nothing in the logs to say why.
    intact and `Released`. Deleting those is a separate manual step, irreversible, and worth
    deferring until the bucket has a backup story.
 
+**This migration has been carried out on salud.bpd.sh** — the steps above are kept for a
+self-hoster making the same move, and for the record of how this deployment got to `replicas: 2`.
+
 ## Access control
 
-As deployed today, the host still sits behind Authelia forward-auth, `policy: one_factor`,
-`subject: group:admins` — the rule lives in `k8s-infra` → `apps/iam/authelia/values.yaml`, not on
-the Ingress. salud's own email/password + JWT login runs *behind* that gate and remains the real
-per-user access control; Authelia is a perimeter, not a replacement. There is no trusted-header
-auth: the app ignores `Remote-User` entirely.
+**The Authelia forward-auth perimeter is gone.** salud's own OIDC login is the gate: the app
+authenticates against Authelia's OIDC provider and checks the ID token's `groups` claim itself, so
+authorization is enforced by the application rather than at the edge (`security.md` → "OIDC
+login"). The API also refuses password login outright in production, so there is no second, weaker
+way in behind it. There is no trusted-header auth: the app ignores `Remote-User` entirely.
 
-Consequence worth knowing: the ER Brief capability URLs (`/api/er-brief/shared/:token` and the
-`/brief/:token` SPA route), which `security.md` describes as links to hand to a triage desk, are
-gated too. They do not currently work for anyone without a cluster account. See `security.md`.
+Dropping the perimeter is what finally makes the ER Brief capability URLs work as designed.
+`/api/er-brief/shared/:token` and the `/brief/:token` SPA route are meant to be handed to a triage
+desk with no cluster account; the whole-host gate used to gate them too, which `security.md`
+carried as a known, accepted gap. It no longer applies.
 
-### OIDC login (in progress)
+### OIDC login (cutover complete)
 
 The app now also supports signing in via Authelia's own OIDC provider, gated to the `salud_users`
 group — see `security.md` → "OIDC login" for the flow itself. This ships in stages, on purpose,
 because it touches the only thing standing between the internet and this household's health
 records:
 
-1. **Shipped in this change**: the OIDC login code path, a nullable `users.password_hash` +
-   `users.oidc_subject` migration, and the web UI's mode-branching. `authMode()`
+1. **The code path**: OIDC login, a nullable `users.password_hash` + `users.oidc_subject`
+   migration, and the web UI's mode-branching. `authMode()`
    (`apps/api/src/app/config/env.ts`) governs which login path is active and is `'password'`
-   everywhere until `OIDC_ENABLED=true` is set **and** `NODE_ENV=production` — so merging this
-   changes nothing about how anyone signs in today.
+   unless `OIDC_ENABLED=true` is set **and** `NODE_ENV=production`.
 2. **Manual verification against production**, with `OIDC_ENABLED=true` but the forward-auth
    perimeter still up (a temporary double gate) — walking the full flow for real before anything
-   about today's access control changes.
-3. **The actual cutover**: `OIDC_ENABLED` collapses into plain `isProduction()` (password login
-   hard-disabled in prod), and — in the same change or immediately after, never before — the
-   `access_control` rule and the `ingress.yaml` forward-auth annotations described above are
-   removed from `k8s-infra`. Order matters: dropping the perimeter while the API still accepts
-   passwords would leave `POST /api/auth/register` open to the internet with no gate at all.
+   about access control changed.
+3. **The cutover**: `OIDC_ENABLED=true` on the api container, and the `access_control` rule plus
+   the `ingress.yaml` forward-auth annotations removed from `k8s-infra`. Order mattered: dropping
+   the perimeter while the API still accepted passwords would have left `POST /api/auth/register`
+   open to the internet with no gate at all.
 
-Once step 3 lands, the "Consequence worth knowing" paragraph above stops applying: removing the
-perimeter is what lets the ER Brief's capability URLs work for people without a cluster account,
-which is what `security.md` always intended for them.
+All three have landed. `OIDC_ENABLED` remains a variable rather than collapsing into plain
+`isProduction()`, so the flag is still the one-line way back to password login if Authelia is
+unreachable.
+
+Two things that only showed up under real use, both fixed and both worth not re-learning:
+
+- **`OIDC_REQUIRED_GROUP` must be set explicitly to `salud_user`.** The code default is
+  `salud_users` (plural), which does not exist in LLDAP — a login by a real member of the group
+  was rejected with `oidc_forbidden` until the variable was set.
+- **The handoff store had to become a database table.** It was an in-memory map, correct only at
+  `replicas: 1`; see "State" above and `security.md` → "OIDC login".
 
 ## Configuration
 
@@ -196,29 +213,30 @@ the 1Password Connect operator, everything else is a literal.
 | --- | --- |
 | `NODE_ENV` | `production` — also switches on the fail-fast checks below |
 | `PORT` | `3000` |
-| `DATA_DIR` | `/data` — attachments only now; the database itself is Postgres, see "State" |
-| `FILE_STORAGE_DRIVER` | unset (`local`). `s3` switches attachments to object storage — see "State". Any other value refuses to boot |
-| `FILE_STORAGE_LOCAL_BASE_PATH` | unset (`$DATA_DIR/attachments`) |
-| `S3_BUCKET` | unset. **Required** when `FILE_STORAGE_DRIVER=s3`; missing it refuses to boot |
+| `DATA_DIR` | unset. The volume is gone — with Postgres and S3 both external, neither the SQLite path nor the local attachments tree is reached |
+| `FILE_STORAGE_DRIVER` | `s3` — attachments live in the `salud-attachments` bucket, see "State". Any other value than `local`/`s3` refuses to boot |
+| `FILE_STORAGE_LOCAL_BASE_PATH` | unset (`$DATA_DIR/attachments`); unused under `s3` |
+| `S3_BUCKET` | from the `salud-attachments` ConfigMap (`BUCKET_NAME`). **Required** when `FILE_STORAGE_DRIVER=s3`; missing it refuses to boot |
 | `S3_REGION` | unset (`us-east-1`) — the value Ceph RGW and MinIO expect |
-| `S3_ENDPOINT` | unset (real AWS). Set to an S3-compatible endpoint, e.g. Ceph RGW on this cluster |
+| `S3_ENDPOINT` | `http://$(S3_BUCKET_HOST):$(S3_BUCKET_PORT)`, both from the `salud-attachments` ConfigMap — Ceph RGW on this cluster |
 | `S3_FORCE_PATH_STYLE` | unset — `true` when `S3_ENDPOINT` is set, `false` otherwise. Override only for a store that wants the non-default addressing |
-| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | unset. Both or neither; neither falls through to the AWS default credential chain. Would come from `salud-secrets` |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | from the `salud-attachments` Secret Rook generates for the ObjectBucketClaim. Both or neither; neither falls through to the AWS default credential chain |
 | `S3_PREFIX` | unset. Optional key prefix within the bucket |
 | `DB_CLIENT` | `postgres` |
 | `DATABASE_URL` | assembled in the container command from `salud-secrets`' `dbUsername`/`dbPassword`/`dbDatabase` against `postgresql.databases.svc.cluster.local:5432`, percent-encoding the password so it's never stored as a second, fully-formed connection string |
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |
 | `ACCESS_LOG` | unset (on). `false` disables the HTTP access log — see Logging |
 | `SLOW_REQUEST_MS` | unset (1000). Requests at or over this are logged at warn and tagged `SLOW` |
-| `OIDC_ENABLED` | unset (off). `true` (with `NODE_ENV=production`) is the actual login-mode cutover — see "Access control" → "OIDC login" |
+| `OIDC_ENABLED` | `true`. With `NODE_ENV=production` this is the login-mode cutover, and it has been made — see "Access control" → "OIDC login" |
 | `AUTHELIA_ISSUER_URL` | `https://auth.bpd.sh`. Required for `GET /api/auth/oidc/login\|callback` to work at all — those routes are always registered, independent of `OIDC_ENABLED` |
 | `OIDC_CLIENT_ID` | `salud`. Same requirement as `AUTHELIA_ISSUER_URL` |
 | `OIDC_CLIENT_SECRET` | from `salud-secrets`. Same requirement as `AUTHELIA_ISSUER_URL` |
-| `OIDC_REQUIRED_GROUP` | unset (`salud_users`). The Authelia group a login must carry |
+| `OIDC_REQUIRED_GROUP` | `salud_user` — **set explicitly, and singular**. The code default is `salud_users`, which does not exist in LLDAP; leaving it unset rejects every real member with `oidc_forbidden` |
 
 In production the API refuses to start rather than degrade quietly: an unset, too-short, or
-well-known `JWT_SECRET` is fatal, and an unwritable `/data` is fatal instead of silently falling
-back to the pod's ephemeral filesystem.
+well-known `JWT_SECRET` is fatal, an unknown `FILE_STORAGE_DRIVER` (or `s3` with no `S3_BUCKET`) is
+fatal, and — where the local driver is in use — an unwritable `DATA_DIR` is fatal instead of
+silently falling back to the pod's ephemeral filesystem.
 
 ## First run
 
@@ -229,8 +247,8 @@ run against the instance (development.md), or enter medications by hand.
 
 The API deliberately does **not** seed at boot. `main.ts` applies pending migrations before it
 listens, but it must never write rows: the catalog is the household's own data, and a pod restart
-silently inserting into it is exactly the surprise write the one-replica/`Recreate` posture exists to
-avoid.
+silently inserting into it is exactly the surprise write to avoid — all the more so now that a
+rolling update starts a second pod while the first is still serving.
 
 ## Health
 
