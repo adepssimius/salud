@@ -204,10 +204,21 @@ file in either lineage breaks every API e2e suite on that leg at once.
 Deployed at **salud.bpd.sh** on the jl-k3s cluster; manifests live in the sibling `k8s-infra`
 repo under `apps/salud/`. Two images (`salud-api`, `salud-web`) published to GHCR on every push
 to `main` as `main-<run>-<sha>`; Flux image automation commits the bump, so **merging to `main`
-is the deploy**. SQLite on a ReadWriteOnce Ceph PVC at `/data`, which is why the api runs one
-replica with `strategy: Recreate`. Authelia forward-auth (`group:admins`) gates the host in front
-of the app's own JWT login. In production the API fails fast on a missing/weak `JWT_SECRET` and
-on an unwritable `/data` rather than degrading silently. Full detail in `app-spec/deployment.md`.
+is the deploy**.
+
+**The api runs `replicas: 2` with `strategy: RollingUpdate`** — Postgres on the cluster's CNPG
+instance, attachments in the `salud-attachments` Ceph RGW bucket, no PVC and no node-local state.
+The practical rule that follows: **nothing may live in one pod's memory across requests.** Two
+requests from the same browser can land on different pods and there is no session affinity, so any
+cache, handoff or pending-state map belongs in Postgres. That is not a hypothetical — the OIDC
+login handoff was an in-process map written when this was one replica, and it broke roughly half
+of all logins once a second pod existed (`app-spec/security.md` → "OIDC login").
+
+Authelia forward-auth is **gone**; salud's own OIDC login is the gate, checking the ID token's
+`groups` claim in-app, with password login refused outright in production. Note
+`OIDC_REQUIRED_GROUP` must be set to `salud_user` (singular) — the code default `salud_users` does
+not exist in LLDAP. In production the API fails fast on a missing/weak `JWT_SECRET` and on a bad
+storage driver rather than degrading silently. Full detail in `app-spec/deployment.md`.
 
 ## Known issues backlog
 

@@ -62,12 +62,35 @@ login (in progress)" for why this ships in stages rather than as one atomic cuto
   Everything downstream (`JwtAuthGuard`, per-service `ensurePatientAccess`) is unaware which path
   was used.
 - **The bearer JWT itself never appears in a URL, redirect, or browser history entry.** The
-  callback route hands the browser a random, single-use, ~60-second opaque handoff code instead
+  callback route hands the browser a random, single-use, five-minute opaque handoff code instead
   (`GET /api/auth/oidc/callback` → redirect to `/oidc-complete?code=...`), which the SPA
-  immediately exchanges for the real session over a normal `POST /api/auth/oidc/exchange`. The
-  code is parked in an in-memory map, not a database table — safe specifically because the api
-  Deployment is pinned to `replicas: 1` (deployment.md → "State"), so there is never a second
-  process without it, and a pod restart mid-login already means retrying the whole flow regardless.
+  immediately exchanges for the real session over a normal `POST /api/auth/oidc/exchange`.
+- **The handoff is a row in `oidc_handoffs`, not process memory.** This was an in-memory map on
+  `OidcService`, justified here by the api Deployment being pinned to `replicas: 1`. That premise
+  is gone: salud-api now runs two replicas behind a rolling update (deployment.md → "State"). The
+  callback and the exchange are two independent HTTP requests, load-balanced separately, so the
+  pod that parked a code was routinely not the pod asked to redeem it — roughly half of all
+  logins failed on the first click, and the failure surfaced as "this sign-in link has expired or
+  was already used". Shared storage is also what lets a login survive the rolling deploy that
+  would strand an in-process one even at a single replica.
+  - The row stores a **SHA-256 hash of the code and the user id — never the code, and never a
+    JWT**. The session is minted at redemption (`AuthService.issueSessionForUserId`), so nothing
+    bearer-shaped is ever at rest and the token's day starts when the caregiver gets it. No salt:
+    the input is 24 CSPRNG bytes, so there is no dictionary to precompute.
+  - **Single-use is enforced by the database, not by read-then-write**: redemption is one
+    conditional `UPDATE ... WHERE code_hash = ? AND redeemed_at IS NULL` returning the row, so two
+    pods racing the same code cannot both win. Exactly one `UPDATE` matches.
+  - Spent and expired rows are swept opportunistically on the next park, after an hour's
+    retention. The retention is deliberate: a row that is gone is indistinguishable from a code
+    that was never issued, so sweeping on expiry would report every honestly-expired code as
+    unknown.
+- **A refused exchange says which of three things happened**, both in the log and to the reader:
+  `OIDC_HANDOFF_EXPIRED`, `OIDC_HANDOFF_ALREADY_USED`, `OIDC_HANDOFF_NOT_FOUND`. They were a
+  single code whose web sentence was word-for-word the `/oidc-complete` page's generic fallback,
+  which meant a 404, an ingress 502 and a validation error all rendered identically — the
+  two-replica outage above was invisible on screen and unlogged on the server, and had to be
+  diagnosed from the cluster manifests. The three codes must keep distinct sentences, and the
+  page's fallback must not reuse any of them.
 - **Password login is refused in the API, not just hidden in the web UI**, once OIDC is the active
   path (`authMode()` in `apps/api/src/app/config/env.ts`): `POST /api/auth/register` and
   `POST /api/auth/login` answer `403 PASSWORD_AUTH_DISABLED`. This matters once the forward-auth

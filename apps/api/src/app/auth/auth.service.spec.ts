@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
@@ -18,7 +19,7 @@ import { RegisterDto } from './dto/register.dto';
 // pglite), same as every e2e suite via create-test-app.ts — this file predates that helper and
 // has different enough needs (no HTTP layer, no Nest module) that it builds its own connection
 // rather than sharing it.
-describe('AuthService.loginOrProvisionOidc', () => {
+describe('AuthService.resolveOidcUser', () => {
   let tmpDir: string;
   let dbService: DatabaseService;
   let auth: AuthService;
@@ -65,16 +66,17 @@ describe('AuthService.loginOrProvisionOidc', () => {
   }
 
   it('provisions a brand-new, passwordless user for a never-seen email/sub', async () => {
-    const res = await auth.loginOrProvisionOidc({
+    const res = await auth.resolveOidcUser({
       sub: 'authelia|1',
       email: 'new@example.com',
       name: 'New Person',
     });
 
-    expect(res.token).toEqual(expect.any(String));
-    expect(res.user.email).toBe('new@example.com');
-    expect(res.user.displayName).toBe('New Person');
-    expect(res.user.preferredTempUnit).toBe('F');
+    // A user, not a session: the JWT is minted later by issueSessionForUserId, when the SPA
+    // redeems its handoff code, so the parked row never holds a credential.
+    expect(res.email).toBe('new@example.com');
+    expect(res.displayName).toBe('New Person');
+    expect(res.preferredTempUnit).toBe('F');
 
     const rows = await userRow(eq(users.email, 'new@example.com'));
     expect(rows).toHaveLength(1);
@@ -83,8 +85,8 @@ describe('AuthService.loginOrProvisionOidc', () => {
   });
 
   it('defaults displayName to the email when the ID token carries no name claim', async () => {
-    const res = await auth.loginOrProvisionOidc({ sub: 'authelia|2', email: 'noname@example.com' });
-    expect(res.user.displayName).toBe('noname@example.com');
+    const res = await auth.resolveOidcUser({ sub: 'authelia|2', email: 'noname@example.com' });
+    expect(res.displayName).toBe('noname@example.com');
   });
 
   it('links a pre-existing password-registered account by email on first OIDC login', async () => {
@@ -94,13 +96,13 @@ describe('AuthService.loginOrProvisionOidc', () => {
       displayName: 'Existing User',
     } as RegisterDto);
 
-    const res = await auth.loginOrProvisionOidc({
+    const res = await auth.resolveOidcUser({
       sub: 'authelia|3',
       email: 'existing@example.com',
       name: 'Existing User',
     });
 
-    expect(res.user.id).toBe(registered.user.id);
+    expect(res.id).toBe(registered.user.id);
 
     const rows = await userRow(eq(users.id, registered.user.id));
     expect(rows[0].oidcSubject).toBe('authelia|3');
@@ -109,20 +111,20 @@ describe('AuthService.loginOrProvisionOidc', () => {
   });
 
   it('matches by subject on a repeat login even if the email claim changed, and syncs the stored email', async () => {
-    const first = await auth.loginOrProvisionOidc({
+    const first = await auth.resolveOidcUser({
       sub: 'authelia|4',
       email: 'old@example.com',
       name: 'Renamed Later',
     });
 
-    const second = await auth.loginOrProvisionOidc({
+    const second = await auth.resolveOidcUser({
       sub: 'authelia|4',
       email: 'new-email@example.com',
       name: 'Renamed Later',
     });
 
-    expect(second.user.id).toBe(first.user.id);
-    expect(second.user.email).toBe('new-email@example.com');
+    expect(second.id).toBe(first.id);
+    expect(second.email).toBe('new-email@example.com');
 
     const rows = await userRow(eq(users.oidcSubject, 'authelia|4'));
     expect(rows).toHaveLength(1); // no duplicate account from the email change
@@ -130,10 +132,24 @@ describe('AuthService.loginOrProvisionOidc', () => {
   });
 
   it('does not create a duplicate account on a second login with the same sub and same email', async () => {
-    await auth.loginOrProvisionOidc({ sub: 'authelia|5', email: 'stable@example.com' });
-    await auth.loginOrProvisionOidc({ sub: 'authelia|5', email: 'stable@example.com' });
+    await auth.resolveOidcUser({ sub: 'authelia|5', email: 'stable@example.com' });
+    await auth.resolveOidcUser({ sub: 'authelia|5', email: 'stable@example.com' });
 
     const rows = await userRow(eq(users.oidcSubject, 'authelia|5'));
     expect(rows).toHaveLength(1);
+  });
+
+  // The redemption half. It is a separate method precisely so the handoff row can name a user
+  // rather than carry a JWT (security.md → "OIDC login"), which is what lets the row be shared
+  // across pods without putting a bearer credential in the database.
+  it('mints a session for a resolved user id, and refuses one for an account that is gone', async () => {
+    const user = await auth.resolveOidcUser({ sub: 'authelia|6', email: 'session@example.com' });
+
+    const session = await auth.issueSessionForUserId(user.id);
+    expect(session.token).toEqual(expect.any(String));
+    expect(session.user.id).toBe(user.id);
+    expect(session.user.email).toBe('session@example.com');
+
+    await expect(auth.issueSessionForUserId(randomUUID())).rejects.toThrow('USER_NOT_FOUND');
   });
 });

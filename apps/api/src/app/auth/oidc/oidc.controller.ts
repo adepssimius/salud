@@ -28,6 +28,20 @@ interface OidcTransaction {
 }
 
 /**
+ * One code per reason, rather than the single OIDC_HANDOFF_NOT_FOUND this used to throw for all
+ * three. They are genuinely different situations for the reader — a code that ran out of time is
+ * retried, a code that was already spent usually means the session already landed in another tab
+ * or an earlier navigation — and collapsing them cost a production diagnosis: the web app's
+ * fallback sentence for *any* failed exchange was word-for-word the sentence for this code, so a
+ * 404, a 502 and a validation error were indistinguishable on screen.
+ */
+const HANDOFF_ERROR_CODES = {
+  expired: 'OIDC_HANDOFF_EXPIRED',
+  already_used: 'OIDC_HANDOFF_ALREADY_USED',
+  unknown: 'OIDC_HANDOFF_NOT_FOUND',
+} as const;
+
+/**
  * The Authelia OIDC login flow (security.md → "OIDC login"). `login`/`callback` are real browser
  * navigations, not JSON endpoints — a Salud login has to leave this origin and come back, so
  * there is no XHR-shaped version of either. `exchange` is the one JSON endpoint, called by the
@@ -101,19 +115,23 @@ export class OidcController {
       return;
     }
 
-    const response = await this.auth.loginOrProvisionOidc(claims);
-    const handoff = this.oidc.parkForHandoff(response);
+    const user = await this.auth.resolveOidcUser(claims);
+    const handoff = await this.oidc.parkForHandoff(user.id);
     res.redirect(`/oidc-complete?code=${encodeURIComponent(handoff)}`);
   }
 
   @Post('exchange')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  exchange(@Body() dto: ExchangeOidcCodeDto) {
-    const response = this.oidc.redeemHandoff(dto.code);
-    if (!response) {
-      throw new NotFoundException('OIDC_HANDOFF_NOT_FOUND');
+  async exchange(@Body() dto: ExchangeOidcCodeDto) {
+    const result = await this.oidc.redeemHandoff(dto.code);
+    if (!result.ok) {
+      // Logged, because until now a refused exchange was invisible from the server side: the
+      // caregiver got a sentence and `kubectl logs` showed only `POST .../exchange 404` with no
+      // reason. Never log the code itself — it is a bearer credential while it lives.
+      this.logger.warn(`OIDC handoff refused: ${result.reason}`);
+      throw new NotFoundException(HANDOFF_ERROR_CODES[result.reason]);
     }
-    return response;
+    return this.auth.issueSessionForUserId(result.userId);
   }
 
   private parseTransaction(raw: unknown): OidcTransaction | null {

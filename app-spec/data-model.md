@@ -672,6 +672,29 @@ model. A frozen, time-limited, unauthenticated export of one `GET .../er-brief` 
 - `createdAt: datetime`
 - `expiresAt: datetime` (**not nullable** — every snapshot expires; capped at creation, 168h max).
 
+### OidcHandoff
+
+See `security.md` → "OIDC login". The one-time code the OIDC callback hands the browser, redeemed
+once by `POST /api/auth/oidc/exchange`. A table rather than process memory because salud-api runs
+two replicas (`deployment.md` → "State"): the callback and the exchange are separate HTTP requests
+that routinely land on different pods.
+
+- `id: uuid`
+- `codeHash: string` (unique) — SHA-256 hex of the code. **The code itself is never stored**, so a
+  read of this table yields nothing redeemable. Unsalted on purpose: the input is 24 CSPRNG bytes,
+  so there is no dictionary to precompute against.
+- `userId: uuid` — who the code grants a session for. **The row holds no credential**: the JWT is
+  minted at redemption, not at the callback, so nothing bearer-shaped is ever at rest and the
+  token's lifetime starts when the caregiver actually receives it.
+- `redeemedAt: datetime | null` — `null` until spent. Single-use is enforced by the redeeming
+  `UPDATE` matching only rows where this is still `null`, so two pods racing one code cannot both
+  win; it is not a read-then-write check.
+- `createdAt: datetime`
+- `expiresAt: datetime` (**not nullable**) — five minutes after creation. Rows are swept
+  opportunistically on the next park, an hour past expiry rather than at expiry: a row that is
+  gone cannot be told from a code that was never issued, and that distinction is what the three
+  `OIDC_HANDOFF_*` error codes report.
+
 ### Revision
 
 Corrections (F-1.4): "entries can be corrected after the fact; corrections are attributed, and the

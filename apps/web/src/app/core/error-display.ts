@@ -79,10 +79,16 @@ export const ERROR_SENTENCES = {
   // to someone already known to be on the care team, so there is nothing left to hide.
   NOT_PATIENT_OWNER:
     "Only this patient's owner can delete them. Ask the owner, or have them transfer ownership to you first.",
-  // The oidc-complete page's own fallback text already covers this well (security.md → "OIDC
-  // login"); this entry exists so a direct API caller or a future call site gets the same
-  // sentence instead of degrading to something generic.
-  OIDC_HANDOFF_NOT_FOUND: 'This sign-in link has expired or was already used. Try signing in again.',
+  // Three codes, not one, and the sentences must stay distinct from each other AND from the
+  // oidc-complete page's fallback (security.md → "OIDC login"). They were previously collapsed
+  // into a single code whose sentence was word-for-word that page's fallback text, which meant a
+  // 404, a 502 from the ingress and a validation error all rendered identically — and a real
+  // production outage (the handoff store was per-pod while the api ran two replicas) could not be
+  // told apart from an ordinary expired link without reading the cluster manifests.
+  OIDC_HANDOFF_ALREADY_USED:
+    'This sign-in link was already used. If another tab signed you in, you are good — otherwise sign in again.',
+  OIDC_HANDOFF_EXPIRED: 'This sign-in link timed out before it was used. Sign in again to get a fresh one.',
+  OIDC_HANDOFF_NOT_FOUND: 'This sign-in link is not one the server issued. Start again from the login page.',
   PASSWORD_AUTH_DISABLED: 'Password sign-in is turned off. Use "Sign in with Authelia" instead.',
   PATIENT_ID_REQUIRED: 'Choose a patient first.',
   // Deliberately silent on which of "no such file" / "someone else's file" it was, for the same
@@ -106,10 +112,11 @@ export const ERROR_SENTENCES = {
   SELF_RELATIONSHIP_ALREADY_EXISTS:
     'Someone on this care team is already marked as the patient. Change their relationship first.',
   SNAPSHOT_NOT_FOUND: 'That shared link is no longer available. It may have expired or been revoked.',
-  // Covers two of the three contexts this code is thrown in: adding a caregiver by a stale search
-  // result, and transferring patient ownership to an unknown user (api.md's error table). The third
-  // — a 401 on /users/me when the signed-in account no longer exists — is handled by the auth
-  // interceptor logging the session out before any page would render this sentence.
+  // Covers two of the four contexts this code is thrown in: adding a caregiver by a stale search
+  // result, and transferring patient ownership to an unknown user (api.md's error table). The other
+  // two never reach a page: a 401 on /users/me when the signed-in account no longer exists is
+  // handled by the auth interceptor logging the session out first, and the OIDC exchange's guard
+  // is unreachable behind oidc_handoffs' foreign key (security.md → "OIDC login").
   USER_NOT_FOUND: 'No account matches that person. Ask them to sign up first, then add them.',
 } as const;
 
