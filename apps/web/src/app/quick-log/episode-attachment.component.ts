@@ -16,7 +16,8 @@ export interface EpisodeOption {
  * a chip picker with nothing pre-selected: the app does not guess which illness a 3 AM dose
  * belongs to.
  *
- * "Start new episode" and "this resolves…" live behind a "More" disclosure. Resolution is still
+ * "Start new episode" and "this resolves…" live behind a "More" disclosure, which renders even
+ * with zero active episodes — that is the state a first episode starts from. Resolution is still
  * only ever a side effect of a logged event — it just stops occupying prime space on every entry
  * (frontend.md → "Information architecture (v2)" → Quick Log).
  *
@@ -29,7 +30,10 @@ export interface EpisodeOption {
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="episode-attachment" *ngIf="episodes.length || createNew">
+    <!-- Always rendered. With no active episode there is nothing to attach to, but "Start a new
+         episode" is the *only* way an episode ever begins (no create endpoint — CLAUDE.md →
+         Episode model), so the More disclosure has to stay reachable in exactly that state. -->
+    <div class="episode-attachment">
       <ng-container *ngIf="isSingle(); else picker">
         <div class="attached" *ngIf="isSelected(episodes[0].id); else reattach">
           <!-- &nbsp;, and it has to be that rather than a plain space or the &ngsp; that was here
@@ -59,19 +63,21 @@ export interface EpisodeOption {
       </ng-container>
 
       <ng-template #picker>
-        <span class="muted small">Attach to an episode</span>
-        <div class="chip-row">
-          <button
-            type="button"
-            class="chip"
-            *ngFor="let ep of episodes"
-            [class.chip-on]="isSelected(ep.id)"
-            [attr.aria-pressed]="isSelected(ep.id)"
-            (click)="toggle(ep.id)"
-          >
-            {{ ep.name }}
-          </button>
-        </div>
+        <ng-container *ngIf="episodes.length">
+          <span class="muted small">Attach to an episode</span>
+          <div class="chip-row">
+            <button
+              type="button"
+              class="chip"
+              *ngFor="let ep of episodes"
+              [class.chip-on]="isSelected(ep.id)"
+              [attr.aria-pressed]="isSelected(ep.id)"
+              (click)="toggle(ep.id)"
+            >
+              {{ ep.name }}
+            </button>
+          </div>
+        </ng-container>
       </ng-template>
 
       <button type="button" class="link small" (click)="moreOpen.set(!moreOpen())">
