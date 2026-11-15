@@ -539,6 +539,19 @@ describe('DashboardPage', () => {
         expect(card.bands[0].high).toBeCloseTo(99, 0);
       });
 
+      it('shows a °F reading at the value it was logged at, not a tenth off', () => {
+        // 97.6 °F is 36.4444 °C. The dashboard payload used to round that to 36.4, which converts
+        // back to 97.5 — the card reported a reading the caregiver never took.
+        authMock.user.mockReturnValue({ id: 'u1', displayName: 'Tester', email: 't@example.com', preferredTempUnit: 'F' });
+        const fixture = render({
+          activeEpisodes: [episode({ medications: [dose()] })],
+          recentTemperatures: [{ patientId: 'p1', points: [{ timestamp: nowSec() - 3600, valueC: 36.4444 }] }],
+        });
+
+        expect(fixture.componentInstance.sickCards()[0].latest!.valueShown).toBe(97.6);
+        expect(fixture.nativeElement.querySelector('.spark-latest').textContent).toContain('97.6 °F');
+      });
+
       // The reading and the button that updates it are one glance (frontend.md → Home).
       it('puts the Temp action beside the latest reading, not in the bottom action row', () => {
         const fixture = render({

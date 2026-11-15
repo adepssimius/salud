@@ -604,8 +604,11 @@ export class TimelineService {
       if (typeof metadata.value !== 'number') continue;
       const timestamp = normalizeTs(row.observedAt);
       if (timestamp == null) continue;
+      // Converted at 4dp, not 1dp: one decimal of °C is 0.18 °F, so rounding here and converting
+      // back for a °F viewer loses a tenth of a degree (97.6 °F came back 97.5). The client rounds
+      // for display in the viewer's own unit, which is the only place a reading should lose precision.
       const valueC =
-        metadata.unit === 'F' ? Math.round((((metadata.value - 32) * 5) / 9) * 10) / 10 : metadata.value;
+        metadata.unit === 'F' ? Math.round((((metadata.value - 32) * 5) / 9) * 10000) / 10000 : metadata.value;
       byPatient.get(row.patientId)?.push({ timestamp, valueC });
     }
 
