@@ -103,8 +103,8 @@ Load-bearing; every feature decision traces back to one of these.
    - Strictly data, never derived conclusions (P6) — enforced by the response shape itself.
 10. **Handoff and fidelity** (data-model.md/api.md; requirements doc §5.1, §5.6, §5.8)
     - **While You Were Asleep**: a per-caregiver diff since their own last acknowledged look —
-      what was logged, what advisories fired, what's due now. The 6 AM shift change is a handoff
-      too.
+      what others logged, what advisories fired (never your own entries, nor advisories they
+      tripped), what's due now. The 6 AM shift change is a handoff too.
     - **Corrections**: entries can be edited after the fact; the prior state is always retained
       and attributed, never silently overwritten (F-1.4).
     - **Photos**: attach to the timeline and to episodes like any other event, with same-episode

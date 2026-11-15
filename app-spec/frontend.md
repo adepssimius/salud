@@ -273,8 +273,9 @@ narrative artifact is a feed, and the chart is its instrument panel:
   markers in the feed, clickable through to episode detail.
 - **The since-you-last-looked marker.** The What's-New watermark renders as a labeled divider
   line *inside the feed* — the reader opens the journal and reads down to the line; that *is*
-  the handoff. A "Mark as seen" action on the marker calls the existing `whats-new/ack`;
-  scrolling never acks (same deliberate-ack rule as v1). This supersedes the separate What's-New
+  the handoff. The reader's own entries, and advisories their own entries tripped, are never
+  unseen for them, so they never place the line (api.md → While You Were Asleep). A "Mark as seen" action on the marker calls the existing
+  `whats-new/ack`; scrolling never acks (same deliberate-ack rule as v1). This supersedes the separate What's-New
   page; Home's summaries deep-link to the journal positioned at the marker. The marker is per
   patient — with two patients sick, each journal keeps its own line, and Home shows one summary
   row per patient with unseen changes.

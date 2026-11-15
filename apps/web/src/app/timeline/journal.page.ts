@@ -254,10 +254,14 @@ export class JournalPage implements OnInit {
   medicationNames = computed(() => new Map(this.medications().map((m) => [m.id, m.name])));
 
   private rows = computed<FeedRow[]>(() => {
-    const units = unitsFor(this.auth.user());
+    const user = this.auth.user();
+    const units = unitsFor(user);
     const names = this.medicationNames();
     const since = this.since();
-    return this.entries().map((entry) => ({
+    const myId = user?.id ?? null;
+    const entries = this.entries();
+    const authorById = new Map(entries.map((e) => [e.id, e.recordedBy?.id ?? null]));
+    return entries.map((entry) => ({
       entry,
       author: entry.recordedBy?.displayName ?? null,
       // One formatter for every event list in the app (core/event-display.ts). `display` is the
@@ -266,19 +270,37 @@ export class JournalPage implements OnInit {
       text: describeEvent(entry, units, { medicationNames: names, omitDocuments: true }),
       photoFileIds: photoFileIds(entry),
       documents: documentAttachments(entry),
-      unseen: since != null && this.loggedAt(entry) >= since,
+      // Your own entry is never unseen by you, however recently you logged it, and neither is an
+      // advisory your own entry tripped — the same rules the API applies to `whats-new` and the
+      // dashboard's counts (api.md → While You Were Asleep), so the line and Home agree.
+      unseen: since != null && this.loggedAt(entry) >= since && !this.isMine(entry, myId, authorById),
     }));
   });
+
+  /**
+   * Whether this row is the reader's own doing: an entry they recorded, or an advisory whose
+   * context entry (`contextType`/`contextId`) they recorded. Advisories carry no author of their
+   * own, so the context entry's author is looked up among the feed's own rows — the feed is
+   * unwindowed, so the entry that fired the advisory is on the page. If it is not (or the reader
+   * is unknown), the row is not the reader's and stays eligible to be new.
+   */
+  private isMine(entry: TimelineEntry, myId: string | null, authorById: Map<string, string | null>): boolean {
+    if (myId == null) return false;
+    if (entry.kind !== 'advisory') return entry.recordedBy?.id === myId;
+    const contextId = (entry.display as any)?.contextId as string | null | undefined;
+    return contextId != null && authorById.get(contextId) === myId;
+  }
 
   /**
    * The row the watermark line renders *below* — the oldest unseen entry in feed order.
    *
    * "Unseen" is decided on log time (`createdAt`), which is what the ack watermark selects on
    * (api.md → While You Were Asleep: a 2 AM entry written up at 6 AM is unseen by whoever last
-   * looked at 5 AM). The feed, though, is ordered by *clinical* time — so an entry can be new but
-   * sit below older rows that were already seen. Putting the line under the last unseen row is
-   * what makes "read down to the line" cover everything new; the handful of already-seen rows
-   * above it are re-read, which costs nothing, whereas a missed row costs the handoff.
+   * looked at 5 AM), and never counts the reader's own entries or the advisories they tripped.
+   * The feed is ordered by *clinical* time, though — so an entry can be new but sit below older
+   * rows that were already seen. Putting the line under the last unseen row is what makes "read
+   * down to the line" cover everything new; the handful of already-seen rows above it are re-read,
+   * which costs nothing, whereas a missed row costs the handoff.
    */
   watermarkAfterEntryId = computed<string | null>(() => {
     const unseen = this.rows().filter((r) => r.unseen);

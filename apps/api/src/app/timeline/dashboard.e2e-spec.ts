@@ -312,6 +312,15 @@ describe('Dashboard (e2e)', () => {
   });
 
   describe('whatsNew', () => {
+    // A second caregiver writes the events these tests count, and `token` (the reader) never does:
+    // an entry you logged yourself is never new to you (api.md → While You Were Asleep), so a
+    // reader who wrote the rows would see zero. The author-side view is asserted on its own below.
+    let author: { token: string; userId: string };
+
+    beforeAll(async () => {
+      author = await registerAndLogin(app);
+    });
+
     // Own patient per test, like lastDoses above but for a sharper reason: the watermark is per
     // (patient, user) and ack MUTATES it, so tests sharing a patient would leak state into each
     // other in whatever order Jest happens to run them.
@@ -321,13 +330,18 @@ describe('Dashboard (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ fullName: name, dateOfBirth: '2020-01-01', sexAtBirth: 'female', myRole: 'parent' })
         .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/patients/${res.body.id}/care-team`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ userId: author.userId, role: 'co-parent' })
+        .expect(201);
       return res.body.id as string;
     }
 
-    async function logObservation(pid: string, hoursAgo = 0) {
+    async function logObservation(pid: string, hoursAgo = 0, asToken = author.token) {
       return request(app.getHttpServer())
         .post(`/api/patients/${pid}/observations`)
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${asToken}`)
         .send({
           observedAt: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
           entries: [{ type: 'temperature', metadata: { value: 38.2, unit: 'C', method: 'oral' } }],
@@ -337,10 +351,10 @@ describe('Dashboard (e2e)', () => {
 
     // doseSource: 'override' is flagged atypical, which writes an advisory — that's how these tests
     // get an advisoryCount without needing a protocol producer that doesn't exist yet.
-    async function logDose(pid: string, hoursAgo = 0) {
+    async function logDose(pid: string, hoursAgo = 0, asToken = author.token) {
       return request(app.getHttpServer())
         .post(`/api/patients/${pid}/interventions`)
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${asToken}`)
         .send({
           performedAt: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
           type: 'medication_dose',
@@ -482,6 +496,39 @@ describe('Dashboard (e2e)', () => {
 
       expect((await whatsNewRow(pid)).eventCount).toBe(0);
       expect((await whatsNewRow(pid, other.token)).eventCount).toBe(1);
+    });
+
+    // The reported bug: a caregiver logs a temperature and it comes straight back to them as "new
+    // since you last looked". Their own entries — observations and interventions alike — never
+    // count for them; the very same rows still count for everyone else on the team.
+    // The override dose fires advisories pointing back at it (contextType/contextId); those are
+    // the caller's own doing too, so they are not new to the caller either — only to the others.
+    it("never counts the caller's own entries or the advisories they tripped, while still counting them for other caregivers", async () => {
+      const pid = await newPatient();
+      await logObservation(pid, 0, token);
+      await logDose(pid, 0, token);
+      await logObservation(pid); // the other caregiver's, which the reader must still see
+
+      const mine = await whatsNewRow(pid);
+      expect(mine.eventCount).toBe(1);
+      expect(mine.advisoryCount).toBe(0);
+
+      const theirs = await whatsNewRow(pid, author.token);
+      expect(theirs.eventCount).toBe(2);
+      expect(theirs.advisoryCount).toBeGreaterThan(0);
+
+      // Same rule on both surfaces, per viewer — the card and the per-patient diff still agree.
+      for (const [viewer, row] of [
+        [token, mine],
+        [author.token, theirs],
+      ] as const) {
+        const wywa = await request(app.getHttpServer())
+          .get(`/api/patients/${pid}/whats-new`)
+          .set('Authorization', `Bearer ${viewer}`)
+          .expect(200);
+        expect(row.eventCount).toBe(wywa.body.events.length);
+        expect(row.advisoryCount).toBe(wywa.body.advisoriesFired.length);
+      }
     });
 
     // Events and advisories now key on the same clock (whats-new-window.ts). A dose backdated 25h

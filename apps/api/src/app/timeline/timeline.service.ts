@@ -428,6 +428,7 @@ export class TimelineService {
   // inArray + one threshold: `min(since)` across patients collapses to the 24h fallback the moment
   // any one caregiver has never acked, which would fetch a whole day to answer a ten-minute question.
   private async buildWhatsNewSummaries(
+    userId: string,
     accessible: Array<{ id: string; fullName: string; accentColor: PatientAccentColor; lastSeenAt: number | null }>,
     upcomingSchedules: Array<{ patientId: string; nextDueAt: number | null }>,
     nowTs: number,
@@ -438,11 +439,14 @@ export class TimelineService {
 
     // Project the one column each tally needs — no metadata JSON, no entries join. That's what
     // keeps this cheap for a caregiver who hasn't opened the app in three weeks.
-    const tally = async (table: any, column: any, predicate: (id: string, since: number) => any) => {
+    // `userId` rides into every predicate: no tally counts the caller's own entries or the
+    // advisories they tripped (api.md → While You Were Asleep) — the same predicates
+    // WhatsNewService uses, so the card and the per-patient diff agree.
+    const tally = async (table: any, column: any, predicate: (id: string, since: number, viewer: string) => any) => {
       const rows = await db
         .select({ patientId: column })
         .from(table)
-        .where(or(...accessible.map((p) => predicate(p.id, sinceById.get(p.id)!))));
+        .where(or(...accessible.map((p) => predicate(p.id, sinceById.get(p.id)!, userId))));
       const counts = new Map<string, number>();
       for (const r of rows) counts.set(r.patientId, (counts.get(r.patientId) ?? 0) + 1);
       return counts;
@@ -717,7 +721,7 @@ export class TimelineService {
 
     // Ordering here is a dependency, not style: this consumes upcomingSchedules (built just above)
     // to derive nowDueCount without a second schedules query. Moving it earlier yields silent zeros.
-    const whatsNew = await this.buildWhatsNewSummaries(accessible, upcomingSchedules, nowTs);
+    const whatsNew = await this.buildWhatsNewSummaries(userId, accessible, upcomingSchedules, nowTs);
 
     const embodimentRows = await db
       .select()
