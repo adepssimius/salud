@@ -20,6 +20,18 @@
 }
 
 /*
+ * The page itself, not just the shell. The dark background used to live only on app-root's
+ * :host, which left the browser's default 8px body margin showing through as a white frame
+ * around the whole app (and white overscroll on a phone). html carries the colour too so the
+ * rubber-band area past either end of the page matches.
+ */
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+/*
  * Theme tokens.
  *
  * The palette was 68 distinct literals repeated across 25 files, with drift that was clearly
