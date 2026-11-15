@@ -646,7 +646,20 @@ describe('Dashboard (e2e)', () => {
 
       const row = await temperatureRow(pid);
       expect(row.points.length).toBe(1);
-      expect(row.points[0].valueC).toBe(38.4);
+      expect(row.points[0].valueC).toBeCloseTo(38.4444, 3);
+    });
+
+    it('keeps enough precision that a °F reading survives the round trip back to °F', async () => {
+      // A tenth of a °C is 0.18 °F, so converting at one decimal here used to hand a °F viewer
+      // 97.5 for a logged 97.6 — the reading changed on the way to the sick card that reports it.
+      const pid = await newPatient('Round Trip Patient');
+      await logTemp(pid, 1, { value: 97.6, unit: 'F', method: 'oral' }, { startEpisodeName: 'Round Trip Fever' });
+
+      const row = await temperatureRow(pid);
+      expect(row.points.length).toBe(1);
+      // What the web's convertTemp(valueC, 'C', 'F') does with this point (core/event-display.ts).
+      const backToF = Math.round(((row.points[0].valueC * 9) / 5 + 32) * 10) / 10;
+      expect(backToF).toBe(97.6);
     });
 
     it('omits patients with no active episode entirely — a quiet patient renders no sparkline', async () => {
