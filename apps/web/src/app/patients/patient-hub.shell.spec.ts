@@ -8,10 +8,23 @@ import { ApiClientService } from '../core/api-client.service';
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
+/**
+ * A birth date exactly six years before the 1st of the current month, as a local `YYYY-MM-DD`.
+ * The age is computed against the real clock, so a fixed date of birth made the age assertion
+ * rot as the months passed. Anchoring on the 1st keeps it at a whole "6y" on every day of the
+ * month (and sidesteps Feb 29 having no counterpart six years back).
+ */
+const sixYearsAgo = () => {
+  const now = new Date();
+  const y = now.getFullYear() - 6;
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
+};
+
 const patient = {
   id: 'p1',
   fullName: 'Jamie Doe',
-  dateOfBirth: '2020-08-19',
+  dateOfBirth: sixYearsAgo(),
   sexAtBirth: 'female',
   notes: null,
   ownedById: 'u1',
