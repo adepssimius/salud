@@ -100,8 +100,26 @@ describe('EpisodeAttachmentComponent', () => {
     expect(fixture.componentInstance.resolveSelected).toBe(false);
   });
 
-  it('renders nothing when the patient has no active episodes', () => {
+  // A quiet patient is precisely the one whose first episode is about to start, and logging an
+  // event with `startEpisodeName` is the only way an episode begins. This used to render nothing
+  // at all, which left no way to start an episode from the UI.
+  it('still offers "Start a new episode" when the patient has no active episodes', () => {
     const fixture = render([]);
-    expect((fixture.nativeElement as HTMLElement).querySelector('.episode-attachment')).toBeNull();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.chip')).toBeNull();
+    expect(el.textContent).not.toContain('Attach to an episode');
+
+    const more = Array.from(el.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'More');
+    expect(more).toBeDefined();
+    more!.click();
+    fixture.detectChanges();
+    expect(el.textContent).toContain('Start a new episode');
+    // Nothing selected, so there is nothing to resolve.
+    expect(el.textContent).not.toContain('This resolves');
+
+    (el.querySelector('.more input[type="checkbox"]') as HTMLInputElement).click();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.createNew).toBe(true);
+    expect(el.textContent).toContain('New episode name');
   });
 });
