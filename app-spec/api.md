@@ -672,10 +672,12 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - `eventCount` counts observations + interventions since `since`, on **log time**
         (`createdAt`), matching what `GET .../whats-new` puts in `events` — the two select on the
         same column by construction, and that is the invariant to preserve when either changes.
+        Like `events`, it excludes the caller's own entries (see "While You Were Asleep").
         Advisories are deliberately *not* included — they have their own count, and the timeline
         merge would otherwise double-count `protocol_fired`.
       - `advisoryCount` counts **every advisory type** created since `since`, on `createdAt`, and
-        **includes acknowledged ones**. It is therefore *not* the same number as
+        **includes acknowledged ones** — except those tripped by the caller's own entry, matching
+        `advisoriesFired` (see "While You Were Asleep"). It is therefore *not* the same number as
         `unacknowledgedAdvisories.length` on this same payload.
       - `nowDueCount` is **present-tense**, not watermark-relative — what is due *right now*, for the
         same reason the WYWA endpoint's `nowDue` is (see "While You Were Asleep"). Note this counts
@@ -913,6 +915,15 @@ The 6 AM shift-change briefing (§5.6, F-6.1): what changed since this caregiver
     unseen no matter what its clinical timestamp says. Selecting on `observedAt`/`performedAt` made
     exactly that entry invisible to the caregiver who last looked at 5 AM — the handoff the feature
     exists to cover. `advisoriesFired` has always keyed on `createdAt`; this makes all of them agree.
+  - **`events` never includes the requester's own entries.** An observation or intervention whose
+    `recordedByUserId` is the requester is not unread for them and never counts as new since they
+    last looked, however recently they logged it; the same entry is still in every other
+    caregiver's `events`. Likewise `advisoriesFired` never includes an advisory whose context entry
+    (`contextType`/`contextId`, the observation or intervention that fired it) was recorded by the
+    requester; other caregivers still get it. Advisories with no context entry, or whose entry
+    someone else recorded, are unaffected. This governs only what counts as new — the advisory is
+    still shown wherever it appears in its own right (at entry time, on the timeline, in
+    `GET .../advisories`, on the ER Brief).
   - **Selection and display are now different axes, and both matter.** Each entry still *shows* its
     clinical time, and the list is still *ordered* by clinical time — so a 6 AM briefing can
     legitimately contain an entry stamped 2 AM, sitting in 2 AM's position. That is the correct

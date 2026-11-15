@@ -238,6 +238,115 @@ describe('JournalPage', () => {
       expect(fixture.componentInstance.watermarkAfterEntryId()).toBe('obs-late');
     });
 
+    // The reported bug: you log a reading and the journal hands it straight back to you as "new
+    // since you last looked". Your own entry is never unseen by you (api.md → While You Were
+    // Asleep); the same row stays unseen for the other caregiver.
+    describe("the reader's own entries", () => {
+      const signedInAs = (id: string) =>
+        TestBed.overrideProvider(AuthService, {
+          useValue: {
+            user: () => ({ id, preferredTempUnit: 'C', preferredWeightUnit: 'kg', preferredLengthUnit: 'cm' }),
+          },
+        });
+
+      it('are never unseen for their author — no marker when the only new row is mine', () => {
+        signedInAs('u1'); // Dana, who logged today's dose — the only row after the watermark
+        const fixture = render();
+        expect(fixture.componentInstance.watermarkAfterEntryId()).toBeNull();
+        expect(fixture.nativeElement.querySelector('.watermark')).toBeNull();
+      });
+
+      it('still count as unseen for another caregiver', () => {
+        signedInAs('u2'); // Sam, who did not log the dose
+        const fixture = render();
+        expect(fixture.componentInstance.watermarkAfterEntryId()).toBe('int-1');
+      });
+
+      describe('and the advisories they tripped', () => {
+        // Dana logs a reading that fires a protocol; the advisory has no author, only a context
+        // entry — Dana's. It is not news to Dana, and still is to Sam.
+        const danasReading = entry({
+          id: 'obs-dana',
+          kind: 'observation',
+          type: 'temperature',
+          timestamp: now - 120,
+          display: {
+            id: 'obs-dana',
+            observedAt: now - 120,
+            createdAt: now - 120,
+            entries: [{ type: 'temperature', metadata: { value: 40.1, unit: 'C', method: 'oral' } }],
+          },
+        });
+        const firing = entry({
+          id: 'adv-1',
+          kind: 'advisory',
+          type: 'protocol_fired',
+          timestamp: now - 60,
+          recordedBy: null,
+          display: {
+            id: 'adv-1',
+            type: 'protocol_fired',
+            severity: 'danger',
+            contextType: 'observation',
+            contextId: 'obs-dana',
+            payload: { protocolName: 'High fever', instructionText: 'Call the doctor' },
+            createdAt: now - 60,
+          },
+        });
+
+        beforeEach(() => {
+          apiMock.get.mockImplementation((path: string) => {
+            if (path === '/medications') return of(medications);
+            if (path.endsWith('/episodes')) return of(episodes);
+            if (path.endsWith('/whats-new')) return of(whatsNew);
+            return of({ ...timelineResponse, entries: [firing, danasReading, dose, observation] });
+          });
+        });
+
+        it('are not unseen for the author of the entry that fired them', () => {
+          signedInAs('u1');
+          const fixture = render();
+          expect(fixture.componentInstance.watermarkAfterEntryId()).toBeNull();
+        });
+
+        it('still are for another caregiver', () => {
+          signedInAs('u2');
+          const fixture = render();
+          // Dana's dose is the oldest unseen row in feed order; the firing above it is unseen too.
+          expect(fixture.componentInstance.watermarkAfterEntryId()).toBe('int-1');
+          const rows = (fixture.componentInstance as any).rows();
+          expect(rows.find((r: any) => r.entry.id === 'adv-1').unseen).toBe(true);
+        });
+      });
+
+      it("place the line under the other caregiver's newest row, skipping past my own", () => {
+        // Sam's own late write-up sits lowest in the feed but is not news to Sam, so the line
+        // stays under Dana's dose instead of dropping to the bottom.
+        const samsLateWriteUp = entry({
+          id: 'obs-mine',
+          kind: 'observation',
+          type: 'note',
+          timestamp: yesterday - HOUR,
+          recordedBy: { id: 'u2', displayName: 'Sam Nightshift' },
+          display: {
+            id: 'obs-mine',
+            observedAt: yesterday - HOUR,
+            createdAt: now,
+            entries: [{ type: 'note', metadata: { text: 'my own late write-up' } }],
+          },
+        });
+        apiMock.get.mockImplementation((path: string) => {
+          if (path === '/medications') return of(medications);
+          if (path.endsWith('/episodes')) return of(episodes);
+          if (path.endsWith('/whats-new')) return of(whatsNew);
+          return of({ ...timelineResponse, entries: [dose, observation, samsLateWriteUp] });
+        });
+        signedInAs('u2');
+        const fixture = render();
+        expect(fixture.componentInstance.watermarkAfterEntryId()).toBe('int-1');
+      });
+    });
+
     // The deliberate-ack rule (frontend.md → While You Were Asleep): a caregiver who opens the
     // journal, gets pulled away and closes the tab has not consumed the briefing.
     it('never acks from scrolling — only the button does', () => {

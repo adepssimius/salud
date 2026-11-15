@@ -1,4 +1,4 @@
-import { SQL, and, eq, gt, gte } from 'drizzle-orm';
+import { SQL, and, eq, gt, gte, ne, sql } from 'drizzle-orm';
 import { advisories, interventions, observations } from '../../db/schema';
 
 /**
@@ -30,7 +30,11 @@ export function whatsNewSince(lastSeenAt: number | null, nowTs: number): number 
 }
 
 /**
- * Observations since the watermark, on **log** time (`createdAt`), inclusive.
+ * Observations since the watermark, on **log** time (`createdAt`), inclusive — excluding the
+ * viewer's own. An entry the viewer recorded themselves is never "new since you last looked" for
+ * them (api.md → While You Were Asleep); other caregivers' entries still count. Author-scoped, like
+ * the watermark itself: the same row is new to one caregiver and not to the one who wrote it.
+ * `recorded_by_user_id` is NOT NULL on both tables, so a plain `<>` drops no rows to SQL NULL logic.
  *
  * Log rather than clinical time because of what this feature is for: "what happened that I haven't
  * seen". A 2 AM observation written up at 6 AM is unseen by the caregiver who last looked at 5 AM,
@@ -39,7 +43,8 @@ export function whatsNewSince(lastSeenAt: number | null, nowTs: number): number 
  *
  * **This must stay on the same column as `WhatsNewService`'s `getTimeline({ sinceCreatedAt })`.**
  * These two feed the dashboard card's `eventCount` and the WYWA page's `events` respectively, and
- * `dashboard.e2e-spec.ts` asserts the two agree. Move one, move the other.
+ * `dashboard.e2e-spec.ts` asserts the two agree. Move one, move the other. The same goes for the
+ * author exclusion, which the page applies through `isNewToViewer` below.
  *
  * Selection and display are now different axes: entries still show and sort by clinical time, so a
  * 6 AM briefing can legitimately contain an entry stamped 2 AM, in 2 AM's position.
@@ -47,17 +52,52 @@ export function whatsNewSince(lastSeenAt: number | null, nowTs: number): number 
  * Inclusive `>=` here vs. strict `>` on advisories below is deliberate, not an oversight — it
  * matches observations.service / interventions.service, whose filters drop rows when `ts < from`.
  */
-export function observationsSince(patientId: string, since: number): SQL | undefined {
-  return and(eq(observations.patientId, patientId), gte(observations.createdAt, new Date(since * 1000)));
+export function observationsSince(patientId: string, since: number, viewerUserId: string): SQL | undefined {
+  return and(
+    eq(observations.patientId, patientId),
+    gte(observations.createdAt, new Date(since * 1000)),
+    ne(observations.recordedByUserId, viewerUserId),
+  );
 }
 
-/** Interventions since the watermark, on log time (`createdAt`). See `observationsSince`. */
-export function interventionsSince(patientId: string, since: number): SQL | undefined {
-  return and(eq(interventions.patientId, patientId), gte(interventions.createdAt, new Date(since * 1000)));
+/** Interventions since the watermark, on log time (`createdAt`), not the viewer's own. See `observationsSince`. */
+export function interventionsSince(patientId: string, since: number, viewerUserId: string): SQL | undefined {
+  return and(
+    eq(interventions.patientId, patientId),
+    gte(interventions.createdAt, new Date(since * 1000)),
+    ne(interventions.recordedByUserId, viewerUserId),
+  );
 }
 
 /**
- * Advisories since the watermark — **every** type, and **including acknowledged ones**.
+ * Whether an event counts as new *to this viewer*: never when they logged it themselves.
+ *
+ * The in-memory twin of the `ne(recordedByUserId, viewerUserId)` clause in the two predicates above,
+ * for `WhatsNewService`, which selects through `getTimeline` and so filters rows rather than SQL.
+ * The rule (api.md → While You Were Asleep): you have, by definition, seen what you wrote — a
+ * reading you logged at 3 AM must not come back to you as news at 6 AM. Keyed on the author id the
+ * timeline already resolves (`recordedBy.id`), so it needs no extra query.
+ */
+export function isNewToViewer(recordedByUserId: string | null | undefined, viewerUserId: string): boolean {
+  return recordedByUserId !== viewerUserId;
+}
+
+/**
+ * Advisories since the watermark — **every** type, and **including acknowledged ones** — except
+ * those tripped by the viewer's own entry.
+ *
+ * An advisory has no author, but most point back at the event that fired it through
+ * `contextType`/`contextId` (observation | intervention; *not* `sourceType`/`sourceId`, which name
+ * the guideline, embodiment, reaction or protocol behind it). When that entry was recorded by the
+ * viewer, the advisory is theirs as much as the entry is, and is not new to them (api.md → While You
+ * Were Asleep); every other caregiver still gets it. An advisory with no context entry, or whose
+ * entry someone else wrote, is unaffected. This only decides what counts as *new* — the advisory
+ * itself still shows at dose time, on the timeline, in the advisory list and on the ER Brief.
+ *
+ * The exclusion is a correlated `NOT EXISTS` per context table rather than a join or `NOT IN`:
+ * `NOT EXISTS` is two-valued, so a NULL `contextId` can't turn the whole predicate NULL and drop
+ * the row, it reads identically on SQLite and Postgres, and it is an index lookup on the entry's
+ * primary key — the dashboard tally stays a single `SELECT patient_id`.
  *
  * Two things differ from the event predicates above, both on purpose:
  *   - `createdAt` (when the row was written), not a clinical timestamp. An advisory has no clinical
@@ -70,8 +110,26 @@ export function interventionsSince(patientId: string, since: number): SQL | unde
  * both miss the other advisory types and double-count that one. No producer of `protocol_fired`
  * exists yet, so no test can catch a regression here — hence the comment.
  */
-export function advisoriesSince(patientId: string, since: number): SQL | undefined {
-  return and(eq(advisories.patientId, patientId), gt(advisories.createdAt, new Date(since * 1000)));
+export function advisoriesSince(patientId: string, since: number, viewerUserId: string): SQL | undefined {
+  return and(
+    eq(advisories.patientId, patientId),
+    gt(advisories.createdAt, new Date(since * 1000)),
+    notTrippedByViewer(observations, 'observation', viewerUserId),
+    notTrippedByViewer(interventions, 'intervention', viewerUserId),
+  );
+}
+
+function notTrippedByViewer(
+  table: typeof observations | typeof interventions,
+  contextType: 'observation' | 'intervention',
+  viewerUserId: string,
+): SQL {
+  return sql`not exists (
+    select 1 from ${table}
+    where ${table.id} = ${advisories.contextId}
+      and ${advisories.contextType} = ${contextType}
+      and ${table.recordedByUserId} = ${viewerUserId}
+  )`;
 }
 
 /**

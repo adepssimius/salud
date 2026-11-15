@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { advisories, careTeamMemberships, interventionSchedules } from '../../db/schema';
 import { TimelineService } from '../timeline/timeline.service';
-import { advisoriesSince, isNowDue, whatsNewSince } from './whats-new-window';
+import { advisoriesSince, isNewToViewer, isNowDue, whatsNewSince } from './whats-new-window';
 import { AckWhatsNewResponse, TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
 import { normalizeTs } from '../persistence/time';
 
@@ -40,10 +40,16 @@ export class WhatsNewService {
     const timeline = await this.timelineService.getTimeline(patientId, userId, { sinceCreatedAt: since });
     // The timeline merge only carries protocol_fired advisories (it's built for the dose-marker/
     // episode view); whats-new wants every advisory type that's fired since the watermark.
-    const events = (timeline.entries as TimelineEntry[]).filter((e) => e.kind !== 'advisory');
+    // The caller's own entries are never news to them — the same exclusion observationsSince/
+    // interventionsSince apply in SQL for the dashboard's eventCount, so the card and this agree.
+    const events = (timeline.entries as TimelineEntry[]).filter(
+      (e) => e.kind !== 'advisory' && isNewToViewer(e.recordedBy?.id, userId),
+    );
 
     const db = this.db.db as any;
-    const advisoryRows = await db.select().from(advisories).where(advisoriesSince(patientId, since));
+    // Excludes advisories the caller's own entries tripped — same predicate as the dashboard's
+    // advisoryCount (whats-new-window.ts → advisoriesSince).
+    const advisoryRows = await db.select().from(advisories).where(advisoriesSince(patientId, since, userId));
     const advisoriesFired = advisoryRows.map((r: any) => ({
       id: r.id,
       patientId: r.patientId,

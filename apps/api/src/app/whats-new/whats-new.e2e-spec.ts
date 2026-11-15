@@ -158,6 +158,14 @@ describe('While You Were Asleep (e2e)', () => {
       .expect(201);
     const patientId = created.body.id;
     const token = solo.token;
+    // The partner who writes it up: your own entries are never new to you (see the test below), so
+    // the reader here must not be the author.
+    const partner = await registerAndLogin(app);
+    await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/care-team`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ userId: partner.userId, role: 'co-parent' })
+      .expect(201);
 
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/whats-new/ack`)
@@ -167,7 +175,7 @@ describe('While You Were Asleep (e2e)', () => {
     // Clinically 25 hours ago, written right now.
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/observations`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${partner.token}`)
       .send({
         observedAt: new Date(Date.now() - 25 * 3600_000).toISOString(),
         entries: [{ type: 'temperature', metadata: { value: 38.4, unit: 'C', method: 'oral' } }],
@@ -190,5 +198,96 @@ describe('While You Were Asleep (e2e)', () => {
       .expect(200);
     const row = dashboard.body.whatsNew.find((r: any) => r.patientId === patientId);
     expect(row.eventCount).toBe(wywa.body.events.length);
+  });
+
+  // The reported bug: log a temperature, and it is presented back to you as unread. An entry you
+  // wrote yourself is never "new since you last looked" for you — observation or intervention —
+  // while the other caregiver on the team still gets it.
+  it("never presents the requester's own entries as new, but still shows them to other caregivers", async () => {
+    const author = await registerAndLogin(app);
+    const reader = await registerAndLogin(app);
+    const created = await request(app.getHttpServer())
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ fullName: 'Own Entries Kid', dateOfBirth: '2019-09-09', sexAtBirth: 'female', myRole: 'parent' })
+      .expect(201);
+    const pid = created.body.id;
+    await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/care-team`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ userId: reader.userId, role: 'co-parent' })
+      .expect(201);
+
+    const temp = await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/observations`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({
+        observedAt: new Date().toISOString(),
+        entries: [{ type: 'temperature', metadata: { value: 38.6, unit: 'C', method: 'oral' } }],
+      })
+      .expect(201);
+    const dressing = await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/interventions`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ performedAt: new Date().toISOString(), type: 'dressing_change', bodyLocation: 'Left knee', side: 'left' })
+      .expect(201);
+    // An override dose is flagged atypical, which writes an advisory pointing back at the dose
+    // (contextType/contextId) — the author tripped it, so it is not news to the author either.
+    const med = await request(app.getHttpServer())
+      .post('/api/medications')
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ name: 'own-entries-med' })
+      .expect(201);
+    const emb = await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/embodiments`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ label: 'own-entries suspension', unitType: 'ml' })
+      .expect(201);
+    const dose = await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/interventions`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({
+        performedAt: new Date().toISOString(),
+        type: 'medication_dose',
+        medicationId: med.body.id,
+        medicationEmbodimentId: emb.body.id,
+        doseSource: 'override',
+        amountMg: 120,
+      })
+      .expect(201);
+    // The reader's own entry, so the author's view is shown to still carry other people's rows.
+    const readerObs = await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/observations`)
+      .set('Authorization', `Bearer ${reader.token}`)
+      .send({ observedAt: new Date().toISOString(), entries: [{ type: 'note', metadata: { text: 'asleep at 3' } }] })
+      .expect(201);
+
+    const authorView = await request(app.getHttpServer())
+      .get(`/api/patients/${pid}/whats-new`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+    expect(authorView.body.events.map((e: any) => e.id)).toEqual([readerObs.body.id]);
+    expect(authorView.body.advisoriesFired).toEqual([]);
+
+    const readerView = await request(app.getHttpServer())
+      .get(`/api/patients/${pid}/whats-new`)
+      .set('Authorization', `Bearer ${reader.token}`)
+      .expect(200);
+    expect(readerView.body.events.map((e: any) => e.id).sort()).toEqual(
+      [temp.body.id, dressing.body.id, dose.body.id].sort(),
+    );
+    const readerAdvisories = readerView.body.advisoriesFired;
+    expect(readerAdvisories.some((a: any) => a.type === 'atypical_dose')).toBe(true);
+    expect(readerAdvisories.every((a: any) => a.contextType === 'intervention' && a.contextId === dose.body.id)).toBe(
+      true,
+    );
+
+    // Hidden only from "new": the advisory itself is still there for the author wherever it is
+    // shown in its own right.
+    const authorAdvisories = await request(app.getHttpServer())
+      .get(`/api/patients/${pid}/advisories`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+    expect(authorAdvisories.body.some((a: any) => a.contextId === dose.body.id)).toBe(true);
   });
 });
