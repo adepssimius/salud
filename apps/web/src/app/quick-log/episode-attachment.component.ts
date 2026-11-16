@@ -24,6 +24,15 @@ export interface EpisodeOption {
  * The pre-attach itself is applied by the parent when it loads the episode list, not here: the
  * parent owns the form state, and a component that patched its own inputs would fight the
  * `resolveEpisodeId` deep link the episode-detail page arrives with.
+ *
+ * **Correcting an entry** (frontend.md → "Correcting an entry") configures two things the create
+ * forms leave at their defaults:
+ * - `allowCreateNew = false` drops "Start a new episode" — a correction fixes what was recorded,
+ *   it does not open a frame. With nothing else to disclose, "this resolves…" then renders inline
+ *   rather than behind a More that would open onto a single checkbox (or onto nothing).
+ * - `lockedIds` are episodes the entry must stay part of — the one it started, which the API
+ *   refuses to unlink (CANNOT_UNLINK_STARTED_EPISODE). They render selected, can't be toggled, are
+ *   never emitted as deselected, and are left out of what "this resolves…" counts.
  */
 @Component({
   selector: 'app-episode-attachment',
@@ -47,6 +56,7 @@ export interface EpisodeOption {
             Adding to&nbsp;<strong>{{ episodes[0].name }}</strong>
           </span>
           <button
+            *ngIf="!isLocked(episodes[0].id)"
             type="button"
             class="link chip-remove"
             [attr.aria-label]="'Detach from ' + episodes[0].name"
@@ -71,6 +81,8 @@ export interface EpisodeOption {
               class="chip"
               *ngFor="let ep of episodes"
               [class.chip-on]="isSelected(ep.id)"
+              [class.chip-locked]="isLocked(ep.id)"
+              [disabled]="isLocked(ep.id)"
               [attr.aria-pressed]="isSelected(ep.id)"
               (click)="toggle(ep.id)"
             >
@@ -80,6 +92,9 @@ export interface EpisodeOption {
         </ng-container>
       </ng-template>
 
+      <span class="muted small locked-note" *ngIf="hasLockedEpisode()">This entry started this episode</span>
+
+      <ng-container *ngIf="allowCreateNew; else resolveOnly">
       <button type="button" class="link small" (click)="moreOpen.set(!moreOpen())">
         {{ moreOpen() ? 'Less' : 'More' }}
       </button>
@@ -99,11 +114,22 @@ export interface EpisodeOption {
             placeholder="e.g. Fever"
           />
         </label>
-        <label class="inline-check" *ngIf="selectedIds.length">
-          <input type="checkbox" [checked]="resolveSelected" (change)="onResolveToggle($event)" />
-          <span>This resolves the selected episode{{ selectedIds.length > 1 ? 's' : '' }}</span>
-        </label>
+        <ng-container *ngTemplateOutlet="resolveOption"></ng-container>
       </div>
+      </ng-container>
+
+      <!-- No "Start a new episode" to disclose: the resolve option stands on its own, and with no
+           resolvable episode nothing renders at all — no More opening onto an empty panel. -->
+      <ng-template #resolveOnly>
+        <ng-container *ngTemplateOutlet="resolveOption"></ng-container>
+      </ng-template>
+
+      <ng-template #resolveOption>
+        <label class="inline-check" *ngIf="resolvableIds().length">
+          <input type="checkbox" [checked]="resolveSelected" (change)="onResolveToggle($event)" />
+          <span>This resolves the selected episode{{ resolvableIds().length > 1 ? 's' : '' }}</span>
+        </label>
+      </ng-template>
     </div>
   `,
   styles: [
@@ -133,6 +159,11 @@ export interface EpisodeOption {
         font-size: 0.85rem;
         line-height: 1;
       }
+      /* A locked chip is selected and stays that way; it must not read as a dimmed, unselected one. */
+      .chip-locked:disabled {
+        opacity: 1;
+        cursor: default;
+      }
       .more {
         display: flex;
         flex-direction: column;
@@ -148,6 +179,10 @@ export class EpisodeAttachmentComponent {
   @Input() createNew = false;
   @Input() newEpisodeName = '';
   @Input() resolveSelected = false;
+  /** False on a correction: no "Start a new episode" (see the class comment). */
+  @Input() allowCreateNew = true;
+  /** Episodes that stay selected whatever the caregiver taps — on a correction, the one it started. */
+  @Input() lockedIds: string[] = [];
 
   @Output() selectedIdsChange = new EventEmitter<string[]>();
   @Output() createNewChange = new EventEmitter<boolean>();
@@ -166,14 +201,28 @@ export class EpisodeAttachmentComponent {
     return this.selectedIds.includes(id);
   }
 
+  isLocked(id: string): boolean {
+    return this.lockedIds.includes(id);
+  }
+
+  hasLockedEpisode(): boolean {
+    return this.episodes.some((ep) => this.isLocked(ep.id));
+  }
+
+  /** Selected episodes "this resolves…" applies to — never a locked one. */
+  resolvableIds(): string[] {
+    return this.selectedIds.filter((id) => !this.isLocked(id));
+  }
+
   toggle(id: string) {
+    if (this.isLocked(id)) return;
     const next = this.isSelected(id)
       ? this.selectedIds.filter((x) => x !== id)
       : [...this.selectedIds, id];
     this.selectedIdsChange.emit(next);
     // `resolvesEpisodeIds ⊆ episodeIds` is a service-side invariant; detaching the last episode
     // while "this resolves…" is still ticked would post a body that violates it.
-    if (!next.length && this.resolveSelected) this.resolveSelectedChange.emit(false);
+    if (!next.some((x) => !this.isLocked(x)) && this.resolveSelected) this.resolveSelectedChange.emit(false);
   }
 
   onCreateNewToggle(event: Event) {

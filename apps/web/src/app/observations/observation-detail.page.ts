@@ -54,7 +54,13 @@ interface EpisodeLink {
   imports: [CommonModule, PhotoThumbnailComponent, DocumentLinkComponent, RevisionHistoryComponent],
   template: `
     <div class="card">
-      <button type="button" class="link" (click)="backToJournal()">&larr; Journal</button>
+      <!-- The one way out to change this entry: always visible in the loaded state, never behind a
+           menu — a hidden affordance is how patient editing became unfindable once before
+           (frontend.md → "Observation & intervention detail"). -->
+      <div class="page-nav">
+        <button type="button" class="link" (click)="backToJournal()">&larr; Journal</button>
+        <button type="button" class="secondary edit-button" *ngIf="observation()" (click)="edit()">Edit</button>
+      </div>
 
       <p class="error" *ngIf="error()">{{ error() }}</p>
 
@@ -125,7 +131,7 @@ interface EpisodeLink {
         <section>
           <h2>History</h2>
           <app-revision-history entityType="observation" [entityId]="obs.id"></app-revision-history>
-          <p class="muted small">Corrections are recorded here; this page does not edit.</p>
+          <p class="muted small">Earlier versions are kept here each time this entry is corrected.</p>
         </section>
       </ng-container>
     </div>
@@ -138,8 +144,11 @@ interface EpisodeLink {
         flex-direction: column;
         gap: 0.85rem;
       }
-      .link {
-        align-self: flex-start;
+      .page-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
       }
       .muted {
         margin: 0;
@@ -318,6 +327,10 @@ export class ObservationDetailPage implements OnInit {
 
   goToEpisode(episodeId: string) {
     this.router.navigate(['/episodes', episodeId]);
+  }
+
+  edit() {
+    this.router.navigate(['/observations', this.observationId, 'edit']);
   }
 
   backToJournal() {
