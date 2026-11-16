@@ -726,7 +726,7 @@ export class NewInterventionPage implements OnInit {
       this.medicationResults.set([]);
       return;
     }
-    this.api.get<Medication[]>('/medications', { q }).subscribe({
+    this.api.get<Medication[]>('/medications', { q, activeOnly: true }).subscribe({
       next: (res) => this.medicationResults.set(res),
       error: () => this.medicationResults.set([]),
     });

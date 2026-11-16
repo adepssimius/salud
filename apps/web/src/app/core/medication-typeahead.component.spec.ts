@@ -42,7 +42,8 @@ describe('MedicationTypeaheadComponent', () => {
     const fixture = build();
     type(fixture, 'amox');
 
-    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'amox' });
+    // Active medications only by default: every picker that uses this starts something new.
+    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'amox', activeOnly: true });
     expect(fixture.nativeElement.textContent).toContain('amoxicillin');
     // Brand names are how a caregiver holding the box knows they found the right row.
     expect(fixture.nativeElement.textContent).toContain('Amoxil');
@@ -61,6 +62,23 @@ describe('MedicationTypeaheadComponent', () => {
     expect(emitted).toEqual([AMOX]);
     expect(fixture.componentInstance.query()).toBe('');
     expect(fixture.componentInstance.results().length).toBe(0);
+  });
+
+  it('searches the whole catalog when a host turns activeOnly off', () => {
+    const fixture = TestBed.createComponent(MedicationTypeaheadComponent);
+    fixture.componentInstance.activeOnly = false;
+    fixture.detectChanges();
+    type(fixture, 'amox');
+    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'amox' });
+  });
+
+  it('still renders a selected medication that has been marked inactive', () => {
+    const fixture = build();
+    // activeOnly narrows the search, not the display: a form showing an existing choice must not
+    // lose it because the medication was retired since.
+    fixture.componentInstance.selected = { ...AMOX, defaultActive: false } as any;
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.chosen-med').textContent).toContain('amoxicillin');
   });
 
   it('shows the chosen medication with a way back to the search', () => {
