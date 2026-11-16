@@ -4,27 +4,86 @@ import { MedicationDetailPage } from './medication-detail.page';
 import { ApiClientService } from '../core/api-client.service';
 import { ActivatedRoute, Router } from '@angular/router';
 
+const MED = {
+  id: 'm1',
+  name: 'acetaminophen',
+  brandNames: [],
+  description: null,
+  tags: [],
+  defaultActive: true,
+  createdAt: 0,
+  updatedAt: 0,
+};
+
+const EMB = {
+  id: 'e1',
+  medicationId: 'm1',
+  label: '500mg tablet',
+  concentrationMgPerMl: null,
+  concentrationMg: null,
+  concentrationVolumeMl: null,
+  strengthMgPerUnit: 500,
+  unitType: 'tablet' as const,
+  notes: null,
+  atHome: false,
+  expiresAt: null,
+  runningLow: false,
+  runningLowFlaggedByUserId: null,
+  runningLowFlaggedAt: null,
+};
+
+const GUIDE = {
+  id: 'g1',
+  medicationId: 'm1',
+  medicationEmbodimentId: null,
+  source: 'AAP',
+  type: 'weight_based' as const,
+  mgPerKg: 15,
+  maxMgPerDose: 1000,
+  maxMgPerDay: 4000,
+  minIntervalHours: 4,
+  ageMinMonths: null,
+  ageMaxMonths: null,
+  doseMg: null,
+  doseMl: null,
+  pillCount: null,
+  frequencyPerDay: null,
+  notes: null,
+};
+
 describe('MedicationDetailPage', () => {
   let apiMock: any;
   let routerMock: any;
+
+  function withRows(embodiments: any[] = [EMB], guidelines: any[] = [GUIDE], med: any = MED) {
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/embodiments')) return of(embodiments);
+      if (path.includes('/guidelines')) return of(guidelines);
+      return of(med);
+    });
+  }
+
+  function build() {
+    const fixture = TestBed.createComponent(MedicationDetailPage);
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  function buttons(fixture: any, text: string): HTMLButtonElement[] {
+    return Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).filter(
+      (b) => b.textContent?.trim() === text,
+    );
+  }
 
   beforeEach(async () => {
     apiMock = {
       get: jest.fn().mockImplementation((path: string) => {
         if (path.includes('/embodiments') || path.includes('/guidelines')) return of([]);
-        return of({
-          id: 'm1',
-          name: 'acetaminophen',
-          brandNames: [],
-          description: null,
-          tags: [],
-          defaultActive: true,
-          createdAt: 0,
-          updatedAt: 0,
-        });
+        return of(MED);
       }),
       post: jest.fn(),
       patch: jest.fn(),
+      delete: jest.fn(),
     };
     routerMock = { navigate: jest.fn() };
 
@@ -42,180 +101,96 @@ describe('MedicationDetailPage', () => {
   });
 
   it('loads medication, embodiments, and guidelines on init', () => {
-    apiMock.get.mockImplementation((path: string) => {
-      if (path.includes('/embodiments')) {
-        return of([
-          {
-            id: 'e1',
-            medicationId: 'm1',
-            label: '500mg tablet',
-            concentrationMgPerMl: null,
-            strengthMgPerUnit: 500,
-            unitType: 'tablet',
-            notes: null,
-            atHome: false,
-            expiresAt: null,
-            runningLow: false,
-            runningLowFlaggedByUserId: null,
-            runningLowFlaggedAt: null,
-          },
-        ]);
-      }
-      if (path.includes('/guidelines')) {
-        return of([]);
-      }
-      return of({ id: 'm1', name: 'acetaminophen', brandNames: [], description: null, tags: [], defaultActive: true, createdAt: 0, updatedAt: 0 });
-    });
-
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
+    withRows();
+    const comp = build().componentInstance;
 
     expect(comp.medication()?.name).toBe('acetaminophen');
     expect(comp.embodiments().length).toBe(1);
+    expect(comp.guidelines().length).toBe(1);
+  });
+
+  // Two controls hidden behind a condition that held in the common case shipped broken the same
+  // week this editor was written. Every Edit here depends only on the page having loaded.
+  it('shows an Edit control on the header, every embodiment and every guideline', () => {
+    withRows([EMB, { ...EMB, id: 'e2', label: 'syrup' }], [GUIDE]);
+    const fixture = build();
+
+    expect(buttons(fixture, 'Edit').length).toBe(4);
+  });
+
+  it('still offers Edit on the header of an inactive medication with nothing under it', () => {
+    withRows([], [], { ...MED, defaultActive: false });
+    const fixture = build();
+
+    expect(buttons(fixture, 'Edit').length).toBe(1);
+    expect(fixture.nativeElement.textContent).toContain('Inactive');
+  });
+
+  it('opens the header editor in place of the header', () => {
+    withRows();
+    const fixture = build();
+
+    buttons(fixture, 'Edit')[0].click();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-medication-header-editor')).not.toBeNull();
+  });
+
+  it('opens one embodiment editor at a time, in place of its row', () => {
+    withRows([EMB, { ...EMB, id: 'e2', label: 'syrup' }], []);
+    const fixture = build();
+    const comp = fixture.componentInstance;
+
+    comp.editEmbodiment('e1');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('app-embodiment-editor').length).toBe(1);
+
+    comp.addEmbodiment();
+    fixture.detectChanges();
+    expect(comp.editingEmbodimentId()).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('app-embodiment-editor').length).toBe(1);
+  });
+
+  it('closes the editors and reloads after a catalog change', () => {
+    withRows();
+    const comp = build().componentInstance;
+    comp.editGuideline('g1');
+    apiMock.get.mockClear();
+
+    comp.onCatalogChanged();
+
+    expect(comp.editingGuidelineId()).toBeNull();
+    expect(apiMock.get).toHaveBeenCalledWith('/medications/m1');
+    expect(apiMock.get).toHaveBeenCalledWith('/medications/m1/embodiments');
+    expect(apiMock.get).toHaveBeenCalledWith('/medications/m1/guidelines');
+  });
+
+  it('goes back to the list after the medication is deleted', () => {
+    withRows();
+    const fixture = build();
+    fixture.componentInstance.editingHeader.set(true);
+    fixture.detectChanges();
+
+    jest.spyOn(window, 'confirm').mockReturnValue(true);
+    apiMock.delete.mockReturnValue(of(undefined));
+    buttons(fixture, 'Delete medication')[0].click();
+
+    expect(apiMock.delete).toHaveBeenCalledWith('/medications/m1');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/medications']);
   });
 
   it('toggles runningLow via PATCH', () => {
-    apiMock.patch.mockReturnValue(of({ id: 'e1', runningLow: true }));
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
+    apiMock.patch.mockReturnValue(of({ ...EMB, runningLow: true }));
+    const comp = build().componentInstance;
 
-    const embodiment = {
-      id: 'e1',
-      medicationId: 'm1',
-      label: 'x',
-      concentrationMgPerMl: null,
-      concentrationMg: null,
-      concentrationVolumeMl: null,
-      strengthMgPerUnit: null,
-      unitType: 'tablet' as const,
-      notes: null,
-      atHome: false,
-      expiresAt: null,
-      runningLow: false,
-      runningLowFlaggedByUserId: null,
-      runningLowFlaggedAt: null,
-    };
-    comp.toggleRunningLow(embodiment, { target: { checked: true } } as unknown as Event);
+    comp.toggleRunningLow(EMB, { target: { checked: true } } as unknown as Event);
     expect(apiMock.patch).toHaveBeenCalledWith('/embodiments/e1', { runningLow: true });
   });
 
-  // The point of the pair: the form posts what the bottle prints, and the server does the
-  // division. A UI that divided here would just move the arithmetic error to the client.
-  it('creates an embodiment posting the printed concentration pair', () => {
-    apiMock.post.mockReturnValue(of({ id: 'e2' }));
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    comp.embodimentForm.setValue({
-      label: '5mL syrup',
-      unitType: 'ml',
-      concentrationMg: 160,
-      concentrationVolumeMl: 5,
-      strengthMgPerUnit: null,
-    });
-    expect(comp.derivedConcentration()).toBe(32);
-    comp.createEmbodiment();
-    expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/embodiments', {
-      label: '5mL syrup',
-      unitType: 'ml',
-      concentrationMg: 160,
-      concentrationVolumeMl: 5,
-      strengthMgPerUnit: undefined,
-    });
-  });
-
-  it('omits the concentration entirely for a solid form, rather than sending a bare 1 mL', () => {
-    apiMock.post.mockReturnValue(of({ id: 'e3' }));
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    // The volume box defaults to 1; a tablet leaves the mg box empty, and "per 1 mL" alone means
-    // nothing -- sending it would 400 with CONCENTRATION_PAIR_INCOMPLETE.
-    comp.embodimentForm.setValue({
-      label: '500 mg tablet',
-      unitType: 'tablet',
-      concentrationMg: null,
-      concentrationVolumeMl: 1,
-      strengthMgPerUnit: 500,
-    });
-    comp.createEmbodiment();
-    expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/embodiments', {
-      label: '500 mg tablet',
-      unitType: 'tablet',
-      concentrationMg: undefined,
-      concentrationVolumeMl: undefined,
-      strengthMgPerUnit: 500,
-    });
-  });
-
-  it('does not flag the untouched form, where the volume box is pre-filled with 1', () => {
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    // Regression: a symmetric "exactly one filled" check made the *starting* state incomplete
-    // (no mg, 1 mL), which disabled Add for every tablet.
-    expect(comp.concentrationPairIncomplete()).toBe(false);
-    expect(comp.embodimentForm.getRawValue().concentrationVolumeMl).toBe(1);
-  });
-
-  it('flags a half-filled concentration pair before it can be submitted', () => {
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    comp.embodimentForm.setValue({
-      label: 'syrup',
-      unitType: 'ml',
-      concentrationMg: 160,
-      concentrationVolumeMl: null,
-      strengthMgPerUnit: null,
-    });
-    expect(comp.concentrationPairIncomplete()).toBe(true);
-    expect(comp.derivedConcentration()).toBeNull();
-  });
-
   it('navigates back to the medications list', () => {
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
+    const comp = build().componentInstance;
     comp.backToList();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/medications']);
-  });
-  it('swaps the guideline fields when the type changes', () => {
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    // Regression test for a frozen computed(): reading a form control's plain `.value` inside
-    // computed() registers no signal dependency, so isWeightBased() evaluated once and cached
-    // true forever -- the age-band form was unreachable through the UI.
-    expect(comp.isWeightBased()).toBe(true);
-    comp.guidelineForm.controls.type.setValue('age_band');
-    expect(comp.isWeightBased()).toBe(false);
-  });
-
-  it('requires maxMgPerDay for both types, and the per-type fields', () => {
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    comp.guidelineForm.patchValue({ source: 'AAP', type: 'weight_based', mgPerKg: 15, maxMgPerDose: 1000, minIntervalHours: 4 });
-    // maxMgPerDay still blank -- it is required server-side for both types and had no validator
-    // here at all, so the form submitted, 400'd, and nothing visible happened.
-    expect(comp.guidelineForm.invalid).toBe(true);
-    comp.guidelineForm.patchValue({ maxMgPerDay: 4000 });
-    expect(comp.guidelineForm.valid).toBe(true);
-
-    comp.guidelineForm.controls.type.setValue('age_band');
-    // The weight-based fields stop being required; the age-band ones start.
-    expect(comp.guidelineForm.invalid).toBe(true);
-    comp.guidelineForm.patchValue({ ageMinMonths: 24, ageMaxMonths: 72, doseMg: 160, frequencyPerDay: 4 });
-    expect(comp.guidelineForm.valid).toBe(true);
   });
 
   it('shows an error instead of a blank page when the medication fails to load', () => {
@@ -224,8 +199,7 @@ describe('MedicationDetailPage', () => {
       return throwError(() => ({ status: 500, error: { message: 'boom' } }));
     });
 
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
+    const fixture = build();
     const comp = fixture.componentInstance;
 
     expect(comp.medication()).toBeNull();
@@ -234,45 +208,15 @@ describe('MedicationDetailPage', () => {
   });
 
   it('rolls the checkbox back and says so when the cabinet PATCH fails', () => {
-    apiMock.get.mockImplementation((path: string) => {
-      if (path.includes('/embodiments')) {
-        return of([{ id: 'e1', medicationId: 'm1', label: 'x', unitType: 'tablet', atHome: false, runningLow: false }]);
-      }
-      if (path.includes('/guidelines')) return of([]);
-      return of({ id: 'm1', name: 'acetaminophen', brandNames: [], description: null, tags: [], defaultActive: true, createdAt: 0, updatedAt: 0 });
-    });
+    withRows([{ ...EMB, label: 'x' }], []);
     apiMock.patch.mockReturnValue(throwError(() => ({ status: 500, error: { message: 'boom' } })));
 
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
+    const comp = build().componentInstance;
     comp.toggleRunningLow(comp.embodiments()[0], { target: { checked: true } } as unknown as Event);
 
     // A failed PATCH used to leave the box checked while the server disagreed -- on runningLow
     // that means the shopping list silently disagrees with the screen.
     expect(comp.embodiments()[0].runningLow).toBe(false);
     expect(comp.cabinetError()).toBeTruthy();
-  });
-
-  it('reports a failed guideline create instead of doing nothing', () => {
-    apiMock.post.mockReturnValue(throwError(() => ({ status: 400, error: { message: ['maxMgPerDay must be a number'] } })));
-    const fixture = TestBed.createComponent(MedicationDetailPage);
-    fixture.detectChanges();
-    const comp = fixture.componentInstance;
-
-    comp.guidelineForm.patchValue({
-      source: 'AAP',
-      type: 'weight_based',
-      mgPerKg: 15,
-      maxMgPerDose: 1000,
-      minIntervalHours: 4,
-      maxMgPerDay: 4000,
-    });
-    comp.createGuideline();
-
-    expect(comp.guidelineError()).toBeTruthy();
-    expect(comp.guidelineSaving()).toBe(false);
-    expect(comp.showGuidelineForm()).toBe(false);
   });
 });

@@ -133,7 +133,7 @@ describe('NewInterventionPage', () => {
     const component = fixture.componentInstance;
 
     component.onMedicationQueryChange({ target: { value: 'tylenol' } } as unknown as Event);
-    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'tylenol' });
+    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'tylenol', activeOnly: true });
     expect(component.medicationResults().length).toBe(1);
 
     component.selectMedication(component.medicationResults()[0] ?? {
