@@ -205,7 +205,25 @@ describe('ObservationDetailPage', () => {
     const fixture = render();
     expect(apiMock.get).toHaveBeenCalledWith('/observations/obs-1/revisions');
     expect(fixture.nativeElement.textContent).toContain('History');
-    expect(fixture.nativeElement.textContent).toContain('this page does not edit');
+    expect(fixture.nativeElement.textContent).toContain(
+      'Earlier versions are kept here each time this entry is corrected.',
+    );
+    expect(fixture.nativeElement.textContent).not.toContain('this page does not edit');
+  });
+
+  it('shows an Edit button in the loaded state that opens the correction form', () => {
+    const fixture = render();
+    const edit = fixture.nativeElement.querySelector('.page-nav button.secondary') as HTMLButtonElement;
+    expect(edit).not.toBeNull();
+    expect(edit.textContent?.trim()).toBe('Edit');
+    edit.click();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/observations', 'obs-1', 'edit']);
+  });
+
+  it('shows no Edit button over a load error', () => {
+    apiMock.get.mockReturnValue(throwError(() => new Error('fail')));
+    const fixture = render();
+    expect(fixture.nativeElement.querySelector('.edit-button')).toBeNull();
   });
 
   it('shows an error when the observation itself fails to load', () => {
