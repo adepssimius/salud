@@ -6,7 +6,7 @@ import { medicationEmbodiments, medications } from '../../db/schema';
 import { CreateEmbodimentDto } from './dto/create-embodiment.dto';
 import { UpdateEmbodimentDto } from './dto/update-embodiment.dto';
 import { normalizeTs } from '../persistence/time';
-import { embodimentDependencies } from './catalog-dependencies';
+import { embodimentDependencies, embodimentDosingDependencies } from './catalog-dependencies';
 
 @Injectable()
 export class EmbodimentsService {
@@ -157,9 +157,11 @@ export class EmbodimentsService {
     const db = this.db.db as any;
     const updates: Record<string, any> = {};
     if (dto.label !== undefined) updates.label = dto.label;
-    Object.assign(updates, this.resolveConcentration(dto, existing));
-    if (dto.strengthMgPerUnit !== undefined) updates.strengthMgPerUnit = dto.strengthMgPerUnit;
-    if (dto.unitType !== undefined) updates.unitType = dto.unitType;
+    const dosing: Record<string, any> = this.resolveConcentration(dto, existing);
+    if (dto.strengthMgPerUnit !== undefined) dosing.strengthMgPerUnit = dto.strengthMgPerUnit;
+    if (dto.unitType !== undefined) dosing.unitType = dto.unitType;
+    await this.ensureDosingEditable(id, existing, dosing);
+    Object.assign(updates, dosing);
     if (dto.notes !== undefined) updates.notes = dto.notes;
     if (dto.atHome !== undefined) updates.atHome = dto.atHome;
     if (dto.expiresAt !== undefined) {
@@ -170,6 +172,43 @@ export class EmbodimentsService {
       await db.update(medicationEmbodiments).set(updates).where(eq(medicationEmbodiments.id, id));
     }
     return this.get(id);
+  }
+
+  // The fields that decide what "one unit" or "5 mL" of this form *means*. A logged dose keeps its
+  // embodiment id and shows the label live, and a schedule stores `doseMg` and `doseMl` side by
+  // side and copies `amountMl` onto every dose it logs -- so changing any of these in place, once
+  // something points at the row, silently rewrites what a recorded or scheduled amount means
+  // (api.md -> Embodiments, "Concentration lock"; ISSUES #47). The fix for a relabelled bottle is a
+  // new embodiment.
+  private static readonly DOSING_FIELDS = [
+    'concentrationMgPerMl',
+    'concentrationMg',
+    'concentrationVolumeMl',
+    'strengthMgPerUnit',
+    'unitType',
+  ] as const;
+
+  /**
+   * Refuse a PATCH that would *change* a dosing field on an embodiment a logged dose or a schedule
+   * references. "Change" is judged on the merged, normalised values `update()` is about to write,
+   * not on which keys the body carried, so a client echoing the stored row back succeeds.
+   *
+   * Consequence worth knowing: sending `concentrationMgPerMl` alone against a row that holds a label
+   * pair clears the pair (see resolveConcentration), so even an identical per-mL figure is a change
+   * here. A client echoing a pair-backed row must echo the pair.
+   *
+   * Only doses and schedules lock the row. A guideline or reaction pointing at it does not: neither
+   * stores an amount in this embodiment's units.
+   */
+  private async ensureDosingEditable(id: string, existing: Record<string, any>, next: Record<string, any>) {
+    const changed = EmbodimentsService.DOSING_FIELDS.some(
+      (field) => field in next && !sameDosingValue(existing[field], next[field]),
+    );
+    if (!changed) return;
+    const dependents = await embodimentDosingDependencies(this.db.db as any, id);
+    if (Object.keys(dependents).length) {
+      throw new ConflictException({ message: 'EMBODIMENT_CONCENTRATION_IN_USE', dependents });
+    }
   }
 
   async remove(id: string) {
@@ -185,4 +224,17 @@ export class EmbodimentsService {
     await db.delete(medicationEmbodiments).where(eq(medicationEmbodiments.id, id));
     return { deleted: true };
   }
+}
+
+/**
+ * Equality for a dosing field. Numbers compare with a relative tolerance because the derived
+ * per-mL figure is rounded to 1e-6 and round-trips through a double column on Postgres and a REAL
+ * on SQLite; null only equals null (clearing a value is a change).
+ */
+function sameDosingValue(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  }
+  return a === b;
 }

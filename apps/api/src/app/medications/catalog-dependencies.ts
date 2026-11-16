@@ -84,6 +84,19 @@ export async function embodimentDependencies(db: any, embodimentId: string): Pro
   });
 }
 
+/**
+ * The subset of `embodimentDependencies` that locks an embodiment's concentration, strength and
+ * unit type in place: logged doses and schedules, the two things that record an amount in this
+ * embodiment's units. Same key names as the delete refusal so one client-side reader serves both.
+ */
+export async function embodimentDosingDependencies(db: any, embodimentId: string): Promise<DependencyCounts> {
+  const [schedules, doses] = await Promise.all([
+    db.select({ id: interventionSchedules.id }).from(interventionSchedules).where(eq(interventionSchedules.medicationEmbodimentId, embodimentId)),
+    countInterventionsByMetadata(db, 'medicationEmbodimentId', embodimentId),
+  ]);
+  return nonZero({ schedules: schedules.length, interventions: doses });
+}
+
 export async function guidelineDependencies(db: any, guidelineId: string): Promise<DependencyCounts> {
   const [sourced, doses] = await Promise.all([
     db.select({ id: advisories.id }).from(advisories).where(eq(advisories.sourceId, guidelineId)),

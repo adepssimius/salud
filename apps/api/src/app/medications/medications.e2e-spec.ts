@@ -566,4 +566,139 @@ describe('Medications (e2e)', () => {
     expect(created.body.runningLowFlaggedAt).toEqual(expect.any(Number));
     expect(created.body.expiresAt).toEqual(expect.any(Number));
   });
+
+  // api.md -> Embodiments, "Concentration lock". Once a logged dose or a schedule records an amount
+  // in an embodiment's units, changing what those units mean in place would silently rewrite it.
+  describe('concentration lock', () => {
+    async function setup() {
+      const { token } = await registerAndLogin(app);
+      const auth = { Authorization: `Bearer ${token}` };
+      const med = await request(app.getHttpServer())
+        .post('/api/medications')
+        .set(auth)
+        .send({ name: `Lockamol ${Date.now()}-${Math.random().toString(36).slice(2)}` })
+        .expect(201);
+      const emb = await request(app.getHttpServer())
+        .post(`/api/medications/${med.body.id}/embodiments`)
+        .set(auth)
+        .send({ label: '160 mg/5 mL suspension', concentrationMg: 160, concentrationVolumeMl: 5, unitType: 'ml' })
+        .expect(201);
+      const patient = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set(auth)
+        .send({ fullName: 'Lock Patient', dateOfBirth: '2018-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201);
+      return { auth, medicationId: med.body.id, embodimentId: emb.body.id, patientId: patient.body.id };
+    }
+
+    const patch = (auth: Record<string, string>, id: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer()).patch(`/api/embodiments/${id}`).set(auth).send(body);
+
+    it('lets an unreferenced embodiment change its concentration in place', async () => {
+      const { auth, embodimentId } = await setup();
+      const res = await patch(auth, embodimentId, { concentrationMg: 100, concentrationVolumeMl: 5 }).expect(200);
+      expect(res.body.concentrationMgPerMl).toBe(20);
+      await patch(auth, embodimentId, { unitType: 'drop', strengthMgPerUnit: 2 }).expect(200);
+    });
+
+    it('refuses a concentration change once a logged dose references the embodiment', async () => {
+      const { auth, medicationId, embodimentId, patientId } = await setup();
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set(auth)
+        .send({
+          type: 'medication_dose',
+          doseSource: 'override',
+          performedAt: new Date().toISOString(),
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          amountMg: 160,
+          amountMl: 5,
+        })
+        .expect(201);
+
+      const refused = await patch(auth, embodimentId, { concentrationMg: 200 }).expect(409);
+      expect(refused.body.message).toBe('EMBODIMENT_CONCENTRATION_IN_USE');
+      expect(refused.body.dependents).toEqual({ interventions: 1 });
+
+      // Each of the other dosing fields is locked too, including replacing the pair with the same
+      // per-mL figure: that clears the printed pair, which is a change to the row.
+      await patch(auth, embodimentId, { unitType: 'tablet' }).expect(409);
+      await patch(auth, embodimentId, { strengthMgPerUnit: 5 }).expect(409);
+      await patch(auth, embodimentId, { concentrationMgPerMl: 32 }).expect(409);
+      await patch(auth, embodimentId, { concentrationVolumeMl: null }).expect(409);
+
+      const list = await request(app.getHttpServer())
+        .get(`/api/medications/${medicationId}/embodiments`)
+        .set(auth)
+        .expect(200);
+      expect(list.body[0]).toMatchObject({ concentrationMgPerMl: 32, concentrationMg: 160, concentrationVolumeMl: 5, unitType: 'ml' });
+    });
+
+    it('refuses a concentration change once a schedule references the embodiment', async () => {
+      const { auth, medicationId, embodimentId, patientId } = await setup();
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/schedules`)
+        .set(auth)
+        .send({
+          type: 'medication_dose',
+          label: 'Lockamol q6h',
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          doseMg: 160,
+          doseMl: 5,
+          frequencyHours: 6,
+          startAt: new Date().toISOString(),
+        })
+        .expect(201);
+
+      const refused = await patch(auth, embodimentId, { concentrationMg: 80, concentrationVolumeMl: 5 }).expect(409);
+      expect(refused.body.message).toBe('EMBODIMENT_CONCENTRATION_IN_USE');
+      expect(refused.body.dependents).toEqual({ schedules: 1 });
+    });
+
+    it('accepts an echo of the stored values, and free-text and cabinet edits, on a referenced embodiment', async () => {
+      const { auth, medicationId, embodimentId, patientId } = await setup();
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/schedules`)
+        .set(auth)
+        .send({
+          type: 'medication_dose',
+          label: 'Lockamol q6h',
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          doseMg: 160,
+          doseMl: 5,
+          frequencyHours: 6,
+          startAt: new Date().toISOString(),
+        })
+        .expect(201);
+
+      // A whole-row echo, the way an edit form submits: same pair, same unit type, no strength.
+      await patch(auth, embodimentId, {
+        label: '160 mg/5 mL suspension',
+        concentrationMg: 160,
+        concentrationVolumeMl: 5,
+        strengthMgPerUnit: null,
+        unitType: 'ml',
+      }).expect(200);
+
+      const expiresAt = '2028-06-01T00:00:00.000Z';
+      const edited = await patch(auth, embodimentId, {
+        label: "Children's suspension (cherry)",
+        notes: 'Shake well',
+        atHome: true,
+        expiresAt,
+        runningLow: true,
+      }).expect(200);
+      expect(edited.body).toMatchObject({
+        label: "Children's suspension (cherry)",
+        notes: 'Shake well',
+        atHome: true,
+        runningLow: true,
+        expiresAt: Date.parse(expiresAt) / 1000,
+        concentrationMgPerMl: 32,
+      });
+    });
+  });
 });
