@@ -167,14 +167,22 @@ async function main() {
 }
 
 async function seedCatalog(db: any) {
-  for (const med of CATALOG) {
-    const existing = await db
-      .select()
-      .from(schema.medications)
-      .where(eq(schema.medications.name, med.name))
-      .limit(1);
+  // Matched case-insensitively, the same way the API's MEDICATION_NAME_TAKEN check compares names
+  // (trimmed and lower-cased in JS, so SQLite and Postgres collation never enter into it). A
+  // caregiver who catalogued "Acetaminophen" by hand before seeding gets skipped here instead of a
+  // second, near-identical row in the typeahead.
+  //
+  // The match is on name only, so renaming a seeded medication (say to "paracetamol") and then
+  // re-running this script inserts a fresh "acetaminophen" beside the renamed one. That is the
+  // honest reading of "seed what is missing"; rename back, or delete the copy, if it was unwanted.
+  const existingNames = new Set<string>(
+    (await db.select({ name: schema.medications.name }).from(schema.medications)).map((r: { name: string | null }) =>
+      String(r.name ?? '').trim().toLowerCase(),
+    ),
+  );
 
-    if (existing.length) {
+  for (const med of CATALOG) {
+    if (existingNames.has(med.name.trim().toLowerCase())) {
       console.log(`Medication already seeded (${med.name}); skipping.`);
       continue;
     }
