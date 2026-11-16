@@ -12,13 +12,20 @@ export class RevisionsService {
 
   // Called by an entity's own service, immediately before applying a PATCH — captures the
   // pre-update state in the same shape the entity's own GET returns (data-model.md → Revision).
+  //
+  // `tx`, when given, is the handle from `DatabaseService.withTransaction`: the revision is then
+  // written in the same transaction as the change it precedes, so a PATCH rejected partway
+  // captures nothing (data-model.md → Revision). Without it the insert stands alone, as the
+  // conditions and patients PATCHes still use it. Writes only — take the snapshot before the
+  // transaction opens.
   async capture(
     entityType: RevisionEntityType,
     entityId: string,
     snapshot: Record<string, any>,
     editedByUserId: string,
+    tx?: any,
   ): Promise<void> {
-    const db = this.db.db as any;
+    const db = tx ?? (this.db.db as any);
     await db.insert(revisions).values({
       id: randomUUID(),
       entityType,

@@ -22,6 +22,7 @@ export class DosingController {
       embodimentId: dto.medicationEmbodimentId,
       amountMg: dto.amountMg,
       occurredAt,
+      excludeInterventionId: dto.excludeInterventionId,
     });
 
     const reasons: string[] = [];

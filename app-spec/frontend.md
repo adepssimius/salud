@@ -613,9 +613,9 @@ app. They therefore need somewhere to be entered.
 
 ## Observation & intervention detail
 
-**Read-only.** Both pages display; neither edits, deletes, nor re-links. Correcting an entry is a
-separate flow (see "Corrections"), and until it ships the record is inspected here and changed
-nowhere.
+**Display pages with one way out to change them.** Neither page edits in place, deletes, or
+re-links. Each carries an **Edit** button that opens the correction form for that entry (see
+"Correcting an entry" below); everything else here is reading.
 
 The gap they close: entry metadata was write-only. A photo's `bodyLocation`/`side`/`sizeCm`, a
 lesion's measurements, a temperature's method, and every field of a dose's provenance were
@@ -630,6 +630,12 @@ recorded can be read back.
   Advisory rows link nowhere — an advisory is not a correctable entity and has no detail page.
 - Existing endpoints only: `GET /api/observations/:id`, `GET /api/interventions/:id`, and the
   matching `/revisions` route for the History section.
+- **Edit** sits in the page header beside the back link, a `.secondary` button labeled "Edit", and
+  routes to `/observations/:id/edit` or `/interventions/:id/edit`. It is shown to every care team
+  member on every entry — no author check, no age limit (data-model.md → "Data integrity rules" →
+  Corrections) — and in the page's loaded state only, never over a load error. It is not tucked
+  behind a menu or an expander: an unlabelled or hidden affordance is how patient editing became
+  unfindable once before ("Patient hub").
 - Both pages resolve **attribution** against `GET /api/patients/:patientId/care-team`: the entity
   itself carries only `recordedByUserId`, and the timeline's `recordedBy` is not on this payload. A
   caregiver who has since left the care team is no longer in that list, so the line reads "Unknown
@@ -685,7 +691,74 @@ recorded can be read back.
 Both pages carry a "History" section rendering `GET .../revisions` through the existing
 `RevisionHistoryComponent` — the edited-marker the "Corrections" section always assumed, in the
 entity detail view that did not exist until now. Read-only: who edited, when, and the prior
-snapshot. No diffing, no revert.
+snapshot. No diffing, no revert. Its explanatory line reads "Earlier versions are kept here each
+time this entry is corrected." — not the old "this page does not edit", which stopped being true
+when the Edit button arrived.
+
+### Correcting an entry
+F-1.4: an entry can be corrected after the fact, the correction is attributed, and the original
+stays part of the record. The record is kept by the API (every `PATCH` captures a `Revision` —
+api.md → "Corrections"); this is the form that sends the `PATCH`.
+
+- **Routes**: `edit-observation.page.ts` at `/observations/:observationId/edit` and
+  `edit-intervention.page.ts` at `/interventions/:interventionId/edit` — lazy, behind `authGuard`,
+  declared before their `/:id` detail siblings. Reached from the detail page's Edit button.
+- **The create forms, reused.** Each page renders the same form as `/observations/new` /
+  `/interventions/new` — the same typed entry mini-forms (`entry-metadata-form.component.ts`), the
+  same episode picker, the same medication typeahead and embodiment picker — loaded with
+  `GET /api/observations/:id` / `GET /api/interventions/:id` and **pre-filled with the entry as
+  stored**: the clinical time as a local date-time, text/notes, every entry with its metadata
+  converted into the *reader's* units (as the create form does), the episode memberships and
+  resolutions, and for a dose every dose field. The heading says what is happening ("Correct
+  observation" / "Correct dose" / "Correct dressing change"), and the patient is shown, not
+  selectable.
+- **Editable, per kind:**
+  - *Observation*: the clinical time, the free text, the episode memberships and resolutions, and
+    the entries — change any entry's values, remove an entry, or add one, as on create. At least
+    one entry must remain; removing the last one is not a correction (see Voiding below).
+    `lab_result` entries are shown read-only and carried through unchanged: hand-typing lab values
+    is the transcription risk the import exists to avoid ("Documents").
+  - *Medication dose*: the clinical time, medication, embodiment, dose source (weight-based /
+    age-based / override), amount (mg, mL, pill count), notes, episodes.
+  - *Dressing change*: the clinical time, body location, side, dressing type, notes, episodes.
+- **Fixed, and why** — shown as plain text, never as a disabled control a caregiver can poke at:
+  - the **intervention type** and the **schedule link** (with a scheduled dose's "from schedule"
+    dose source): they say what the record *is*, and changing them would silently move a dose in or
+    out of a plan's adherence count. The form says "Logged against ⟨schedule⟩ — to change this,
+    void the entry and log it again" once voiding exists, and until then simply names the schedule;
+  - **who logged it** and **when it was logged** (`recordedByUserId`, `createdAt`): attribution is
+    what a correction must not rewrite — the correction gets its own attribution in History;
+  - **`unitPreferenceAtEntry`**: it records what the original recorder had on screen, which a later
+    correction does not change (api.md → Observations);
+  - **starting a new episode**: the "start a new episode" option is absent; an episode this entry
+    started is shown checked and locked, with "This entry started this episode" — unlinking it is
+    refused by the API (`CANNOT_UNLINK_STARTED_EPISODE`).
+- **Dose correction keeps the live preview.** On a dose, the form calls `POST .../dose-checks`
+  debounced exactly as on create ("Dose entry"), with `occurredAt` set to the corrected time, and
+  renders the same guidance cards and advisory banners. The danger interstitial applies as on
+  create. Nothing is persisted until Save.
+- **Later doses stay as logged.** On a dose, a muted note under the amount: "Doses logged after
+  this one keep the checks they were given at the time — correcting this one doesn't re-check
+  them." (data-model.md → "Data integrity rules" → Corrections.)
+- **Save** sends `PATCH` with only the fields the caregiver changed — an untouched form sends
+  nothing to rewrite — and on success returns to the detail page, which reloads and shows the
+  corrected entry with one more row in History. If the response carries `firedAdvisories`, the
+  page shows the protocol card ("Protocol card" above) on its success state instead of returning,
+  with a link back to the entry — the card is the moment of relevance and must not be navigated
+  past. **Cancel** returns to the detail page and sends nothing.
+- **Errors** follow "Errors & failure messages": every code the `PATCH` can return —
+  `FIELD_NOT_CORRECTABLE`, `CANNOT_UNLINK_STARTED_EPISODE`, `EPISODE_TIME_ORDER_INVALID`,
+  `EPISODE_ALREADY_RESOLVED`, `DATE_IN_FUTURE`, and create's validation codes — has a sentence in
+  `core/error-display.ts`; the call site's fallback is "Could not save the correction." The form
+  stays filled after an error. A 404 on load (the entry is gone, or not on this caregiver's care
+  team) reads the same as on the detail page.
+- **Not yet in "since you last looked."** A correction by another caregiver does not mark the entry
+  as new in the Journal; it shows only in that entry's History (api.md → "Corrections"). Known
+  follow-up.
+- **Voiding — not yet built (next).** Removing an entry will be voiding, never a hard delete:
+  attributed, with a required reason, out of every list and calculation, and kept visible in
+  History (api.md → "Corrections" → Voiding). Until it ships the form offers no remove action for
+  the entry as a whole.
 
 ## ER Brief
 See `er-brief.md` for the full spec. `er-brief.page.ts` (authenticated, entry point from patient
@@ -734,6 +807,8 @@ unconditional by design (er-brief.md → Formats).
     reads "1 advisory fired", not "0 new events · 1 advisory fired".
 
 ## Corrections
+- Observations and interventions are corrected from their detail pages ("Observation & intervention
+  detail" → "Correcting an entry"); conditions and patients from their own edit forms.
 - Any entity detail view for a correctable type (observation, intervention, condition, patient)
   shows an "edited" marker whenever `GET .../revisions` returns at least one entry, with the count
   and the most recent edit's timestamp. Expanding it lists every prior `snapshot` newest-first, each

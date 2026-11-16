@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsNumber,
@@ -10,9 +11,24 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { InterventionType } from '@salud/shared/types';
+import {
+  CorrectableDoseSource,
+  UpdateInterventionDto as UpdateInterventionContract,
+} from '@salud/shared/types';
+import { IsNotInFuture } from '../../common/validators';
 
-export class UpdateInterventionDto {
+/**
+ * The correction body. `type` and `interventionScheduleId` are deliberately absent, and
+ * `doseSource` lists only the correctable sources: those are refused with FIELD_NOT_CORRECTABLE
+ * by `CorrectionFieldsInterceptor` on the raw body, before this class's whitelist (or `@IsIn`)
+ * could swallow them (ISSUES #36; api.md → PATCH /api/interventions/:interventionId).
+ */
+export class UpdateInterventionDto implements UpdateInterventionContract {
+  @IsOptional()
+  @IsDateString()
+  @IsNotInFuture()
+  performedAt?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayUnique()
@@ -38,8 +54,8 @@ export class UpdateInterventionDto {
   medicationEmbodimentId?: string;
 
   @IsOptional()
-  @IsIn(['weight_based', 'age_based', 'override', 'schedule'])
-  doseSource?: 'weight_based' | 'age_based' | 'override' | 'schedule';
+  @IsIn(['weight_based', 'age_based', 'override'] satisfies CorrectableDoseSource[])
+  doseSource?: CorrectableDoseSource;
 
   @IsOptional()
   @IsNumber()
@@ -74,10 +90,6 @@ export class UpdateInterventionDto {
   @IsOptional()
   @IsUUID('4')
   guidelineId?: string | null;
-
-  @IsOptional()
-  @IsString()
-  interventionScheduleId?: string | null;
 
   @IsOptional()
   @IsString()

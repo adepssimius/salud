@@ -3,6 +3,8 @@ import path from 'path';
 import request from 'supertest';
 import { AppModule } from '../app.module';
 import { createTestApp } from '../../testing/create-test-app';
+import { DatabaseService } from '../persistence/database.service';
+import { EpisodesService } from './episodes.service';
 
 async function registerAndLogin(app: INestApplication) {
   const email = `ep-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
@@ -285,5 +287,146 @@ describe('Episodes (e2e)', () => {
     const active = activeRes.body.find((e: any) => e.name === 'Active check');
     expect(Number.isInteger(active.createdAt)).toBe(true);
     expect(Number.isInteger(active.updatedAt)).toBe(true);
+  });
+
+  // The correction-side helpers the observation and intervention PATCHes share (data-model.md →
+  // "Data integrity rules" → Corrections). Driven directly here, plan-then-apply inside
+  // DatabaseService.withTransaction exactly as the PATCHes call them; the HTTP-level coverage
+  // lands with those PATCHes.
+  describe('event episode correction helpers', () => {
+    const HOUR = 3600;
+    let token: string;
+    let userId: string;
+    let patientId: string;
+    let episodesService: EpisodesService;
+    let dbService: DatabaseService;
+    const nowSec = () => Math.floor(Date.now() / 1000);
+    const iso = (sec: number) => new Date(sec * 1000).toISOString();
+
+    const observe = async (body: Record<string, unknown>) =>
+      (
+        await request(app.getHttpServer())
+          .post(`/api/patients/${patientId}/observations`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ entries: [{ type: 'note', metadata: { text: 'x' } }], ...body })
+          .expect(201)
+      ).body;
+    const episode = async (id: string) =>
+      (await request(app.getHttpServer()).get(`/api/episodes/${id}`).set('Authorization', `Bearer ${token}`).expect(200)).body;
+    const plan = (eventId: string, rest: Record<string, unknown> = {}) =>
+      episodesService.planEventEpisodeCorrection({ patientId, userId, eventType: 'observation', eventId, ...rest });
+    const errorOf = (p: Promise<unknown>) =>
+      p.then(
+        () => null,
+        (e: any) => e?.response?.message ?? e?.message,
+      );
+
+    // A frame started by A at t0-3h and resolved by B at t0-2h.
+    async function startedAndResolved() {
+      const t0 = nowSec();
+      const a = await observe({ observedAt: iso(t0 - 3 * HOUR), startEpisodeName: `Frame ${Math.random()}` });
+      const episodeId = a.episodeIds[0];
+      const b = await observe({ observedAt: iso(t0 - 2 * HOUR), episodeIds: [episodeId], resolvesEpisodeIds: [episodeId] });
+      return { t0, a, b, episodeId };
+    }
+
+    beforeAll(async () => {
+      ({ token, userId } = await registerAndLogin(app));
+      patientId = await createPatient(app, token);
+      episodesService = app.get(EpisodesService);
+      dbService = app.get(DatabaseService);
+    });
+
+    it('refuses to unlink an event from the episode it started, but only when episodeIds is sent', async () => {
+      const { a, episodeId } = await startedAndResolved();
+      expect(await errorOf(plan(a.id, { episodeIds: [] }))).toBe('CANNOT_UNLINK_STARTED_EPISODE');
+      // Omitted list: the links carry over, nothing to refuse, and the pivot is left alone.
+      const untouched = await plan(a.id, { clinicalTime: nowSec() - 4 * HOUR });
+      expect(untouched.rewritePivot).toBe(false);
+      expect(untouched.episodeIds).toEqual([episodeId]);
+      // Re-sending the same list keeps the startsEpisode flag on the rewritten membership row.
+      const kept = await plan(a.id, { episodeIds: [episodeId] });
+      expect(kept.pivotRows).toEqual([{ episodeId, startsEpisode: true, resolvesEpisode: false }]);
+    });
+
+    it('reopens the episode when its resolving event drops the resolve link, keeping the membership', async () => {
+      const { b, episodeId } = await startedAndResolved();
+      const p = await plan(b.id, { resolvesEpisodeIds: [] });
+      expect(p.reopenEpisodeIds).toEqual([episodeId]);
+      // Separate-row pivot pattern (CLAUDE.md → Episode model): membership only, no resolve row.
+      expect(p.pivotRows).toEqual([{ episodeId, startsEpisode: false, resolvesEpisode: false }]);
+      await dbService.withTransaction((tx) => episodesService.applyEventEpisodeCorrection(tx, p));
+
+      const ep = await episode(episodeId);
+      expect(ep.status).toBe('active');
+      expect(ep.endedAtId).toBeNull();
+      expect(ep.endedAt).toBeNull();
+      expect(ep.observationIds).toContain(b.id);
+      const obs = await request(app.getHttpServer())
+        .get(`/api/observations/${b.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(obs.body.episodeIds).toEqual([episodeId]);
+      expect(obs.body.resolvesEpisodeIds).toEqual([]);
+    });
+
+    it('does not reopen an episode some other event ended', async () => {
+      const { t0, episodeId } = await startedAndResolved();
+      const member = await observe({ observedAt: iso(t0 - 150 * 60), episodeIds: [episodeId] });
+      const p = await plan(member.id, { episodeIds: [] });
+      expect(p.reopenEpisodeIds).toEqual([]);
+      await dbService.withTransaction((tx) => episodesService.applyEventEpisodeCorrection(tx, p));
+      expect((await episode(episodeId)).status).toBe('resolved');
+    });
+
+    it('resolves through the plan, and refuses an episode a different event already resolved', async () => {
+      const { t0, b, episodeId } = await startedAndResolved();
+      const other = await observe({ observedAt: iso(t0 - HOUR), episodeIds: [episodeId] });
+      expect(await errorOf(plan(other.id, { resolvesEpisodeIds: [episodeId] }))).toBe('EPISODE_ALREADY_RESOLVED');
+      // The resolving event re-asserting its own resolution is a no-op.
+      expect((await plan(b.id, { resolvesEpisodeIds: [episodeId] })).resolveEpisodeIds).toEqual([]);
+
+      const open = await observe({ observedAt: iso(t0 - HOUR), startEpisodeName: `Open ${Math.random()}` });
+      const openId = open.episodeIds[0];
+      const closer = await observe({ observedAt: iso(t0 - 30 * 60), episodeIds: [openId] });
+      const p = await plan(closer.id, { resolvesEpisodeIds: [openId] });
+      expect(p.resolveEpisodeIds).toEqual([openId]);
+      await dbService.withTransaction((tx) => episodesService.applyEventEpisodeCorrection(tx, p));
+      const ep = await episode(openId);
+      expect(ep.status).toBe('resolved');
+      expect(ep.endedAtId).toBe(closer.id);
+    });
+
+    it('refuses a clinical time that would end an episode before it starts', async () => {
+      const { t0, a, b } = await startedAndResolved();
+      // Start moved after the end, or the end moved before the start.
+      expect(await errorOf(plan(a.id, { clinicalTime: t0 - HOUR }))).toBe('EPISODE_TIME_ORDER_INVALID');
+      expect(await errorOf(plan(b.id, { clinicalTime: t0 - 4 * HOUR }))).toBe('EPISODE_TIME_ORDER_INVALID');
+      // Within the frame, and exactly at the other end, are both fine.
+      await expect(plan(a.id, { clinicalTime: t0 - 2 * HOUR })).resolves.toBeDefined();
+      await expect(plan(b.id, { clinicalTime: t0 - 150 * 60 })).resolves.toBeDefined();
+      // Moving the end earlier is fine once the same correction drops the resolve link.
+      const reopening = await plan(b.id, { clinicalTime: t0 - 4 * HOUR, resolvesEpisodeIds: [] });
+      expect(reopening.reopenEpisodeIds).toHaveLength(1);
+    });
+
+    it('writes nothing when the surrounding transaction rolls back', async () => {
+      const { b, episodeId } = await startedAndResolved();
+      const p = await plan(b.id, { resolvesEpisodeIds: [] });
+      await expect(
+        dbService.withTransaction(async (tx) => {
+          await episodesService.applyEventEpisodeCorrection(tx, p);
+          throw new Error('caller failed later in the same correction');
+        }),
+      ).rejects.toThrow('caller failed later');
+      const ep = await episode(episodeId);
+      expect(ep.status).toBe('resolved');
+      expect(ep.endedAtId).toBe(b.id);
+      const obs = await request(app.getHttpServer())
+        .get(`/api/observations/${b.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(obs.body.resolvesEpisodeIds).toEqual([episodeId]);
+    });
   });
 });

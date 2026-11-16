@@ -16,7 +16,7 @@ import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { FilesService } from '../files/files.service';
 import { AnalytesService } from '../analytes/analytes.service';
-import { normalizeTs } from '../persistence/time';
+import { normalizeTs, toDate } from '../persistence/time';
 
 @Injectable()
 export class ObservationsService {
@@ -64,8 +64,9 @@ export class ObservationsService {
 
   // Weight entries denormalize onto patients.latestWeightKg/latestWeightRecordedAt so the
   // patient row always answers "how much does she weigh" without joining observations. Guarded
-  // by recency: an older weight (e.g. correcting a past entry, or updating an observation that
-  // isn't the most recent one on the timeline) must never regress the denormalized value.
+  // by recency on create: a backdated weight must never regress the denormalized value. A
+  // correction recomputes from scratch instead (recomputeLatestWeight), since "only if newer"
+  // cannot express a removal.
   private async applyLatestWeightIfNewer(patientId: string, kg: number, observedAtTs: number) {
     const db = this.db.db as any;
     const rows = await db.select().from(patients).where(eq(patients.id, patientId)).limit(1);
@@ -335,94 +336,156 @@ export class ObservationsService {
     return mapped;
   }
 
+  /**
+   * `PATCH /api/observations/:id` — a correction (api.md → that section; data-model.md → "Data
+   * integrity rules" → Corrections). Any care team member, any observation, no time limit.
+   *
+   * Two phases, because of `DatabaseService.withTransaction`'s sqlite caveat: every check and
+   * every read (the revision snapshot, the episode plan, the weight recompute's input, the protocol
+   * evaluation, the file and analyte checks) happens first; then one transaction holds nothing but
+   * writes — revision, observation row, entries, pivot rows, episode state, the patient's latest
+   * weight and any advisory. A request that fails a check has written nothing (ISSUES #39).
+   *
+   * The fixed fields never reach here: CorrectionFieldsInterceptor refused them on the raw body.
+   */
   async update(id: string, userId: string, dto: UpdateObservationDto) {
     const db = this.db.db as any;
     const rows = await db.select().from(observations).where(eq(observations.id, id)).limit(1);
     if (!rows.length) throw new NotFoundException('OBSERVATION_NOT_FOUND');
     const row = rows[0];
-    await this.ensurePatientAccess(row.patientId, userId);
+    const patientId: string = row.patientId;
+    await this.ensurePatientAccess(patientId, userId);
 
-    const preUpdateSnapshot = await this.getById(id, userId);
-    await this.revisionsService.capture('observation', id, preUpdateSnapshot, userId);
-
-    const pivotRows = await db
-      .select()
-      .from(episodesEventsPivot)
-      .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'observation')));
-    const existingEpisodeIds: string[] = Array.from(
-      new Set<string>(pivotRows.filter((p: any) => !p.resolvesEpisode).map((p: any) => p.episodeId)),
-    );
-    const existingResolvesIds: string[] = Array.from(
-      new Set<string>(pivotRows.filter((p: any) => p.resolvesEpisode).map((p: any) => p.episodeId)),
-    );
-    const startedEpisodes = new Set<string>(pivotRows.filter((p: any) => p.startsEpisode).map((p: any) => p.episodeId));
-
-    const episodeIds: string[] = dto.episodeIds ?? existingEpisodeIds;
-    const resolvesEpisodeIds: string[] = dto.resolvesEpisodeIds ?? existingResolvesIds;
-    // Only what the client actually supplied. Re-validating carried-over ids would 404 on
-    // historical rows written before episodes were scoped to a patient.
-    if (dto.episodeIds) {
-      await this.episodesService.assertEpisodesBelongToPatient(row.patientId, userId, dto.episodeIds);
+    if (dto.entries !== undefined && !dto.entries.length) {
+      throw new BadRequestException('AT_LEAST_ONE_ENTRY_REQUIRED');
     }
-    this.episodesService.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
-
-    const updates: Record<string, any> = {};
-    if (dto.text !== undefined) updates.text = dto.text;
-    if (Object.keys(updates).length) {
-      await db.update(observations).set(updates).where(eq(observations.id, id));
-    }
-
     if (dto.entries) {
-      await this.assertEntryFilesUsable(dto.entries, row.patientId, userId);
+      await this.assertEntryFilesUsable(dto.entries, patientId, userId);
       await this.assertEntryAnalytesExist(dto.entries);
-      await db.delete(observationEntries).where(eq(observationEntries.observationId, id));
-      const observedAtTs = normalizeTs(row.observedAt);
-      for (const entry of dto.entries) {
-        await db.insert(observationEntries).values({
-          id: entry.id ?? randomUUID(),
-          observationId: id,
-          type: entry.type,
-          metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
-        });
-
-        if (entry.type === 'weight' && entry.metadata?.kg !== undefined) {
-          await this.applyLatestWeightIfNewer(row.patientId, entry.metadata.kg, observedAtTs);
-        }
-      }
     }
 
-    if (dto.episodeIds || dto.resolvesEpisodeIds) {
-      await db
-        .delete(episodesEventsPivot)
-        .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'observation')));
+    const observedAtDate = dto.observedAt !== undefined ? new Date(dto.observedAt) : toDate(row.observedAt)!;
+    const observedAtTs = Math.floor(observedAtDate.getTime() / 1000);
 
-      for (const ep of episodeIds) {
-        await db.insert(episodesEventsPivot).values({
-          id: randomUUID(),
-          episodeId: ep,
-          eventType: 'observation',
-          eventId: id,
-          startsEpisode: startedEpisodes.has(ep),
-          resolvesEpisode: false,
-        });
-      }
+    const episodePlan = await this.episodesService.planEventEpisodeCorrection({
+      patientId,
+      userId,
+      eventType: 'observation',
+      eventId: id,
+      episodeIds: dto.episodeIds,
+      resolvesEpisodeIds: dto.resolvesEpisodeIds,
+      clinicalTime: dto.observedAt !== undefined ? observedAtTs : undefined,
+    });
 
-      if (resolvesEpisodeIds.length) {
-        await this.episodesService.resolveEpisodes(row.patientId, userId, resolvesEpisodeIds, 'observation', id);
-        for (const ep of resolvesEpisodeIds) {
-          await db.insert(episodesEventsPivot).values({
-            id: randomUUID(),
-            episodeId: ep,
-            eventType: 'observation',
-            eventId: id,
-            startsEpisode: false,
-            resolvesEpisode: true,
+    const snapshot = await this.getById(id, userId);
+
+    // An echoed entry keeps its id — but only an id this observation already has, once. Any other
+    // id (a stale client, another observation's entry) gets a fresh one rather than a primary-key
+    // collision or a row moved between observations.
+    const existingEntryIds = new Set<string>(snapshot.entries.map((e: any) => e.id));
+    const nextEntries = dto.entries?.map((entry) => {
+      const keep = entry.id !== undefined && existingEntryIds.delete(entry.id);
+      return {
+        id: keep ? entry.id! : randomUUID(),
+        type: entry.type,
+        metadata: entry.metadata ?? null,
+      };
+    });
+
+    // Entries or time changed: the latest weight and the protocols are re-derived from the result.
+    const clinicalChange = dto.entries !== undefined || dto.observedAt !== undefined;
+    const mergedEntries: Array<{ type: string; metadata?: Record<string, any> | null }> =
+      nextEntries ?? snapshot.entries;
+    const latestWeight = clinicalChange
+      ? await this.recomputeLatestWeight(patientId, id, observedAtTs, row.createdAt, mergedEntries)
+      : undefined;
+    const trips = clinicalChange
+      ? await this.advisoriesService.planProtocolTrips(patientId, userId, id, mergedEntries, { skipAlreadyFired: true })
+      : [];
+
+    const updates: Record<string, any> = { updatedAt: new Date() };
+    if (dto.text !== undefined) updates.text = dto.text;
+    if (dto.observedAt !== undefined) updates.observedAt = observedAtDate;
+
+    await this.db.withTransaction(async (tx: any) => {
+      await this.revisionsService.capture('observation', id, snapshot, userId, tx);
+      await tx.update(observations).set(updates).where(eq(observations.id, id));
+      if (nextEntries) {
+        await tx.delete(observationEntries).where(eq(observationEntries.observationId, id));
+        for (const entry of nextEntries) {
+          await tx.insert(observationEntries).values({
+            id: entry.id,
+            observationId: id,
+            type: entry.type,
+            metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
           });
         }
       }
+      await this.episodesService.applyEventEpisodeCorrection(tx, episodePlan);
+      if (latestWeight) {
+        await tx
+          .update(patients)
+          .set({
+            latestWeightKg: latestWeight.kg,
+            latestWeightRecordedAt: latestWeight.recordedAt === null ? null : new Date(latestWeight.recordedAt * 1000),
+          })
+          .where(eq(patients.id, patientId));
+      }
+      for (const trip of trips) await this.advisoriesService.create(trip, tx);
+    });
+
+    const observation = await this.getById(id, userId);
+    const firedAdvisories = trips.map((trip) => this.advisoriesService.firedFromInput(trip));
+    return firedAdvisories.length ? { ...observation, firedAdvisories } : observation;
+  }
+
+  /**
+   * The patient's newest `weight` entry by `observedAt` once this correction lands, derived from
+   * scratch (data-model.md → Patient → "Recomputed on correction"; ISSUES #34). Unlike
+   * `applyLatestWeightIfNewer` it can move the value down, or to null when no weight remains.
+   *
+   * Reads only. Ties on `observedAt` go to the later-logged observation, and within one
+   * observation to its last weight entry — what create's `>=` recency guard would have left.
+   */
+  private async recomputeLatestWeight(
+    patientId: string,
+    observationId: string,
+    observedAtTs: number,
+    createdAt: unknown,
+    entries: Array<{ type: string; metadata?: Record<string, any> | null }>,
+  ): Promise<{ kg: number | null; recordedAt: number | null }> {
+    const db = this.db.db as any;
+    const others = await db
+      .select({
+        observationId: observations.id,
+        observedAt: observations.observedAt,
+        createdAt: observations.createdAt,
+        metadata: observationEntries.metadata,
+      })
+      .from(observationEntries)
+      .innerJoin(observations, eq(observationEntries.observationId, observations.id))
+      .where(and(eq(observations.patientId, patientId), eq(observationEntries.type, 'weight')));
+
+    const candidates: Array<{ kg: number; at: number; created: number }> = [];
+    for (const other of others) {
+      if (other.observationId === observationId) continue; // replaced by `entries` below
+      const kg = other.metadata ? JSON.parse(other.metadata)?.kg : undefined;
+      const at = normalizeTs(other.observedAt);
+      if (typeof kg !== 'number' || at === null) continue;
+      candidates.push({ kg, at, created: normalizeTs(other.createdAt) ?? 0 });
+    }
+    const created = normalizeTs(createdAt as any) ?? 0;
+    for (const entry of entries) {
+      if (entry.type === 'weight' && typeof entry.metadata?.kg === 'number') {
+        candidates.push({ kg: entry.metadata.kg, at: observedAtTs, created });
+      }
     }
 
-    return this.getById(id, userId);
+    let best: { kg: number; at: number; created: number } | null = null;
+    for (const c of candidates) {
+      if (!best || c.at > best.at || (c.at === best.at && c.created >= best.created)) best = c;
+    }
+    return best ? { kg: best.kg, recordedAt: best.at } : { kg: null, recordedAt: null };
   }
 
   async getRevisions(id: string, userId: string) {

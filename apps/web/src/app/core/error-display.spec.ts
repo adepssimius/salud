@@ -83,4 +83,17 @@ describe('ERROR_SENTENCES catalog invariants', () => {
     // the response doesn't confirm the patient exists. Wording here must not undo that.
     expect(ERROR_SENTENCES.PATIENT_NOT_FOUND).not.toMatch(/permission|access|care team|not allowed/i);
   });
+
+  // A new code needs its sentence in the same change as the throw (CLAUDE.md → Conventions), or it
+  // silently degrades to the call site's fallback. These four arrived with entry correction and the
+  // embodiment-strength guard; the FIELD_NOT_CORRECTABLE body's extra `fields` must not stop the
+  // string `message` from being read.
+  it.each([
+    'FIELD_NOT_CORRECTABLE',
+    'CANNOT_UNLINK_STARTED_EPISODE',
+    'EPISODE_TIME_ORDER_INVALID',
+  ] as ApiErrorCode[])('maps %s to its own sentence rather than the fallback', (code) => {
+    const err = { status: 400, error: { message: code, fields: ['type'] } };
+    expect(errorText(err, 'fallback')).toBe(ERROR_SENTENCES[code]);
+  });
 });

@@ -44,3 +44,15 @@ settings {
   encodeUrl: true
   timeout: 0
 }
+
+docs {
+  Preview only; persists nothing. Body: `medicationId`, and optionally `medicationEmbodimentId`,
+  `amountMg`, `occurredAt` (ISO; defaults to now) and `excludeInterventionId` (UUID).
+
+  The dose correction form sends `excludeInterventionId` with the id of the dose being corrected,
+  so the preview leaves that dose out of the interval and daily-total checks, as the correcting
+  `PATCH /api/interventions/:interventionId` does. An id that isn't one of this patient's doses is
+  ignored. For example:
+
+  { "medicationId": "{{medicationId}}", "amountMg": 150, "excludeInterventionId": "{{interventionId}}" }
+}

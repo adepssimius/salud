@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
+  advisories,
   careTeamMemberships,
   episodesEventsPivot,
   interventionSchedules,
@@ -361,79 +362,78 @@ export class InterventionsService {
     return enriched;
   }
 
+  /**
+   * `PATCH /api/interventions/:id` — a correction (api.md → that section; data-model.md → "Data
+   * integrity rules" → Corrections). Any care team member, any intervention, no time limit.
+   *
+   * Same two phases as ObservationsService.update, for the same sqlite reason: every check and
+   * read first (revision snapshot, dosing evaluation, existing advisories, episode plan), then one
+   * transaction of writes only — revision, intervention row, pivot rows, episode state, advisories
+   * (ISSUES #39). `type`, `interventionScheduleId` and `doseSource: 'schedule'` never reach here:
+   * CorrectionFieldsInterceptor refused them on the raw body (ISSUES #36).
+   */
   async update(id: string, userId: string, dto: UpdateInterventionDto) {
-    assertNoReservedMetadataKeys(dto.metadata);
     const db = this.db.db as any;
     const rows = await db.select().from(interventions).where(eq(interventions.id, id)).limit(1);
     if (!rows.length) throw new NotFoundException('INTERVENTION_NOT_FOUND');
     const row = rows[0];
-    await this.ensurePatientAccess(row.patientId, userId);
+    const patientId: string = row.patientId;
+    await this.ensurePatientAccess(patientId, userId);
+    assertNoReservedMetadataKeys(dto.metadata);
 
-    const preUpdateSnapshot = await this.get(id, userId);
-    await this.revisionsService.capture('intervention', id, preUpdateSnapshot, userId);
-
-    const pivotRows = await db
-      .select()
-      .from(episodesEventsPivot)
-      .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'intervention')));
-    const existingEpisodeIds: string[] = Array.from(
-      new Set<string>(pivotRows.filter((p: any) => !p.resolvesEpisode).map((p: any) => p.episodeId)),
-    );
-    const existingResolveIds: string[] = Array.from(
-      new Set<string>(pivotRows.filter((p: any) => p.resolvesEpisode).map((p: any) => p.episodeId)),
-    );
-    const startedEpisodes = new Set<string>(pivotRows.filter((p: any) => p.startsEpisode).map((p: any) => p.episodeId));
-
-    const episodeIds: string[] = dto.episodeIds ?? existingEpisodeIds;
-    const resolvesEpisodeIds: string[] = dto.resolvesEpisodeIds ?? existingResolveIds;
-    // Only what the client actually supplied -- see the matching note in ObservationsService.
-    if (dto.episodeIds) {
-      await this.episodesService.assertEpisodesBelongToPatient(row.patientId, userId, dto.episodeIds);
+    const stored = row.metadata ? JSON.parse(row.metadata) : {};
+    // A scheduled dose's source is what the schedule-log path wrote; changing it at all would
+    // move the dose in or out of the schedule's adherence story. Rows that predate
+    // doseSource: 'schedule' carry 'override' with a scheduleId, hence both tests.
+    const isScheduled = !!row.scheduleId || stored.doseSource === 'schedule';
+    if (dto.doseSource !== undefined && isScheduled) {
+      throw new BadRequestException({ message: 'FIELD_NOT_CORRECTABLE', fields: ['doseSource'] });
     }
-    this.episodesService.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
 
-    const updates: Record<string, any> = {};
-    if (dto.notes !== undefined) updates.notes = dto.notes;
-
-    let metadata = row.metadata ? JSON.parse(row.metadata) : {};
-    if (dto.metadata) {
-      metadata = { ...metadata, ...dto.metadata };
-    }
-    // merge type-specific fields
-    const mergeFields = [
+    // Merge: stored metadata, then free-form client keys (reserved ones refused above), then the
+    // validated top-level fields that were sent.
+    const metadata: Record<string, any> = { ...stored, ...(dto.metadata ?? {}) };
+    const clientFields = [
       'medicationId',
       'medicationEmbodimentId',
       'doseSource',
       'amountMg',
       'amountMl',
       'pillCount',
-      'weightKgUsed',
-      'ageMonthsUsed',
-      'guidelineId',
-      'interventionScheduleId',
       'bodyLocation',
       'side',
       'dressingType',
     ] as const;
-    for (const key of mergeFields) {
-      if (dto[key] !== undefined) {
-        metadata[key] = dto[key];
-        if (key === 'interventionScheduleId') {
-          updates.scheduleId = dto[key] as any;
-        }
-      }
+    for (const key of clientFields) {
+      if (dto[key] !== undefined) metadata[key] = dto[key];
     }
-
     // Against the merged values, not the DTO: a PATCH clearing medicationId on an existing dose
     // is only visible once the merge has happened.
     this.assertRequiredForType(row.type, metadata);
 
-    // Re-validate atypical logic on every medication_dose update (api.md), not just when
-    // dose-affecting fields changed — the underlying guideline/weight/embodiment state may
-    // have moved since this dose was logged.
-    if (row.type === 'medication_dose' && metadata.medicationId) {
-      const performedAtDate = toDate(row.performedAt)!;
-      const doseEvaluation = await this.dosingService.evaluate(row.patientId, userId, {
+    const performedAtDate = dto.performedAt !== undefined ? new Date(dto.performedAt) : toDate(row.performedAt)!;
+    const performedAtTs = Math.floor(performedAtDate.getTime() / 1000);
+
+    // guidelineId / weightKgUsed / ageMonthsUsed are client-honored under 'override' only, as on
+    // create. A value carried over from the stored row is honored only if the stored row was
+    // itself an override — otherwise it is an engine resolution, not something a caregiver chose.
+    const isOverride = metadata.doseSource === 'override';
+    const carryStored = stored.doseSource === 'override';
+    const honored = (key: 'guidelineId' | 'weightKgUsed' | 'ageMonthsUsed') =>
+      dto[key] !== undefined ? dto[key] : carryStored ? stored[key] : undefined;
+
+    // Re-evaluation is scoped to a dose change (ISSUES #33): only these fields re-run the engine.
+    // Anything else leaves every engine-resolved field exactly as logged (N-2).
+    const doseChanged =
+      dto.performedAt !== undefined ||
+      dto.medicationId !== undefined ||
+      dto.medicationEmbodimentId !== undefined ||
+      dto.doseSource !== undefined ||
+      dto.amountMg !== undefined;
+
+    const advisoryWrites: Array<Parameters<AdvisoriesService['create']>[0]> = [];
+    if (row.type === 'medication_dose' && doseChanged && metadata.medicationId) {
+      const evaluation = await this.dosingService.evaluate(patientId, userId, {
         medicationId: metadata.medicationId,
         embodimentId: metadata.medicationEmbodimentId,
         amountMg: metadata.amountMg,
@@ -441,72 +441,103 @@ export class InterventionsService {
         excludeInterventionId: id,
       });
 
+      // Exactly create's resolution, at the corrected time.
       const reasons: string[] = [];
+      metadata.ageMonthsUsed = evaluation.ageMonthsUsed;
+      metadata.nextAllowedAt = evaluation.nextAllowedAt;
       if (metadata.doseSource === 'weight_based') {
-        metadata.guidelineId = doseEvaluation.guidance.weightBased?.guidelineId ?? null;
-        metadata.weightKgUsed = doseEvaluation.guidance.weightBased?.weightKgUsed ?? doseEvaluation.weightKgUsed ?? null;
+        metadata.guidelineId = evaluation.guidance.weightBased?.guidelineId ?? null;
+        metadata.weightKgUsed = evaluation.guidance.weightBased?.weightKgUsed ?? evaluation.weightKgUsed ?? null;
       } else if (metadata.doseSource === 'age_based') {
-        metadata.guidelineId = doseEvaluation.guidance.ageBand?.guidelineId ?? null;
-      } else if (metadata.doseSource === 'override' && !metadata.interventionScheduleId) {
-        reasons.push('override');
+        metadata.guidelineId = evaluation.guidance.ageBand?.guidelineId ?? null;
+        metadata.weightKgUsed = evaluation.weightKgUsed ?? null;
+      } else {
+        metadata.guidelineId = isOverride ? honored('guidelineId') ?? null : null;
+        metadata.weightKgUsed = (isOverride ? honored('weightKgUsed') : undefined) ?? evaluation.weightKgUsed ?? null;
+        if (!row.scheduleId) reasons.push('override');
       }
-      metadata.ageMonthsUsed = doseEvaluation.ageMonthsUsed;
-      metadata.nextAllowedAt = doseEvaluation.nextAllowedAt;
-      if (doseEvaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
-      if (doseEvaluation.exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
-      if (doseEvaluation.intervalTooShort) reasons.push('interval_too_short');
+      if (evaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
+      if (evaluation.exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
+      if (evaluation.intervalTooShort) reasons.push('interval_too_short');
+      const atypicalReason = reasons.length ? reasons.join(',') : null;
       metadata.isAtypical = reasons.length > 0;
-      metadata.atypicalReason = reasons.length ? reasons.join(',') : null;
 
-      await this.persistDoseAdvisories(
-        row.patientId,
-        id,
-        userId,
-        doseEvaluation,
-        reasons,
-        metadata.guidelineId ?? null,
-        metadata.amountMg,
-      );
-    }
-
-    updates.metadata = JSON.stringify(metadata);
-
-    if (Object.keys(updates).length) {
-      await db.update(interventions).set(updates).where(eq(interventions.id, id));
-    }
-
-    if (dto.episodeIds || dto.resolvesEpisodeIds) {
-      await db
-        .delete(episodesEventsPivot)
-        .where(and(eq(episodesEventsPivot.eventId, id), eq(episodesEventsPivot.eventType, 'intervention')));
-
-      for (const ep of episodeIds) {
-        await db.insert(episodesEventsPivot).values({
-          id: randomUUID(),
-          episodeId: ep,
-          eventType: 'intervention',
-          eventId: id,
-          startsEpisode: startedEpisodes.has(ep),
-          resolvesEpisode: false,
+      // Advisories are never deleted or rewritten (api.md → "Advisories after a correction"). A
+      // new atypical_dose only when the verdict's reasons changed to something non-empty; a
+      // stale_weight / expired_embodiment only when this dose has none of that type yet.
+      if (atypicalReason && atypicalReason !== (stored.atypicalReason ?? null)) {
+        advisoryWrites.push({
+          patientId,
+          type: 'atypical_dose',
+          severity: 'warning',
+          ...(metadata.guidelineId ? { sourceType: 'guideline' as const, sourceId: metadata.guidelineId } : {}),
+          contextType: 'intervention',
+          contextId: id,
+          payload: { reasons, amountMg: metadata.amountMg ?? null, dailyTotalMg: evaluation.dailyTotalMg },
+          acknowledgedByUserId: userId,
         });
       }
-
-      if (resolvesEpisodeIds.length) {
-        await this.episodesService.resolveEpisodes(row.patientId, userId, resolvesEpisodeIds, 'intervention', id);
-        for (const ep of resolvesEpisodeIds) {
-          await db.insert(episodesEventsPivot).values({
-            id: randomUUID(),
-            episodeId: ep,
-            eventType: 'intervention',
-            eventId: id,
-            startsEpisode: false,
-            resolvesEpisode: true,
+      metadata.atypicalReason = atypicalReason;
+      if (evaluation.advisories.length) {
+        const priorTypes = await this.advisoryTypesFor(id);
+        for (const candidate of evaluation.advisories) {
+          if (priorTypes.has(candidate.type)) continue;
+          priorTypes.add(candidate.type);
+          advisoryWrites.push({
+            patientId,
+            type: candidate.type,
+            severity: candidate.severity,
+            sourceType: candidate.sourceType,
+            sourceId: candidate.sourceId,
+            contextType: 'intervention',
+            contextId: id,
+            payload: candidate.payload,
+            acknowledgedByUserId: userId,
           });
         }
       }
+    } else if (isOverride) {
+      // No re-run: the honored fields are still the caregiver's to correct under override, and
+      // nothing the engine resolved is touched.
+      for (const key of ['guidelineId', 'weightKgUsed', 'ageMonthsUsed'] as const) {
+        if (dto[key] !== undefined) metadata[key] = dto[key];
+      }
     }
 
+    const episodePlan = await this.episodesService.planEventEpisodeCorrection({
+      patientId,
+      userId,
+      eventType: 'intervention',
+      eventId: id,
+      episodeIds: dto.episodeIds,
+      resolvesEpisodeIds: dto.resolvesEpisodeIds,
+      clinicalTime: dto.performedAt !== undefined ? performedAtTs : undefined,
+    });
+
+    const snapshot = await this.get(id, userId);
+
+    const updates: Record<string, any> = { metadata: JSON.stringify(metadata), updatedAt: new Date() };
+    if (dto.notes !== undefined) updates.notes = dto.notes;
+    if (dto.performedAt !== undefined) updates.performedAt = performedAtDate;
+
+    await this.db.withTransaction(async (tx: any) => {
+      await this.revisionsService.capture('intervention', id, snapshot, userId, tx);
+      await tx.update(interventions).set(updates).where(eq(interventions.id, id));
+      await this.episodesService.applyEventEpisodeCorrection(tx, episodePlan);
+      for (const advisory of advisoryWrites) await this.advisoriesService.create(advisory, tx);
+    });
+
     return this.get(id, userId);
+  }
+
+  /** The advisory types already recorded against this dose. Reads only. */
+  private async advisoryTypesFor(interventionId: string): Promise<Set<string>> {
+    const db = this.db.db as any;
+    const rows = await db
+      .select({ type: advisories.type })
+      .from(advisories)
+      .where(and(eq(advisories.contextType, 'intervention'), eq(advisories.contextId, interventionId)));
+    return new Set<string>(rows.map((r: any) => r.type));
   }
 
   /**
