@@ -99,6 +99,13 @@ export class MedicationTypeaheadComponent {
   @Input() selected: Medication | null = null;
   @Input() label = 'Medication';
   @Input() placeholder = 'Search by name or brand';
+  /**
+   * Offer only active medications (`defaultActive`) — true for every picker that starts something
+   * new (a dose, a schedule, a reaction), which is what makes marking one inactive mean anything.
+   * It narrows the search only: a `selected` medication renders whatever its state, so a form
+   * showing an existing choice still shows a retired one.
+   */
+  @Input() activeOnly = true;
 
   @Output() selectedChange = new EventEmitter<Medication | null>();
 
@@ -112,7 +119,7 @@ export class MedicationTypeaheadComponent {
       this.results.set([]);
       return;
     }
-    this.api.get<Medication[]>('/medications', { q }).subscribe({
+    this.api.get<Medication[]>('/medications', this.activeOnly ? { q, activeOnly: true } : { q }).subscribe({
       // A failed search shows no results rather than an error: the caregiver's next keystroke
       // retries it anyway, and an error line here would outlive the query that caused it.
       next: (res) => this.results.set(res),
