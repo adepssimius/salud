@@ -1,0 +1,54 @@
+meta {
+  name: Update Observation
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}observations/{{observationId}}
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let oid = bru.getVar('observationId');
+  if (!oid) {
+    const listReq = await bru.runRequest("observations/list");
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) {
+      oid = list[0].id;
+    }
+  }
+  bru.setVar('observationId', oid);
+}
+
+body:json {
+  {
+    "observedAt": "2026-01-15T08:30:00.000Z",
+    "text": "Corrected via Bruno",
+    "entries": [
+      { "type": "temperature", "metadata": { "value": 38.4, "unit": "C", "method": "oral" } }
+    ]
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
+
+docs {
+  A correction (api.md → `PATCH /api/observations/:observationId`). Every field is optional; an
+  omitted field is left as it is. `episodeIds`, `resolvesEpisodeIds` and `entries` each replace
+  their list whole — echo an entry's `id` to keep it, and omit the read-only `labContext`.
+
+  Sending `entries` or `observedAt` recomputes the patient's latest weight from the newest
+  remaining weight entry and re-checks protocols (`firedAdvisories` carries only what this
+  request wrote). The whole correction, revision included, is one transaction.
+
+  Refused with 400 `FIELD_NOT_CORRECTABLE` (body carries `fields`): `unitPreferenceAtEntry`,
+  `recordedByUserId`, `createdAt`, `startEpisodeName`, `startEpisodeConditionId`. Other codes:
+  `AT_LEAST_ONE_ENTRY_REQUIRED` (empty `entries`), `DATE_IN_FUTURE`,
+  `RESOLVES_MUST_BE_SUBSET_OF_EPISODES`, `CANNOT_UNLINK_STARTED_EPISODE`,
+  `EPISODE_ALREADY_RESOLVED`, `EPISODE_TIME_ORDER_INVALID`.
+}

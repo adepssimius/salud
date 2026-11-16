@@ -9,10 +9,16 @@ import {
   Query,
   Request,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt.guard';
+import {
+  CorrectionFieldsInterceptor,
+  INTERVENTION_FIXED_FIELDS,
+  INTERVENTION_FORBIDDEN_VALUES,
+} from '../revisions/correction-fields';
 import { InterventionsService } from './interventions.service';
 import { CreateInterventionDto } from './dto/create-intervention.dto';
 import { UpdateInterventionDto } from './dto/update-intervention.dto';
@@ -78,6 +84,8 @@ export class InterventionsController {
     return await this.interventions.get(id, req.user.userId);
   }
 
+  // Runs before the ValidationPipe, on the raw body (see CorrectionFieldsInterceptor).
+  @UseInterceptors(new CorrectionFieldsInterceptor(INTERVENTION_FIXED_FIELDS, INTERVENTION_FORBIDDEN_VALUES))
   @Patch('interventions/:id')
   async update(
     @Request() req: any,

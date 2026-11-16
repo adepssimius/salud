@@ -30,11 +30,18 @@ seconds — see `api.md` → Conventions.
   field is always a token on the wire and no surface has to render a colorless patient.
 - `latestWeightKg: decimal(5,2)` (denormalized helper)
 - `latestWeightRecordedAt: datetime`
-  - Updated whenever a `weight` observation entry is created **or edited**, on this patient, anywhere on
-    the timeline — not just the most recently logged one. Guarded by recency: the entry's `observedAt` is
+  - Updated whenever a `weight` observation entry is created, on this patient, anywhere on the
+    timeline — not just the most recently logged one. Guarded by recency: the entry's `observedAt` is
     compared against the patient's current `latestWeightRecordedAt`, and the denormalized fields are only
-    overwritten when the entry's `observedAt` is the same or newer. Backdating an old weight (e.g.
-    correcting a past entry) must never regress `latestWeightKg` to a stale value.
+    overwritten when the entry's `observedAt` is the same or newer. Backdating an old weight must never
+    regress `latestWeightKg` to a stale value.
+  - **Recomputed on correction.** Whenever a correction changes an observation's `entries` or its
+    `observedAt` (api.md → `PATCH /api/observations/:observationId`), both fields are recomputed from
+    the patient's newest remaining `weight` entry by `observedAt` — the same answer the recency guard
+    above maintains incrementally, derived from scratch. So a correction can move `latestWeightKg`
+    down as well as up (the newest weight was mistyped, or removed, or moved earlier than an older
+    one), and to `null` with `latestWeightRecordedAt` when no `weight` entry remains. An incremental
+    "only if newer" update cannot express a removal, and this value feeds mg/kg dosing.
 - `ownedByUserId: uuid` (owner auto-added as caregiver)
 - `codeStatus: string | null` — free text, as the caregiver's care team has stated it (no fixed
   clinical enum — forms vary by hospital/locale; the app doesn't standardize it, matching the
@@ -715,6 +722,13 @@ the snapshot's contents do.
   "Corrections". Only mutating `PATCH` endpoints capture a revision; a `PATCH` that changes nothing
   observable (e.g. an empty body) still captures one today — reconstructability (N-2) errs toward
   capturing too often rather than silently skipping a save whose diff turned out to be empty.
+  A `PATCH` rejected by any check captures nothing: the revision is written in the same transaction
+  as the change it precedes.
+- **Ordering is by `editedAt`, newest first — a known hazard.** On SQLite `editedAt` has
+  one-second resolution, so two corrections of the same entry inside one second tie, and their
+  order in History is then undefined. This is the same tie `CareDocumentStatement` resolves with
+  its `seq` ordinal; giving `Revision` an equivalent ordinal is a known follow-up (ISSUES.md), not
+  yet specified here.
 
 ## Derived/computed data
 - `TimelineEntry` (query projection): merges observations + interventions sorted by timestamp.
@@ -762,6 +776,31 @@ the snapshot's contents do.
   episode is rejected (400 `EPISODE_ALREADY_RESOLVED`) rather than silently overwriting
   `endedAtType`/`endedAtId` and moving the derived `endedAt`. The same event re-asserting its own
   resolution is a no-op, which is what makes a `PATCH` that only edits `episodeIds` safe.
+- **Corrections** (F-1.4; api.md → "Corrections"). Any care team member may correct any
+  observation or intervention, whoever recorded it, with no time limit — membership already grants
+  full read/write on the patient, and the `Revision` records who corrected what. A correction keeps
+  the episode frame consistent:
+  - **An event cannot be unlinked from an episode it started** (400
+    `CANNOT_UNLINK_STARTED_EPISODE`). `startedAtType`/`startedAtId` would otherwise point at an event
+    that is no longer a member, and the episode would have no start among its own events. A frame
+    started by the wrong event is voided with it (api.md → "Corrections" → Voiding).
+  - **Dropping a resolve link reopens the episode.** When a correction removes an episode from an
+    event's `resolvesEpisodeIds` and that event is the episode's `endedAtId`, the episode returns
+    to `status = 'active'` with `endedAtType`/`endedAtId` cleared. This is the one way an episode
+    becomes active again, and it is a correction of the resolution, not a separate "reopen"
+    action — there is still no direct resolve or reopen endpoint (CLAUDE.md → Episode model).
+  - **Changing an event's clinical time moves the frames it anchors.** `startedAt` and `endedAt`
+    are derived from the starting and resolving events at query time, so correcting that event's
+    `observedAt`/`performedAt` moves them with it; nothing is stored to update. The one
+    constraint: an episode may not end before it starts — a correction that would put a resolving
+    event's time before its episode's starting event's time, or a starting event's after the
+    resolving one's, is rejected (400 `EPISODE_TIME_ORDER_INVALID`). Ordinary member events are
+    unconstrained; membership has never required an event to sit inside the frame.
+  - **A corrected dose does not re-check later doses.** A later dose's `nextAllowedAt`,
+    `isAtypical` and `atypicalReason` were computed from the doses on record when it was logged,
+    and stay as logged — they are what the caregiver was shown at the time, which is the
+    reconstructability N-2 asks for. Only the corrected dose itself is re-evaluated (api.md →
+    `PATCH /api/interventions/:interventionId`).
 - `episodeId` on `InterventionSchedule` optional; when provided, schedule should tag interventions to same episode.
 - Enforce canonical units at persistence boundary; convert in API/UI.
 - `MedicationGuideline.source` is required — never persist a guideline without provenance (N-4).

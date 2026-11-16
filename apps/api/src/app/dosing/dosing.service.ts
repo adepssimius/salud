@@ -22,8 +22,10 @@ export interface DoseEvaluationInput {
   embodimentId?: string | null;
   amountMg?: number | null;
   occurredAt: Date;
-  // Set when re-evaluating an existing dose (InterventionsService.update) so that dose's own row
-  // doesn't count itself as a prior dose in the daily-total / interval checks.
+  // Set when re-evaluating an existing dose (InterventionsService.update, or the correction form's
+  // dose-checks preview) so that dose's own row doesn't count itself as a prior dose in the
+  // daily-total / interval checks. Matched only against this patient's doses (the query below is
+  // patient-scoped), so a foreign id is a no-op rather than a probe.
   excludeInterventionId?: string;
 }
 

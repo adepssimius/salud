@@ -28,6 +28,10 @@ export const ERROR_SENTENCES = {
   ANALYTE_RANGE_NOT_FOUND: 'That range no longer exists. Reload this analyte.',
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
+  // A correction may not unlink an entry from the episode it started (data-model.md → Corrections);
+  // the edit form locks that checkbox, so this reaches a caregiver only if two edits race.
+  CANNOT_UNLINK_STARTED_EPISODE:
+    'This entry started that episode, so it has to stay part of it. Keep the episode checked and save again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
@@ -46,10 +50,15 @@ export const ERROR_SENTENCES = {
   EMBODIMENT_IN_USE:
     'This form is still used by a schedule, a dose already logged, or a reaction. Remove those first, or mark the medication inactive instead.',
   EPISODE_ALREADY_RESOLVED: 'That episode has already been resolved. Refresh to see the current status.',
+  EPISODE_TIME_ORDER_INVALID:
+    "That time would make an episode end before it began. Check the time against the episode's start and end.",
   EPISODE_NOT_FOUND: 'That episode is no longer available. Refresh the page and try again.',
   GUIDELINE_AGE_RANGE_INVALID:
     'The minimum age must be lower than the maximum age. Check both and try again.',
   GUIDELINE_IN_USE: 'This guideline is attached to doses already logged. It cannot be deleted.',
+  // The edit forms never offer these fields, so like RESERVED_METADATA_KEY this points at the app.
+  FIELD_NOT_CORRECTABLE:
+    "Part of this correction changes something that can't be edited after logging, such as the type or the schedule it came from. Nothing was saved — please try again, or update the app if this keeps happening.",
   FILE_NOT_FOUND: 'That photo is no longer available.',
   FILE_REQUIRED: 'Choose a photo to upload.',
   FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED: 'Set how often this repeats, or list the specific times of day.',
