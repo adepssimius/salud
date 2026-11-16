@@ -1,0 +1,34 @@
+meta {
+  name: Update Guideline
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}guidelines/{{guidelineId}}
+  body: json
+  auth: inherit
+}
+
+docs {
+  Any field except `type`. The age-range rule is checked against the merged row, so
+  `{ "ageMinMonths": 200 }` against a band whose max is 60 is 400 `GUIDELINE_AGE_RANGE_INVALID`.
+  Catalog edits are not revisioned (app-spec/api.md -> Medications, embodiments & guidelines).
+}
+
+body:json {
+  {
+    "source": "AAP Clinical Report — Fever and Antipyretic Use in Children (2011)",
+    "maxMgPerDose": 1000,
+    "notes": "Corrected source citation"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

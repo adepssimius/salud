@@ -392,8 +392,9 @@ derives from existing payloads:
 - Accessed via the avatar dropdown’s Edit profile action.
 
 ## Dose entry
-- Medication search is a typeahead over `GET /api/medications?q=` (matches generic and brand
-  names, F-1.2) — no raw medication-ID text field. Selecting a result loads its embodiments; the
+- Medication search is a typeahead over `GET /api/medications?q=&activeOnly=true` (matches generic
+  and brand names, F-1.2; retired medications are not offered — "Medication catalog") — no raw
+  medication-ID text field. Selecting a result loads its embodiments; the
   embodiment picker shows cabinet status inline (at home / not at home, running low, expired).
 - As soon as a medication (and ideally embodiment/amount) is chosen, the form calls
   `POST .../dose-checks` debounced and renders **both** weight-based and age-band guidance side by
@@ -529,7 +530,7 @@ app. They therefore need somewhere to be entered.
   optional-date rule reachable from the product rather than merely true in the API.
 - **Scope picker** — this is where the safety weight sits:
   - `medication` → the shared `core/medication-typeahead.component.ts`, the same search over
-    `GET /api/medications?q=` the dose and schedule forms use. The host owns the selection and the
+    `GET /api/medications?q=&activeOnly=true` the dose and schedule forms use. The host owns the selection and the
     component only reports it, so switching scope type can clear it (below). Dose entry, schedule
     entry and the quick-log sheet still carry their own inline copies of this input; this component
     is the destination for that consolidation (ISSUES.md #29), not a further copy of it.
@@ -944,6 +945,62 @@ days cannot tell the two series apart, let alone read either one forwards. This 
   single mL, shows just `32 mg/mL`; the app neither invents printed figures it was never given nor
   pads the line with a parenthetical that repeats it. (Dose entry's picker deliberately shows
   cabinet status rather than concentration — the number that matters there is the computed dose.)
+- **Everything in the catalog is editable after creation**, from `/medications/:id`, through the
+  existing `PATCH` routes (api.md → "Medications, embodiments & guidelines"). Three components under
+  `apps/web/src/app/medications/`, each a read view that flips to a form in place:
+  - **`medication-header-editor.component.ts`** — `name`, `brandNames`, `description`, `tags`, and
+    **Active** (`defaultActive`), labelled in plain words: "Active — offered when logging a dose,
+    creating a schedule or recording a reaction". Brand names and tags are edited whole, as chip
+    lists.
+  - **`embodiment-editor.component.ts`**, one per embodiment row — `label`, `notes`, the
+    concentration pair (same *[ mg ] per [ mL ]* input and live derived figure as create),
+    `strengthMgPerUnit`, `unitType`, and the cabinet fields `atHome` ("At home"), `runningLow` and
+    **`expiresAt`**. The expiry is a date input ("Expires") on **create as well as edit** — it is
+    printed on the bottle in hand, and the expired-embodiment advisory has nothing to fire on
+    without it. Clearing it sends `null`.
+  - **`guideline-editor.component.ts`**, one per guideline row — every field the guideline's type
+    carries except `type` itself, which is shown read-only (a weight-based guideline is not edited
+    into an age band; delete it and add the other kind). `source` stays required, as on create.
+- **Edit is a visible button on each section and row, never behind a menu or a long-press.** This
+  is mostly done on a phone, by someone fixing a misspelling they just noticed; an affordance they
+  have to discover is one they will not find. Forms are a single column with full-width inputs at
+  phone width, and Save/Cancel sit at the bottom of the form they belong to.
+- **What an edit means, said once, in the header editor:** a rename relabels every dose, schedule
+  and reaction that already names this medication — they read the name live — which is the point of
+  fixing "psuedophedrine". Catalog edits are not revisioned (api.md); there is no history to browse.
+- **The concentration lock.** When the server refuses a dosing-field change with 409
+  `EMBODIMENT_CONCENTRATION_IN_USE` (api.md → Embodiments → "Concentration lock"), the form keeps
+  everything else the caregiver typed and re-renders the concentration pair, strength and unit type
+  **read-only**, reset to the stored values, with the reason in words built from `dependents` — "Used by 3 logged doses and
+  1 schedule, so its strength can't change; a bottle with a different strength is a new form" —
+  and an **"Add as a new form"** action that opens the add-embodiment form prefilled from this one
+  (label, concentration, strength, unit type, notes; cabinet fields blank). Label, notes and the
+  cabinet fields stay editable on the locked row. The editor submits the concentration as the pair
+  when the row has one and as the per-mL figure only when it does not, so an unchanged save on a
+  locked row never trips the lock (api.md explains why the per-mL figure alone counts as a change).
+- **Delete stays delete-only-when-unused**, behind a confirm, matching the rest of the app. A 409
+  `*_IN_USE` is read back in words from `dependents` — "Can't delete: 2 forms, 1 guideline and 14
+  logged doses still use acetaminophen" — never as a bare code, followed by the way out instead:
+  - a medication → **"Mark inactive instead"**, one tap, which `PATCH`es `defaultActive: false`;
+  - an embodiment → a suggestion to untick **"At home"** (there is no retire flag for an
+    embodiment);
+  - a guideline → no alternative beyond removing what uses it; the dependents sentence says what.
+- **Retirement is real.** Every picker that chooses a medication for something *new* — dose entry,
+  the quick-log sheet, schedule entry, and reaction entry's medication/embodiment scope — searches
+  with `activeOnly=true`. The catalog list (`/medications`) shows all medications, marking inactive
+  ones with a muted "Inactive" pill. An inactive medication still displays normally everywhere it is
+  already referenced — past doses, schedules, reactions, the journal, the ER Brief — since those
+  read the row by id, not through a picker.
+- **Removing a tag shows a standing caution, and does not block.** Tag-scoped reactions match
+  against `Medication.tags`, so dropping a tag can stop a reaction warning from firing on this
+  medication. Reactions are per-patient and care-team-gated while the catalog is household-global,
+  and no endpoint can count the reactions across the household that match a tag — so the editor
+  does not attempt a count. When a save would remove one or more tags, it shows a note beside the
+  tag list, in the same register as the reaction form's tag-typo note: "Removing a tag can stop a
+  reaction recorded against that tag from warning about this medication." Saving goes ahead.
+- **Errors** from these forms go through `core/error-display.ts`, which carries a sentence for
+  `EMBODIMENT_CONCENTRATION_IN_USE` alongside the existing `MEDICATION_NAME_TAKEN`, `*_IN_USE`,
+  `CONCENTRATION_*` and `GUIDELINE_AGE_RANGE_INVALID` codes.
 
 ## Analyte catalog
 - `/analytes` (list) and `/analytes/:id` (detail), reached from the dashboard beside the medication

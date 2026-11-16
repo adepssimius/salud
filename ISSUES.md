@@ -851,6 +851,7 @@ Delete plus re-create covers the case today, at the cost of the original's times
 card now says so in as many words ("Reactions can't be edited. To correct one, remove it and record
 it again."), so the absence is stated rather than left as a missing affordance.
 
+
 ---
 
 ## Correcting logged entries
@@ -1064,6 +1065,68 @@ shows a time correction and documents the correction rules.
 
 ---
 
+## Medication editing
+
+---
+
+### 44. 🔴 Retiring a medication changes nothing a caregiver can see
+
+`defaultActive: false` is documented as *the* way to retire a medication instead of deleting it
+(api.md → "Medications, embodiments & guidelines", and every `*_IN_USE` refusal points there), and
+`GET /api/medications?activeOnly=true` honours it. But no web call site sends `activeOnly` — dose
+entry, the quick-log sheet, schedule entry and reaction entry all search the whole catalog — so a
+retired medication is still offered in every picker it was ever offered in, and the web had no way to
+set the flag in the first place.
+
+The spec now says what retirement does (frontend.md → "Medication catalog": pickers for new records
+send `activeOnly=true`, the catalog list shows all, existing references display normally). The API
+needed nothing. The web half — the header editor's Active toggle and the picker change — is the
+medication-editing web work; flip this to ✅ when that lands.
+
+---
+
+### 45. ✅ No Bruno request for an embodiment detail `PATCH` or a guideline `PATCH`
+
+`bruno/medications/embodiments/` had only `update-cabinet.bru` (cabinet flags), and
+`bruno/medications/guidelines/` had no `PATCH` at all, so the label/concentration edit and every
+guideline edit had never been exercised outside Jest — against CLAUDE.md's three-things rule for
+endpoints.
+
+**Fixed 2026-11-15:** `embodiments/update.bru` (label, pair, unit type, expiry; its docs block states
+the concentration lock) and `guidelines/update.bru`.
+
+---
+
+### 46. ✅ `yarn seed:catalog` matched existing medications case-sensitively
+
+`tools/seed-catalog.ts` skipped a medication only on an exact `name` match, while the API's
+`MEDICATION_NAME_TAKEN` check is case-insensitive. A household that had typed "Acetaminophen" by hand
+got a second, lower-case "acetaminophen" from the seed — exactly the indistinguishable-twins hazard
+the API refuses on create.
+
+**Fixed 2026-11-15:** the seed reads every name once and compares trimmed, lower-cased, in JS — the
+same comparison the API makes, so SQLite and Postgres collation never enter into it. Still matched on
+name only: rename a seeded medication and re-seed, and a fresh copy is inserted (commented in the
+script).
+
+---
+
+### 47. ✅ Editing an embodiment's concentration silently changed what a schedule's "5 mL" meant
+
+`PATCH /api/embodiments/:id` accepted a new concentration, strength or unit type no matter what
+referenced the row. A schedule stores `doseMg` and `doseMl` side by side and
+`POST /schedules/:id/log` copies `amountMl` from the schedule, so after a concentration edit the
+schedule went on logging "5 mL" that no longer held the milligrams it recorded; logged doses, which
+display their embodiment live, were relabelled the same way. Unreachable from the web until editing
+existed, which is why it is filed alongside it.
+
+**Fixed 2026-11-15:** the concentration lock (api.md → Embodiments → "Concentration lock"). Once a
+logged dose or a schedule references an embodiment, a `PATCH` that would change a dosing field is 409
+`EMBODIMENT_CONCENTRATION_IN_USE` with `dependents`; echoing stored values still succeeds. Covered in
+`medications.e2e-spec.ts` → "concentration lock" on both dialects.
+
+---
+
 ## Suggested order
 
 The original review's ordering put the entry-form redesign second; **that shipped on 2026-08-07**
@@ -1088,6 +1151,7 @@ so the list below is re-sequenced.
 | 14 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
 | 15 | **Follow-ups from the QA-findings batch** | 28, 29, 30 | #28 is the only 🔴 of the three and is a real integrity hole — a client can erase an atypical-dose flag. #29 and #30 are both "the third time is when you extract it" items. |
 | 16 | **Correcting logged entries** | ~~31–37, 39, 41, 43~~ ✅; then 40, 42 | The server half of the correction feature, landing before the edit pages. #38 is a do-not-fix note; #40 needs a migration in both lineages, #42 a design. |
+| 17 | **Medication editing** | 44, ~~45, 46, 47~~ | 45–47 landed with the API half of medication editing (2026-11-15); #44 closes with the web half. |
 
 ## Conventions for working these
 
