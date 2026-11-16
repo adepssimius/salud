@@ -125,6 +125,8 @@ describe('NewSchedulePage', () => {
     const comp = fixture.componentInstance;
 
     comp.onMedicationQueryChange({ target: { value: 'amox' } } as unknown as Event);
+    // A new schedule offers active medications only: retiring one is what keeps it out of here.
+    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'amox', activeOnly: true });
     expect(comp.medicationResults().length).toBe(1);
     comp.selectMedication(comp.medicationResults()[0]);
     expect(comp.selectedMedication()?.id).toBe('med-1');

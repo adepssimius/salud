@@ -133,7 +133,7 @@ describe('NewInterventionPage', () => {
     const component = fixture.componentInstance;
 
     component.onMedicationQueryChange({ target: { value: 'tylenol' } } as unknown as Event);
-    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'tylenol' });
+    expect(apiMock.get).toHaveBeenCalledWith('/medications', { q: 'tylenol', activeOnly: true });
     expect(component.medicationResults().length).toBe(1);
 
     component.selectMedication(component.medicationResults()[0] ?? {
@@ -201,6 +201,9 @@ describe('NewInterventionPage', () => {
       expect.objectContaining({ medicationId: 'med-1' }),
     );
     expect(component.doseCheckResult()).toEqual(doseCheckResult);
+    // Only a correction excludes a dose from its own preview; create sends no such key at all.
+    const [, createBody] = apiMock.post.mock.calls.find(([path]: [string]) => path.endsWith('/dose-checks'));
+    expect('excludeInterventionId' in createBody).toBe(false);
   }));
 
   it('clears the dose-check result when the medication is cleared', fakeAsync(() => {

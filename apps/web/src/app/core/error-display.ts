@@ -49,6 +49,8 @@ export const ERROR_SENTENCES = {
   DATE_IN_FUTURE: 'That date and time is in the future. Check it and try again.',
   EMBODIMENT_IN_USE:
     'This form is still used by a schedule, a dose already logged, or a reaction. Remove those first, or mark the medication inactive instead.',
+  EMBODIMENT_CONCENTRATION_IN_USE:
+    'Doses or schedules already use this form, so its concentration, strength and unit type can no longer change. If the bottle is different, add it as a new form instead.',
   EPISODE_ALREADY_RESOLVED: 'That episode has already been resolved. Refresh to see the current status.',
   EPISODE_TIME_ORDER_INVALID:
     "That time would make an episode end before it began. Check the time against the episode's start and end.",
