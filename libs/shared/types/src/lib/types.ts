@@ -192,8 +192,9 @@ export interface Observation {
   unitPreferenceAtEntry: UnitPreference | null;
   createdAt: number;
   updatedAt: number;
-  // Only populated on the POST create response — the protocol_fired advisories (if any) this
-  // specific save just triggered (api.md → "Observations"). Empty/absent on every other read.
+  // Only populated on the POST create and PATCH correction responses — the protocol_fired
+  // advisories (if any) this specific save just wrote (api.md → "Observations"). Empty/absent on
+  // every other read.
   firedAdvisories?: Advisory[];
 }
 
@@ -211,15 +212,27 @@ export interface CreateObservationDto {
   }>;
 }
 
+/**
+ * `PATCH /api/observations/:id` — a correction (api.md → that section; data-model.md → "Data
+ * integrity rules" → Corrections). Every field optional; an omitted field is left as it is.
+ * `episodeIds`, `resolvesEpisodeIds` and `entries` each replace their list whole. Every
+ * ObservationType round-trips, `lab_result` and `document` included; an echoed entry keeps its
+ * `id` and must omit the read-only `labContext`. Not correctable, and rejected with
+ * FIELD_NOT_CORRECTABLE if sent: `unitPreferenceAtEntry`, `recordedByUserId`, `createdAt`,
+ * `startEpisodeName`, `startEpisodeConditionId` — which is why none of them appear here.
+ */
 export interface UpdateObservationDto {
+  observedAt?: string; // ISO datetime — the clinical time
   text?: string | null;
   episodeIds?: string[];
   resolvesEpisodeIds?: string[];
-  entries?: Array<{
-    id?: string;
-    type: ObservationType;
-    metadata?: Record<string, any>;
-  }>;
+  entries?: UpdateObservationEntry[]; // at least one when sent (AT_LEAST_ONE_ENTRY_REQUIRED)
+}
+
+export interface UpdateObservationEntry {
+  id?: string;
+  type: ObservationType;
+  metadata?: Record<string, any>;
 }
 
 // Interventions
@@ -312,25 +325,52 @@ export interface CreateInterventionDto {
   metadata?: Record<string, any>;
 }
 
+/**
+ * The dose sources a correction may set. `'schedule'` is written only by the schedule-log path,
+ * and a dose that carries it (or a `scheduleId`) cannot have its `doseSource` changed at all —
+ * both are FIELD_NOT_CORRECTABLE (api.md → `PATCH /api/interventions/:id`).
+ */
+export type CorrectableDoseSource = Exclude<DoseSource, 'schedule'>;
+
+/**
+ * `PATCH /api/interventions/:id` — a correction. Every field optional; an omitted field is left
+ * as it is. Not correctable, and rejected with FIELD_NOT_CORRECTABLE if sent: `type`,
+ * `interventionScheduleId`, `recordedByUserId`, `createdAt`, `startEpisodeName`,
+ * `startEpisodeConditionId`, and `doseSource: 'schedule'`. The dosing engine re-runs only when
+ * `performedAt`, `medicationId`, `medicationEmbodimentId`, `doseSource` or `amountMg` is sent.
+ */
 export interface UpdateInterventionDto {
+  performedAt?: string; // ISO datetime — the clinical time
+  notes?: string | null;
   episodeIds?: string[];
   resolvesEpisodeIds?: string[];
-  notes?: string | null;
-  metadata?: Record<string, any>;
-  // type-specific updates allowed; guidelines optional
+  metadata?: Record<string, any>; // free-form client keys; RESERVED_METADATA_KEY as on create
+  // medication_dose only
   medicationId?: string;
   medicationEmbodimentId?: string;
-  doseSource?: DoseSource;
+  doseSource?: CorrectableDoseSource;
   amountMg?: number;
   amountMl?: number | null;
   pillCount?: number | null;
+  // honored under `doseSource: 'override'` only, as on create
   weightKgUsed?: number | null;
   ageMonthsUsed?: number | null;
   guidelineId?: string | null;
-  interventionScheduleId?: string | null;
+  // dressing_change only
   bodyLocation?: string;
   side?: 'left' | 'right' | 'bilateral' | 'n/a';
   dressingType?: string;
+}
+
+/**
+ * Error body of a 400 FIELD_NOT_CORRECTABLE from either correction PATCH, thrown as
+ * `new BadRequestException({ message: 'FIELD_NOT_CORRECTABLE', fields })` — the same shape as
+ * RESERVED_METADATA_KEY's `{ message, keys }`. `fields` names the offending request fields;
+ * `doseSource` when the refused part is its value.
+ */
+export interface FieldNotCorrectableError {
+  message: 'FIELD_NOT_CORRECTABLE';
+  fields: string[];
 }
 
 // Medication catalog — not patient-scoped (shared by the whole household, P4)
@@ -517,6 +557,7 @@ export interface DoseCheckDto {
   medicationEmbodimentId?: string;
   amountMg?: number;
   occurredAt?: string; // ISO datetime; defaults to now
+  excludeInterventionId?: string;
 }
 
 export interface WeightBasedGuidance {

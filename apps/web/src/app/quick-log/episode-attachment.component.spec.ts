@@ -11,6 +11,8 @@ import { EpisodeAttachmentComponent } from './episode-attachment.component';
       [selectedIds]="selectedIds"
       [createNew]="createNew"
       [resolveSelected]="resolveSelected"
+      [allowCreateNew]="allowCreateNew"
+      [lockedIds]="lockedIds"
       (selectedIdsChange)="selectedIds = $event"
       (createNewChange)="createNew = $event"
       (resolveSelectedChange)="resolveSelected = $event"
@@ -22,6 +24,8 @@ class HostComponent {
   selectedIds: string[] = [];
   createNew = false;
   resolveSelected = false;
+  allowCreateNew = true;
+  lockedIds: string[] = [];
 }
 
 describe('EpisodeAttachmentComponent', () => {
@@ -121,5 +125,91 @@ describe('EpisodeAttachmentComponent', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.createNew).toBe(true);
     expect(el.textContent).toContain('New episode name');
+  });
+
+  // Correcting an entry (frontend.md → "Correcting an entry"): no new episode, and the episode the
+  // entry started stays attached.
+  describe('as configured by a correction form', () => {
+    function renderCorrection(
+      episodes: Array<{ id: string; name: string }>,
+      selectedIds: string[],
+      lockedIds: string[] = [],
+    ) {
+      const fixture = TestBed.createComponent(HostComponent);
+      Object.assign(fixture.componentInstance, { episodes, selectedIds, lockedIds, allowCreateNew: false });
+      fixture.detectChanges();
+      return fixture;
+    }
+    const buttons = (el: HTMLElement) => Array.from(el.querySelectorAll('button')) as HTMLButtonElement[];
+
+    it('offers no "Start a new episode" and no More disclosure', () => {
+      const el = renderCorrection([{ id: 'ep1', name: 'Fever' }, { id: 'ep2', name: 'Rash' }], ['ep2'])
+        .nativeElement as HTMLElement;
+      expect(el.textContent).not.toMatch(/start a new episode/i);
+      expect(buttons(el).some((b) => ['More', 'Less'].includes(b.textContent!.trim()))).toBe(false);
+      // The resolve option, its only remaining disclosure, renders inline instead.
+      expect(el.textContent).toContain('This resolves the selected episode');
+    });
+
+    it('renders nothing dangling with no episodes at all', () => {
+      const el = renderCorrection([], []).nativeElement as HTMLElement;
+      expect(buttons(el).length).toBe(0);
+      expect(el.querySelector('input')).toBeNull();
+      expect(el.textContent!.trim()).toBe('');
+    });
+
+    it('holds a locked episode in the picker: selected, not toggleable, never emitted as deselected', () => {
+      const fixture = renderCorrection(
+        [{ id: 'ep1', name: 'Fever' }, { id: 'ep2', name: 'Rash' }],
+        ['ep1'],
+        ['ep1'],
+      );
+      const el = fixture.nativeElement as HTMLElement;
+      const fever = buttons(el).find((b) => b.textContent!.trim() === 'Fever')!;
+      expect(fever.classList).toContain('chip-on');
+      expect(fever.disabled).toBe(true);
+      expect(el.textContent).toContain('This entry started this episode');
+
+      fever.click();
+      (fixture.debugElement.children[0].componentInstance as EpisodeAttachmentComponent).toggle('ep1');
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedIds).toEqual(['ep1']);
+
+      // Other chips still toggle, and the lock survives the round trip.
+      buttons(el).find((b) => b.textContent!.trim() === 'Rash')!.click();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedIds).toEqual(['ep1', 'ep2']);
+      buttons(el).find((b) => b.textContent!.trim() === 'Rash')!.click();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedIds).toEqual(['ep1']);
+    });
+
+    it('holds the lock in the single-episode "attached" branch too', () => {
+      const fixture = renderCorrection([{ id: 'ep1', name: 'Fever' }], ['ep1'], ['ep1']);
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('.pill')!.textContent).toContain('Fever');
+      expect(el.querySelector('.chip-remove')).toBeNull();
+      expect(el.textContent).toContain('This entry started this episode');
+
+      (fixture.debugElement.children[0].componentInstance as EpisodeAttachmentComponent).toggle('ep1');
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedIds).toEqual(['ep1']);
+      // A locked episode is not something this entry can resolve, so there is nothing to offer.
+      expect(el.textContent).not.toContain('This resolves');
+    });
+
+    it('drops the resolve flag when the last unlocked episode is detached', () => {
+      const fixture = renderCorrection(
+        [{ id: 'ep1', name: 'Fever' }, { id: 'ep2', name: 'Rash' }],
+        ['ep1', 'ep2'],
+        ['ep1'],
+      );
+      fixture.componentInstance.resolveSelected = true;
+      fixture.detectChanges();
+      buttons(fixture.nativeElement).find((b) => b.textContent!.trim() === 'Rash')!.click();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedIds).toEqual(['ep1']);
+      expect(fixture.componentInstance.resolveSelected).toBe(false);
+    });
   });
 });

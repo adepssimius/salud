@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -8,19 +8,48 @@ import { AuthService } from '../core/auth.service';
 import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { DangerInterstitialComponent } from '../core/danger-interstitial.component';
-import { errorText } from '../core/error-display';
+import { ERROR_SENTENCES, errorText } from '../core/error-display';
 import {
+  CorrectionEpisodeState,
+  correctionResolves,
+  episodeCorrection,
+  toLocalDateTimeInput,
+} from '../core/entry-correction';
+import {
+  CorrectableDoseSource,
   CreateInterventionDto,
   DOSE_SOURCES,
   DoseCheckDto,
   DoseCheckResult,
   DoseSource,
   InterventionSchedule,
+  Intervention,
   InterventionType,
   Medication,
   MedicationEmbodiment,
   Patient,
+  UpdateInterventionDto,
 } from '@salud/shared/types';
+
+/**
+ * What `/interventions/:id/edit` hands this form to correct (frontend.md → "Correcting an entry").
+ * Loaded by EditInterventionPage; the form itself never fetches the entry.
+ */
+export interface InterventionCorrectionContext {
+  intervention: Intervention;
+  patientName: string;
+  /** Null when the recorder has left the care team — reads "Unknown caregiver". */
+  recordedByName: string | null;
+  /** The schedule this dose was logged against, by name; null when none (or it failed to load). */
+  scheduleLabel: string | null;
+  episodes: CorrectionEpisodeState;
+}
+
+/** The fixed facts of a correction, in words — never as disabled controls a caregiver can poke at. */
+const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
+  medication_dose: 'Medication dose',
+  dressing_change: 'Dressing change',
+};
 
 @Component({
   selector: 'app-new-intervention-page',
@@ -42,17 +71,33 @@ import {
     ></app-danger-interstitial>
 
     <div class="card">
-      <h1>{{ compact() ? 'Log dose' : 'Log Intervention' }}</h1>
-      <p class="muted" *ngIf="!compact()">Record a medication dose or dressing change.</p>
+      <h1>{{ heading() }}</h1>
+      <p class="muted" *ngIf="!compact() && !correction()">Record a medication dose or dressing change.</p>
+
+      <!-- What a correction does not change, as plain text (frontend.md → "Correcting an entry" →
+           Fixed): the type and schedule link say what the record is; attribution is not rewritten. -->
+      <div class="fixed-facts" *ngIf="correction() as c">
+        <p class="muted small">
+          <span class="fixed-type">{{ typeLabel(c.intervention.type) }}</span>
+          <ng-container *ngIf="isScheduledCorrection()">
+            · logged against
+            <span class="fixed-schedule">{{ c.scheduleLabel ?? 'a schedule' }}</span>
+          </ng-container>
+        </p>
+        <p class="muted small">
+          Recorded by {{ c.recordedByName ?? 'Unknown caregiver' }} · logged
+          {{ c.intervention.createdAt * 1000 | date: 'medium' }}
+        </p>
+      </div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <!-- Pinned identity: which chart this dose lands on is never off-screen, and the save
              button names it again at the point of commitment (frontend.md → "Patient identity"). -->
-        <div class="for-patient" *ngIf="compact() && patientName()">
+        <div class="for-patient" *ngIf="(compact() || correction()) && patientName()">
           <span class="muted small">For</span>
           <span class="for-patient-name">{{ patientName() }}</span>
         </div>
-        <label class="field" *ngIf="!compact()">
+        <label class="field" *ngIf="!compact() && !correction()">
           <span>Patient</span>
           <select formControlName="patientId" (change)="onPatientChange($event)">
             <option value="" disabled>Select a patient</option>
@@ -69,7 +114,7 @@ import {
             <input type="datetime-local" formControlName="performedAt" />
           </label>
 
-          <label class="field" *ngIf="!compact()">
+          <label class="field" *ngIf="!compact() && !correction()">
             <span>Type</span>
             <select formControlName="type">
               <option value="medication_dose">Medication dose</option>
@@ -79,6 +124,7 @@ import {
         </div>
 
         <app-episode-attachment
+          *ngIf="!correction(); else correctionEpisodes"
           [episodes]="activeEpisodes()"
           [selectedIds]="selectedEpisodeIds()"
           [createNew]="createNewEpisode()"
@@ -89,6 +135,19 @@ import {
           (newEpisodeNameChange)="form.patchValue({ startEpisodeName: $event })"
           (resolveSelectedChange)="form.patchValue({ resolveSelected: $event })"
         ></app-episode-attachment>
+        <ng-template #correctionEpisodes>
+          <!-- The create picker, configured for a correction: no new episode, and the episode this
+               entry started stays attached (frontend.md → "Correcting an entry" → Fixed). -->
+          <app-episode-attachment
+            [episodes]="correctionEpisodeOptions()"
+            [selectedIds]="selectedEpisodeIds()"
+            [allowCreateNew]="false"
+            [lockedIds]="correctionLockedIds()"
+            [resolveSelected]="correctionResolveSelected()"
+            (selectedIdsChange)="setEpisodeSelection($event)"
+            (resolveSelectedChange)="correctionResolveFlag.set($event)"
+          ></app-episode-attachment>
+        </ng-template>
 
         <ng-container *ngIf="isMedication()">
           <div class="grid">
@@ -198,7 +257,12 @@ import {
           </div>
 
           <div class="grid">
-            <label class="field">
+            <!-- A scheduled dose's source is what puts it in the plan's adherence count; it is fixed. -->
+            <div class="field" *ngIf="isScheduledCorrection()">
+              <span>Dose source</span>
+              <span class="fixed-dose-source">From schedule</span>
+            </div>
+            <label class="field" *ngIf="!isScheduledCorrection()">
               <span>Dose source</span>
               <select formControlName="doseSource">
                 <option value="weight_based">Weight based</option>
@@ -219,7 +283,11 @@ import {
               <input type="number" step="0.5" formControlName="pillCount" />
             </label>
           </div>
-          <div class="grid" *ngIf="!compact()">
+          <p class="muted small" *ngIf="correction()">
+            Doses logged after this one keep the checks they were given at the time — correcting this
+            one doesn't re-check them.
+          </p>
+          <div class="grid" *ngIf="!compact() && !correction()">
             <label class="field">
               <span>Schedule ID (optional)</span>
               <input type="text" formControlName="interventionScheduleId" />
@@ -362,6 +430,18 @@ import {
       .quick-weight input {
         max-width: 180px;
       }
+      .fixed-facts {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .fixed-type {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .fixed-dose-source {
+        padding: 0.65rem 0;
+      }
       .secondary.small {
         padding: 0.4rem 0.7rem;
         font-size: 0.85rem;
@@ -376,6 +456,21 @@ export class NewInterventionPage implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
+
+  /** Set by EditInterventionPage: this form corrects that intervention instead of logging a new one. */
+  correction = input<InterventionCorrectionContext | null>(null);
+  correctionEpisodeOptions = signal<EpisodeOption[]>([]);
+  /** The picker's "this resolves…" switch on a correction; null until the caregiver touches it. */
+  correctionResolveFlag = signal<boolean | null>(null);
+  correctionLockedIds = computed(() => {
+    const started = this.correction()?.episodes.startedId;
+    return started ? [started] : [];
+  });
+  private correctionResolvesIds = computed(() => {
+    const c = this.correction();
+    return c ? correctionResolves(c.episodes, this.formEpisodeIds(), this.correctionResolveFlag()) : [];
+  });
+  correctionResolveSelected = computed(() => this.correctionResolvesIds().length > 0);
 
   private scheduleIdParam: string | null = null;
   private patientIdParam: string | null = null;
@@ -427,13 +522,33 @@ export class NewInterventionPage implements OnInit {
   selectedEpisodeIds = computed(() => this.formEpisodeIds());
 
   patientName = computed(
-    () => this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null,
+    () =>
+      this.correction()?.patientName ||
+      (this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null),
   );
 
   /** Every write names its patient at the point of commitment — never a bare "Save" (P3). */
   saveLabel = computed(() => {
     const name = this.patientName();
+    if (this.correction()) return name ? `Save correction for ${name}` : 'Save correction';
     return name ? `Save for ${name}` : 'Save intervention';
+  });
+
+  heading = computed(() => {
+    const c = this.correction();
+    if (c) return c.intervention.type === 'dressing_change' ? 'Correct dressing change' : 'Correct dose';
+    return this.compact() ? 'Log dose' : 'Log Intervention';
+  });
+
+  /**
+   * A dose logged from a schedule: its schedule link and its dose source are both fixed, and the
+   * API refuses any `doseSource` on it (FIELD_NOT_CORRECTABLE).
+   */
+  isScheduledCorrection = computed(() => {
+    const iv = this.correction()?.intervention;
+    if (!iv) return false;
+    const m: any = iv.metadata ?? {};
+    return !!(iv.scheduleId || m.interventionScheduleId || m.doseSource === 'schedule');
   });
 
   form = this.fb.nonNullable.group({
@@ -460,6 +575,12 @@ export class NewInterventionPage implements OnInit {
   });
 
   ngOnInit(): void {
+    const correction = this.correction();
+    if (correction) {
+      this.form.valueChanges.pipe(debounceTime(400)).subscribe(() => this.maybeRunDoseCheck());
+      this.startCorrection(correction);
+      return;
+    }
     const params = this.route.snapshot.queryParamMap;
     this.scheduleIdParam = params.get('scheduleId');
     this.patientIdParam = params.get('patientId');
@@ -651,6 +772,10 @@ export class NewInterventionPage implements OnInit {
   }
 
   submit() {
+    if (this.correction()) {
+      this.submitCorrection();
+      return;
+    }
     if (this.form.invalid || this.saving()) return;
     const user = this.auth.user();
     if (!user) {
@@ -708,6 +833,10 @@ export class NewInterventionPage implements OnInit {
   }
 
   cancel() {
+    if (this.correction()) {
+      this.backToEntry();
+      return;
+    }
     this.router.navigate(['/dashboard']);
   }
 
@@ -767,6 +896,9 @@ export class NewInterventionPage implements OnInit {
       medicationEmbodimentId: val.medicationEmbodimentId || undefined,
       amountMg: val.amountMg ?? undefined,
       occurredAt: val.performedAt ? new Date(val.performedAt).toISOString() : undefined,
+      // A correction's preview must not count the dose being corrected as its own prior dose —
+      // that reads as "too soon since the last dose" against itself. Create sends no such key.
+      ...(this.correction() ? { excludeInterventionId: this.correction()!.intervention.id } : {}),
     };
     this.api
       .post<DoseCheckResult, DoseCheckDto>(`/patients/${val.patientId}/dose-checks`, body)
@@ -807,6 +939,133 @@ export class NewInterventionPage implements OnInit {
       amountMl: guidance.doseMl,
       pillCount: guidance.pillCount,
       doseSource: 'age_based',
+    });
+  }
+
+  // ── Correcting an entry (frontend.md → "Correcting an entry") ──────────────────────────────
+
+  typeLabel(type: InterventionType): string {
+    return INTERVENTION_TYPE_LABELS[type] ?? type;
+  }
+
+  backToEntry() {
+    this.router.navigate(['/interventions', this.correction()!.intervention.id]);
+  }
+
+  /** The stored values, in the form's own shape — what "changed" is measured against. */
+  private storedFormValues(iv: Intervention) {
+    const m: any = iv.metadata ?? {};
+    return {
+      performedAt: toLocalDateTimeInput(iv.performedAt),
+      notes: iv.notes ?? '',
+      medicationId: m.medicationId ?? '',
+      medicationEmbodimentId: m.medicationEmbodimentId ?? '',
+      doseSource: (m.doseSource ?? 'override') as string,
+      amountMg: (m.amountMg ?? null) as number | null,
+      amountMl: (m.amountMl ?? null) as number | null,
+      pillCount: (m.pillCount ?? null) as number | null,
+      bodyLocation: m.bodyLocation ?? '',
+      side: m.side ?? 'n/a',
+      dressingType: m.dressingType ?? '',
+    };
+  }
+
+  /**
+   * Pre-fills the form with the intervention as stored. Patching the form also fires the debounced
+   * dose check, so the guidance and banners for the dose as logged appear without a keystroke.
+   */
+  private startCorrection(c: InterventionCorrectionContext) {
+    const iv = c.intervention;
+    const stored = this.storedFormValues(iv);
+    this.correctionEpisodeOptions.set(c.episodes.options);
+    this.formEpisodeIds.set([...c.episodes.selectedIds]);
+    this.form.patchValue({
+      ...stored,
+      patientId: iv.patientId,
+      type: iv.type,
+      episodeSelection: [...c.episodes.selectedIds],
+    });
+    if (stored.medicationId) {
+      this.loadMedicationForSchedule(stored.medicationId, stored.medicationEmbodimentId || null);
+    }
+  }
+
+  /**
+   * The PATCH body: only the fields the caregiver changed (frontend.md → "Correcting an entry" →
+   * Save). Returns a message instead when the form asks for something a correction cannot express
+   * — clearing a field the API can only replace.
+   */
+  correctionBody(): { body: UpdateInterventionDto } | { problem: string } {
+    const iv = this.correction()!.intervention;
+    const stored = this.storedFormValues(iv);
+    const val = this.form.getRawValue();
+    const body: UpdateInterventionDto = {};
+    const num = (v: number | null | string) => (v === null || v === '' ? null : Number(v));
+
+    if (val.performedAt !== stored.performedAt) body.performedAt = new Date(val.performedAt).toISOString();
+    if ((val.notes ?? '') !== stored.notes) body.notes = val.notes ? val.notes : null;
+
+    const episodes = episodeCorrection(this.correction()!.episodes, {
+      selectedIds: this.formEpisodeIds(),
+      resolvesIds: this.correctionResolvesIds(),
+    });
+    if (episodes) Object.assign(body, episodes);
+
+    if (iv.type === 'medication_dose') {
+      if (!val.medicationId) return { problem: 'Choose a medication for this dose.' };
+      if (val.medicationId !== stored.medicationId) body.medicationId = val.medicationId;
+      if (val.medicationEmbodimentId !== stored.medicationEmbodimentId) {
+        if (!val.medicationEmbodimentId) return { problem: 'Choose which form of the medication was given.' };
+        body.medicationEmbodimentId = val.medicationEmbodimentId;
+      }
+      if (!this.isScheduledCorrection() && val.doseSource !== stored.doseSource) {
+        body.doseSource = val.doseSource as CorrectableDoseSource;
+      }
+      const amountMg = num(val.amountMg);
+      if (amountMg !== stored.amountMg) {
+        if (amountMg === null) return { problem: 'Enter the amount in mg.' };
+        body.amountMg = amountMg;
+      }
+      const amountMl = num(val.amountMl);
+      if (amountMl !== stored.amountMl) body.amountMl = amountMl;
+      const pillCount = num(val.pillCount);
+      if (pillCount !== stored.pillCount) body.pillCount = pillCount;
+    } else {
+      if (val.bodyLocation !== stored.bodyLocation) {
+        if (!val.bodyLocation.trim()) return { problem: ERROR_SENTENCES.BODY_LOCATION_REQUIRED };
+        body.bodyLocation = val.bodyLocation;
+      }
+      if (val.side !== stored.side) body.side = val.side as UpdateInterventionDto['side'];
+      if (val.dressingType !== stored.dressingType) body.dressingType = val.dressingType;
+    }
+    return { body };
+  }
+
+  private submitCorrection() {
+    if (this.form.invalid || this.saving()) return;
+    const result = this.correctionBody();
+    if ('problem' in result) {
+      this.error.set(result.problem);
+      return;
+    }
+    // An untouched form sends nothing to rewrite — no request, no empty revision.
+    if (!Object.keys(result.body).length) {
+      this.backToEntry();
+      return;
+    }
+    const id = this.correction()!.intervention.id;
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.patch<Intervention, UpdateInterventionDto>(`/interventions/${id}`, result.body).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.backToEntry();
+      },
+      error: (err) => {
+        // The form keeps everything the caregiver typed; only the message changes.
+        this.saving.set(false);
+        this.error.set(errorText(err, 'Could not save the correction.'));
+      },
     });
   }
 

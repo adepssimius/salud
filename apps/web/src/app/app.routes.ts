@@ -207,6 +207,17 @@ export const appRoutes: Route[] = [
     title: 'New observation',
     canActivate: [authGuard],
   },
+  // Correcting an entry (frontend.md → "Correcting an entry"). Declared before its `:id` sibling,
+  // as the spec asks; a two-segment path never matches `observations/:id` anyway.
+  {
+    path: 'observations/:id/edit',
+    loadComponent: () =>
+      import('./observations/edit-observation.page').then(
+        (m) => m.EditObservationPage
+      ),
+    title: 'Correct observation',
+    canActivate: [authGuard],
+  },
   // After `observations/new`: routes match top-down, so the literal has to win over the parameter.
   {
     path: 'observations/:id',
@@ -224,6 +235,15 @@ export const appRoutes: Route[] = [
         (m) => m.NewInterventionPage
       ),
     title: 'New intervention',
+    canActivate: [authGuard],
+  },
+  {
+    path: 'interventions/:id/edit',
+    loadComponent: () =>
+      import('./interventions/edit-intervention.page').then(
+        (m) => m.EditInterventionPage
+      ),
+    title: 'Correct intervention',
     canActivate: [authGuard],
   },
   // Same top-down rule as `observations/:id` above.
