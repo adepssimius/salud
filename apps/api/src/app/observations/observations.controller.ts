@@ -9,10 +9,15 @@ import {
   Query,
   Request,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt.guard';
+import {
+  CorrectionFieldsInterceptor,
+  OBSERVATION_FIXED_FIELDS,
+} from '../revisions/correction-fields';
 import { ObservationsService } from './observations.service';
 import { CreateObservationDto } from './dto/create-observation.dto';
 import { UpdateObservationDto } from './dto/update-observation.dto';
@@ -68,6 +73,8 @@ export class ObservationsController {
     return await this.observations.getById(id, req.user.userId);
   }
 
+  // Runs before the ValidationPipe, on the raw body (see CorrectionFieldsInterceptor).
+  @UseInterceptors(new CorrectionFieldsInterceptor(OBSERVATION_FIXED_FIELDS))
   @Patch('observations/:id')
   async update(
     @Request() req: any,

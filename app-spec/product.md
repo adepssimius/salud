@@ -105,8 +105,9 @@ Load-bearing; every feature decision traces back to one of these.
     - **While You Were Asleep**: a per-caregiver diff since their own last acknowledged look —
       what others logged, what advisories fired (never your own entries, nor advisories they
       tripped), what's due now. The 6 AM shift change is a handoff too.
-    - **Corrections**: entries can be edited after the fact; the prior state is always retained
-      and attributed, never silently overwritten (F-1.4).
+    - **Corrections**: entries can be edited after the fact, by any caregiver on the care team; the
+      prior state is always retained and attributed, never silently overwritten (F-1.4). Removing
+      an entry is voiding, never a hard delete — not yet built.
     - **Photos**: attach to the timeline and to episodes like any other event, with same-episode
       framing references — one per photographed site (body location + side), selectable to match
       framing and pre-fill those fields — so a progression series stays comparable. No

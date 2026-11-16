@@ -1,13 +1,29 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsOptional, IsString, ArrayUnique, ValidateNested, IsIn, Validate } from 'class-validator';
-import { ObservationType } from '@salud/shared/types';
+import {
+  ArrayUnique,
+  IsArray,
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsString,
+  Validate,
+  ValidateNested,
+} from 'class-validator';
+import {
+  ObservationType,
+  UpdateObservationDto as UpdateObservationContract,
+  UpdateObservationEntry,
+} from '@salud/shared/types';
 import { EntryMetadataConstraint } from './entry-metadata.dto';
+import { IsNotInFuture } from '../../common/validators';
 
-class UpdateObservationEntryDto {
+class UpdateObservationEntryDto implements UpdateObservationEntry {
   @IsOptional()
   @IsString()
   id?: string;
 
+  // Every type create accepts round-trips, lab_result and document included (ISSUES #32;
+  // api.md → PATCH /api/observations/:observationId).
   @IsIn([
     'temperature',
     'heart_rate',
@@ -21,6 +37,8 @@ class UpdateObservationEntryDto {
     'note',
     'tag',
     'photo',
+    'lab_result',
+    'document',
   ] satisfies ObservationType[])
   type!: ObservationType;
 
@@ -28,7 +46,18 @@ class UpdateObservationEntryDto {
   metadata?: Record<string, any>;
 }
 
-export class UpdateObservationDto {
+/**
+ * The correction body. The fields a correction may NOT change (`unitPreferenceAtEntry`,
+ * attribution, `createdAt`, the episode-start fields) are deliberately absent here; they are
+ * refused with FIELD_NOT_CORRECTABLE by `CorrectionFieldsInterceptor` on the raw body, before this
+ * class's whitelist could strip them silently.
+ */
+export class UpdateObservationDto implements UpdateObservationContract {
+  @IsOptional()
+  @IsDateString()
+  @IsNotInFuture()
+  observedAt?: string;
+
   @IsOptional()
   @IsString()
   text?: string | null;
@@ -45,6 +74,8 @@ export class UpdateObservationDto {
   @IsString({ each: true })
   resolvesEpisodeIds?: string[];
 
+  // No @ArrayMinSize(1), for the reason given on CreateObservationDto.entries: the service throws
+  // AT_LEAST_ONE_ENTRY_REQUIRED, which the client has a sentence for.
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

@@ -24,7 +24,8 @@ script:pre-request {
 
 body:json {
   {
-    "notes": "Updated via Bruno",
+    "performedAt": "2026-01-15T08:30:00.000Z",
+    "notes": "Corrected via Bruno",
     "metadata": {
       "loggedFrom": "bruno"
     }
@@ -37,6 +38,21 @@ settings {
 }
 
 docs {
+  A correction (api.md → `PATCH /api/interventions/:interventionId`). Every field is optional; an
+  omitted field is left as it is. Body fields are create's minus the uncorrectable ones:
+  `performedAt`, `notes`, `episodeIds`, `resolvesEpisodeIds`, `metadata`; for a dose
+  `medicationId`, `medicationEmbodimentId`, `doseSource` (`weight_based|age_based|override`),
+  `amountMg`, `amountMl`, `pillCount`, and under `override` only `guidelineId`, `weightKgUsed`,
+  `ageMonthsUsed`; for a dressing change `bodyLocation`, `side`, `dressingType`.
+
+  The dosing engine re-runs only when `performedAt`, `medicationId`, `medicationEmbodimentId`,
+  `doseSource` or `amountMg` is sent. Advisories are never deleted; a new `atypical_dose` is
+  written only when the re-evaluated reason changes, and a notes-only edit writes none. The whole
+  correction, revision included, is one transaction.
+
+  Refused with 400 `FIELD_NOT_CORRECTABLE` (body carries `fields`): `type`,
+  `interventionScheduleId`, `recordedByUserId`, `createdAt`, `startEpisodeName`,
+  `startEpisodeConditionId`, `doseSource: 'schedule'`, and any `doseSource` on a scheduled dose.
   `metadata` is free-form for a client's own keys, but the keys the service owns are rejected with
   400 `RESERVED_METADATA_KEY`.
 }
