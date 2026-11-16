@@ -2,9 +2,10 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../app.module';
 import { createTestApp } from '../../testing/create-test-app';
+import { EpisodesService } from '../episodes/episodes.service';
 
 async function registerAndLogin(app: INestApplication) {
-  const email = `obs-${Date.now()}@example.com`;
+  const email = `obs-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   const password = 'password123';
   const displayName = 'Obs User';
 
@@ -847,5 +848,295 @@ describe('Observations (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(patientAfter.body.latestWeightKg).toBe(15.0);
+  });
+});
+
+// api.md → PATCH /api/observations/:observationId; data-model.md → "Data integrity rules" →
+// Corrections and Patient → "Recomputed on correction"; ISSUES #31–#37, #39.
+describe('Correcting an observation (e2e)', () => {
+  const HOUR = 3600;
+  let app: INestApplication;
+  let close: () => Promise<void>;
+  let token: string;
+  let userId: string;
+  let patientId: string;
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  const iso = (sec: number) => new Date(sec * 1000).toISOString();
+  const auth = (t = token) => ({ Authorization: `Bearer ${t}` });
+  const server = () => app.getHttpServer();
+
+  async function newPatient(name = 'Correction Patient') {
+    return (
+      await request(server())
+        .post('/api/patients')
+        .set(auth())
+        .send({ fullName: name, dateOfBirth: '2019-01-01', sexAtBirth: 'female', myRole: 'parent' })
+        .expect(201)
+    ).body.id as string;
+  }
+  async function observe(body: Record<string, unknown>, pid = patientId) {
+    return (
+      await request(server())
+        .post(`/api/patients/${pid}/observations`)
+        .set(auth())
+        .send({ observedAt: new Date().toISOString(), entries: [{ type: 'note', metadata: { text: 'x' } }], ...body })
+        .expect(201)
+    ).body;
+  }
+  const patch = (id: string, body: Record<string, unknown>, t = token) =>
+    request(server()).patch(`/api/observations/${id}`).set(auth(t)).send(body);
+  const revisions = async (id: string) =>
+    (await request(server()).get(`/api/observations/${id}/revisions`).set(auth()).expect(200)).body as any[];
+  const patient = async (pid = patientId) =>
+    (await request(server()).get(`/api/patients/${pid}`).set(auth()).expect(200)).body;
+  const episode = async (id: string) =>
+    (await request(server()).get(`/api/episodes/${id}`).set(auth()).expect(200)).body;
+
+  beforeAll(async () => {
+    ({ app, close } = await createTestApp('observation-corrections'));
+    ({ token, userId } = await registerAndLogin(app));
+    patientId = await newPatient();
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  it('corrects the clinical time, and the timeline re-sorts on it', async () => {
+    const t0 = nowSec();
+    const older = await observe({ observedAt: iso(t0 - 3 * HOUR), text: 'older' });
+    const newer = await observe({ observedAt: iso(t0 - 2 * HOUR), text: 'newer' });
+
+    const res = await patch(older.id, { observedAt: iso(t0 - HOUR) }).expect(200);
+    expect(res.body.observedAt).toBe(t0 - HOUR);
+    expect(res.body.text).toBe('older'); // omitted fields are left as they are
+
+    const timeline = await request(server()).get(`/api/patients/${patientId}/timeline`).set(auth()).expect(200);
+    const ids = timeline.body.entries.map((e: any) => e.id);
+    expect(ids.indexOf(older.id)).toBeLessThan(ids.indexOf(newer.id));
+  });
+
+  it('refuses a corrected time in the future', async () => {
+    const obs = await observe({});
+    const res = await patch(obs.id, { observedAt: iso(nowSec() + 2 * HOUR) }).expect(400);
+    expect(JSON.stringify(res.body.message)).toContain('DATE_IN_FUTURE');
+  });
+
+  it('recomputes latestWeightKg downward and to null when a weight entry is corrected, backdated or removed', async () => {
+    const pid = await newPatient('Weight Correction Patient');
+    const t0 = nowSec();
+    const older = await observe({ observedAt: iso(t0 - 5 * HOUR), entries: [{ type: 'weight', metadata: { kg: 14 } }] }, pid);
+    const newest = await observe({ observedAt: iso(t0 - HOUR), entries: [{ type: 'weight', metadata: { kg: 41 } }] }, pid);
+    expect((await patient(pid)).latestWeightKg).toBe(41);
+
+    // A mistyped newest weight corrected down.
+    await patch(newest.id, { entries: [{ id: newest.entries[0].id, type: 'weight', metadata: { kg: 15 } }] }).expect(200);
+    expect((await patient(pid)).latestWeightKg).toBe(15);
+
+    // Backdated before the older one: the older weight is now the newest.
+    await patch(newest.id, { observedAt: iso(t0 - 10 * HOUR) }).expect(200);
+    let p = await patient(pid);
+    expect(p.latestWeightKg).toBe(14);
+    expect(p.latestWeightRecordedAt).toBe(t0 - 5 * HOUR);
+
+    // The older one's weight removed: back to the backdated one.
+    await patch(older.id, { entries: [{ type: 'note', metadata: { text: 'not a weight after all' } }] }).expect(200);
+    p = await patient(pid);
+    expect(p.latestWeightKg).toBe(15);
+    expect(p.latestWeightRecordedAt).toBe(t0 - 10 * HOUR);
+
+    // The last weight removed: null, both fields.
+    await patch(newest.id, { entries: [{ type: 'note', metadata: { text: 'no weight' } }] }).expect(200);
+    p = await patient(pid);
+    expect(p.latestWeightKg).toBeNull();
+    expect(p.latestWeightRecordedAt).toBeNull();
+  });
+
+  it('keeps an echoed entry id, and never adopts another observation\'s entry id', async () => {
+    const a = await observe({ entries: [{ type: 'heart_rate', metadata: { bpm: 100 } }] });
+    const b = await observe({ entries: [{ type: 'heart_rate', metadata: { bpm: 90 } }] });
+    const res = await patch(a.id, {
+      entries: [
+        { id: a.entries[0].id, type: 'heart_rate', metadata: { bpm: 101 } },
+        { id: b.entries[0].id, type: 'pain_score', metadata: { score: 3 } },
+      ],
+    }).expect(200);
+    expect(res.body.entries.find((e: any) => e.type === 'heart_rate').id).toBe(a.entries[0].id);
+    expect(res.body.entries.find((e: any) => e.type === 'pain_score').id).not.toBe(b.entries[0].id);
+    const bAfter = await request(server()).get(`/api/observations/${b.id}`).set(auth()).expect(200);
+    expect(bAfter.body.entries).toEqual(b.entries);
+  });
+
+  it('round-trips lab_result and document entries (ISSUES #32)', async () => {
+    const analyte = (
+      await request(server()).post('/api/analytes').set(auth()).send({ name: `FERRITIN ${Math.random()}` }).expect(201)
+    ).body;
+    const upload = await request(server())
+      .post('/api/files')
+      .set(auth())
+      .field('patientId', patientId)
+      .attach('file', Buffer.from('%PDF-1.4 fake'), { filename: 'labs.pdf', contentType: 'application/pdf' })
+      .expect(201);
+    const lab = { analyteId: analyte.id, analyte: 'FERRITIN', valueText: '40', value: 40, unit: 'ng/mL', flag: null, panel: 'IRON' };
+    const created = await observe({
+      entries: [
+        { type: 'lab_result', metadata: lab },
+        { type: 'document', metadata: { fileId: upload.body.fileId, label: 'Labs' } },
+      ],
+    });
+    // Echo exactly what the client has, minus the read-only labContext.
+    const echoed = created.entries.map(({ labContext, ...e }: any) => e);
+    const res = await patch(created.id, { entries: echoed, text: 'checked' }).expect(200);
+    expect(res.body.entries.map(({ labContext, ...e }: any) => e)).toEqual(echoed);
+    expect(res.body.text).toBe('checked');
+  });
+
+  it('refuses to remove the last entry', async () => {
+    const obs = await observe({});
+    const res = await patch(obs.id, { entries: [] }).expect(400);
+    expect(res.body.message).toBe('AT_LEAST_ONE_ENTRY_REQUIRED');
+    expect(await revisions(obs.id)).toEqual([]);
+  });
+
+  it.each([
+    ['unitPreferenceAtEntry', { temp: 'F', weight: 'lb', length: 'in' }],
+    ['recordedByUserId', '11111111-1111-4111-8111-111111111111'],
+    ['createdAt', 1700000000],
+    ['startEpisodeName', 'New frame'],
+    ['startEpisodeConditionId', '11111111-1111-4111-8111-111111111111'],
+  ])('refuses %s with FIELD_NOT_CORRECTABLE, naming it', async (field, value) => {
+    const obs = await observe({});
+    const res = await patch(obs.id, { text: 'also this', [field]: value }).expect(400);
+    expect(res.body.message).toBe('FIELD_NOT_CORRECTABLE');
+    expect(res.body.fields).toEqual([field]);
+    const after = await request(server()).get(`/api/observations/${obs.id}`).set(auth()).expect(200);
+    expect(after.body.text).toBeNull();
+    expect(await revisions(obs.id)).toEqual([]);
+  });
+
+  it('reopens an episode when its resolve link is dropped', async () => {
+    const start = await observe({ observedAt: iso(nowSec() - 3 * HOUR), startEpisodeName: 'Fever reopen' });
+    const episodeId = start.episodeIds[0];
+    const end = await observe({ episodeIds: [episodeId], resolvesEpisodeIds: [episodeId] });
+    expect((await episode(episodeId)).status).toBe('resolved');
+
+    const res = await patch(end.id, { resolvesEpisodeIds: [] }).expect(200);
+    expect(res.body.episodeIds).toEqual([episodeId]);
+    expect(res.body.resolvesEpisodeIds).toEqual([]);
+    const ep = await episode(episodeId);
+    expect(ep.status).toBe('active');
+    expect(ep.endedAtId ?? null).toBeNull();
+  });
+
+  it('refuses to unlink the episode an observation started', async () => {
+    const start = await observe({ startEpisodeName: 'Started here' });
+    const res = await patch(start.id, { episodeIds: [] }).expect(400);
+    expect(res.body.message).toBe('CANNOT_UNLINK_STARTED_EPISODE');
+  });
+
+  it('refuses a time that would end an episode before it starts, and writes nothing', async () => {
+    const t0 = nowSec();
+    const start = await observe({ observedAt: iso(t0 - 3 * HOUR), startEpisodeName: 'Ordered frame' });
+    const episodeId = start.episodeIds[0];
+    const end = await observe({ observedAt: iso(t0 - 2 * HOUR), episodeIds: [episodeId], resolvesEpisodeIds: [episodeId] });
+
+    const res = await patch(end.id, { observedAt: iso(t0 - 4 * HOUR), text: 'moved' }).expect(400);
+    expect(res.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
+    const after = await request(server()).get(`/api/observations/${end.id}`).set(auth()).expect(200);
+    expect(after.body.observedAt).toBe(t0 - 2 * HOUR);
+    expect(after.body.text).toBeNull();
+    expect(await revisions(end.id)).toEqual([]);
+
+    await patch(start.id, { observedAt: iso(t0 - HOUR) }).expect(400);
+  });
+
+  it('re-checks protocols on a corrected value, and does not fire the same protocol twice (ISSUES #37)', async () => {
+    const pid = await newPatient('Protocol Correction Patient');
+    const cond = await request(server()).post(`/api/patients/${pid}/conditions`).set(auth()).send({ name: 'Port' }).expect(201);
+    await request(server())
+      .post(`/api/conditions/${cond.body.id}/protocols`)
+      .set(auth())
+      .send({
+        name: 'Fever with port',
+        triggerMetric: 'temperature',
+        triggerOperator: 'gte',
+        triggerValue: 38.5,
+        instructionText: 'ER now',
+        sourceText: 'Oncology',
+      })
+      .expect(201);
+    const obs = await observe({ entries: [{ type: 'temperature', metadata: { value: 38.0, unit: 'C', method: 'oral' } }] }, pid);
+    expect(obs.firedAdvisories).toBeUndefined();
+
+    // A notes-only correction re-checks nothing.
+    const notes = await patch(obs.id, { text: 'felt warm' }).expect(200);
+    expect(notes.body.firedAdvisories).toBeUndefined();
+
+    const tripped = await patch(obs.id, {
+      entries: [{ id: obs.entries[0].id, type: 'temperature', metadata: { value: 40.0, unit: 'C', method: 'oral' } }],
+    }).expect(200);
+    expect(tripped.body.firedAdvisories).toHaveLength(1);
+    expect(tripped.body.firedAdvisories[0].type).toBe('protocol_fired');
+    expect(tripped.body.firedAdvisories[0].contextId).toBe(obs.id);
+
+    // Still tripping after a second correction: no second advisory.
+    const again = await patch(obs.id, {
+      entries: [{ id: obs.entries[0].id, type: 'temperature', metadata: { value: 40.2, unit: 'C', method: 'oral' } }],
+    }).expect(200);
+    expect(again.body.firedAdvisories).toBeUndefined();
+
+    // Corrected back below the trigger: the advisory stays, nothing new is written.
+    await patch(obs.id, {
+      entries: [{ id: obs.entries[0].id, type: 'temperature', metadata: { value: 37.0, unit: 'C', method: 'oral' } }],
+    }).expect(200);
+    const list = await request(server()).get(`/api/patients/${pid}/advisories`).set(auth()).expect(200);
+    expect(list.body.filter((a: any) => a.type === 'protocol_fired' && a.contextId === obs.id)).toHaveLength(1);
+  });
+
+  it('writes nothing, the revision included, when the transaction fails partway (ISSUES #39)', async () => {
+    const pid = await newPatient('Atomic Patient');
+    const obs = await observe({ entries: [{ type: 'weight', metadata: { kg: 20 } }], text: 'before' }, pid);
+    const episodesService = app.get(EpisodesService);
+    const spy = jest
+      .spyOn(episodesService, 'applyEventEpisodeCorrection')
+      .mockRejectedValueOnce(new Error('simulated failure inside the transaction'));
+    try {
+      await patch(obs.id, { text: 'after', entries: [{ type: 'weight', metadata: { kg: 9 } }] }).expect(500);
+    } finally {
+      spy.mockRestore();
+    }
+    const after = await request(server()).get(`/api/observations/${obs.id}`).set(auth()).expect(200);
+    expect(after.body.text).toBe('before');
+    expect(after.body.entries).toEqual(obs.entries);
+    expect((await patient(pid)).latestWeightKg).toBe(20);
+    expect(await revisions(obs.id)).toEqual([]);
+  });
+
+  it('captures exactly one revision holding the pre-correction state', async () => {
+    const obs = await observe({ text: 'original' });
+    await patch(obs.id, { text: 'corrected' }).expect(200);
+    const revs = await revisions(obs.id);
+    expect(revs).toHaveLength(1);
+    expect(revs[0].snapshot.text).toBe('original');
+    expect(revs[0].editedByUserId).toBe(userId);
+  });
+
+  it('404s a non-member, and lets any care team member correct any entry', async () => {
+    const obs = await observe({ text: 'by the owner' });
+    const outsider = await registerAndLogin(app);
+    const denied = await patch(obs.id, { text: 'nope' }, outsider.token).expect(404);
+    expect(denied.body.message).toBe('PATIENT_NOT_FOUND');
+
+    const helper = await registerAndLogin(app);
+    await request(server())
+      .post(`/api/patients/${patientId}/care-team`)
+      .set(auth())
+      .send({ userId: helper.userId, role: 'babysitter' })
+      .expect(201);
+    const res = await patch(obs.id, { text: 'fixed by the babysitter' }, helper.token).expect(200);
+    expect(res.body.text).toBe('fixed by the babysitter');
+    expect(res.body.recordedByUserId).toBe(userId); // attribution stays with the recorder
+    const revs = await revisions(obs.id);
+    expect(revs[0].editedByUserId).toBe(helper.userId);
   });
 });

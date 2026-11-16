@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../app.module';
 import { createTestApp } from '../../testing/create-test-app';
+import { EpisodesService } from '../episodes/episodes.service';
 import { randomUUID } from 'crypto';
 
 // Stand-in medication ids. They need to be v4 UUIDs (CreateInterventionDto validates the shape),
@@ -670,5 +671,257 @@ describe('Recent medications (e2e)', () => {
       .set('Authorization', `Bearer ${stranger.token}`)
       .expect(404);
     expect(res.body.message).toBe('PATIENT_NOT_FOUND');
+  });
+});
+
+// api.md → PATCH /api/interventions/:interventionId ("Not correctable", "Re-evaluation is scoped
+// to a dose change", "Advisories after a correction", "Atomic"); ISSUES #31, #33, #35, #36, #39.
+describe('Correcting an intervention (e2e)', () => {
+  const HOUR = 3600;
+  let app: INestApplication;
+  let close: () => Promise<void>;
+  let token: string;
+  let userId: string;
+  let medicationId: string;
+  let embodimentId: string;
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  const iso = (sec: number) => new Date(sec * 1000).toISOString();
+  const auth = (t = token) => ({ Authorization: `Bearer ${t}` });
+  const server = () => app.getHttpServer();
+
+  async function patientWithWeight(kg = 10) {
+    const pid = await createPatient(app, token);
+    await request(server())
+      .post(`/api/patients/${pid}/observations`)
+      .set(auth())
+      .send({ observedAt: iso(nowSec() - 24 * HOUR), entries: [{ type: 'weight', metadata: { kg } }] })
+      .expect(201);
+    return pid;
+  }
+  async function dose(pid: string, body: Record<string, unknown>) {
+    return (
+      await request(server())
+        .post(`/api/patients/${pid}/interventions`)
+        .set(auth())
+        .send({
+          type: 'medication_dose',
+          performedAt: iso(nowSec() - HOUR),
+          medicationId,
+          medicationEmbodimentId: embodimentId,
+          doseSource: 'weight_based',
+          amountMg: 150,
+          ...body,
+        })
+        .expect(201)
+    ).body;
+  }
+  const patch = (id: string, body: Record<string, unknown>, t = token) =>
+    request(server()).patch(`/api/interventions/${id}`).set(auth(t)).send(body);
+  const get = async (id: string) =>
+    (await request(server()).get(`/api/interventions/${id}`).set(auth()).expect(200)).body;
+  const advisoriesFor = async (pid: string, id: string) =>
+    ((await request(server()).get(`/api/patients/${pid}/advisories`).set(auth()).expect(200)).body as any[]).filter(
+      (a) => a.contextId === id,
+    );
+  const revisions = async (id: string) =>
+    (await request(server()).get(`/api/interventions/${id}/revisions`).set(auth()).expect(200)).body as any[];
+
+  beforeAll(async () => {
+    ({ app, close } = await createTestApp('intervention-corrections'));
+    ({ token, userId } = await registerAndLogin(app));
+    medicationId = (
+      await request(server()).post('/api/medications').set(auth()).send({ name: 'correction-med' }).expect(201)
+    ).body.id;
+    embodimentId = (
+      await request(server())
+        .post(`/api/medications/${medicationId}/embodiments`)
+        .set(auth())
+        .send({ label: 'suspension', concentrationMgPerMl: 30, unitType: 'ml' })
+        .expect(201)
+    ).body.id;
+    await request(server())
+      .post(`/api/medications/${medicationId}/guidelines`)
+      .set(auth())
+      .send({
+        medicationEmbodimentId: embodimentId,
+        source: 'Test source',
+        type: 'weight_based',
+        mgPerKg: 15,
+        maxMgPerDose: 200,
+        maxMgPerDay: 600,
+        minIntervalHours: 4,
+      })
+      .expect(201);
+  });
+
+  afterAll(async () => {
+    await close();
+  });
+
+  it('a notes-only edit writes no advisory and keeps every engine-resolved field (ISSUES #33)', async () => {
+    const pid = await patientWithWeight();
+    const d = await dose(pid, { doseSource: 'override', amountMg: 120 });
+    expect(d.metadata.isAtypical).toBe(true);
+    const before = await advisoriesFor(pid, d.id);
+    expect(before.length).toBeGreaterThan(0);
+
+    const res = await patch(d.id, { notes: 'given with food', amountMl: 4, pillCount: null }).expect(200);
+    expect(res.body.notes).toBe('given with food');
+    const { amountMl, pillCount, ...engineAndRest } = res.body.metadata;
+    const { amountMl: _a, pillCount: _p, ...originalRest } = d.metadata;
+    expect(amountMl).toBe(4);
+    expect(engineAndRest).toEqual(originalRest);
+    expect(await advisoriesFor(pid, d.id)).toEqual(before);
+  });
+
+  it('a dose edit that changes the evaluated reason writes exactly one new advisory and deletes none', async () => {
+    const pid = await patientWithWeight();
+    const d = await dose(pid, {});
+    expect(d.metadata.isAtypical).toBe(false);
+    const before = await advisoriesFor(pid, d.id);
+
+    const over = await patch(d.id, { amountMg: 250 }).expect(200);
+    expect(over.body.metadata.isAtypical).toBe(true);
+    expect(over.body.metadata.atypicalReason).toBe('exceeds_max_per_dose');
+    let after = await advisoriesFor(pid, d.id);
+    expect(after).toHaveLength(before.length + 1);
+    expect(after.filter((a) => a.type === 'atypical_dose')).toHaveLength(1);
+    expect(after.map((a) => a.id)).toEqual(expect.arrayContaining(before.map((a) => a.id)));
+    // stale_weight etc. were already recorded against this dose: not written again.
+    expect(new Set(after.map((a) => a.type)).size).toBe(after.length);
+
+    // Same reason again: nothing new.
+    await patch(d.id, { amountMg: 260 }).expect(200);
+    expect(await advisoriesFor(pid, d.id)).toHaveLength(after.length);
+
+    // Cleared: the verdict flips, the earlier advisory stays, nothing is written.
+    const cleared = await patch(d.id, { amountMg: 150 }).expect(200);
+    expect(cleared.body.metadata.isAtypical).toBe(false);
+    expect(cleared.body.metadata.atypicalReason).toBeNull();
+    after = await advisoriesFor(pid, d.id);
+    expect(after.filter((a) => a.type === 'atypical_dose')).toHaveLength(1);
+  });
+
+  it('corrects performedAt, re-running the engine at the corrected time and excluding the dose itself', async () => {
+    const pid = await patientWithWeight();
+    const t0 = nowSec();
+    const first = await dose(pid, { performedAt: iso(t0 - 8 * HOUR) });
+    const second = await dose(pid, { performedAt: iso(t0 - 7 * HOUR) });
+    expect(second.metadata.atypicalReason).toBe('interval_too_short');
+
+    const res = await patch(second.id, { performedAt: iso(t0 - 2 * HOUR) }).expect(200);
+    expect(res.body.performedAt).toBe(t0 - 2 * HOUR);
+    expect(res.body.metadata.isAtypical).toBe(false);
+    expect(res.body.metadata.nextAllowedAt).toBe(t0 - 2 * HOUR + 4 * HOUR);
+    // Later doses are not re-checked (ISSUES #38): the first dose is untouched.
+    expect((await get(first.id)).metadata).toEqual(first.metadata);
+  });
+
+  it.each([
+    ['type', 'dressing_change'],
+    ['interventionScheduleId', '11111111-1111-4111-8111-111111111111'],
+    ['recordedByUserId', '11111111-1111-4111-8111-111111111111'],
+    ['createdAt', 1700000000],
+    ['startEpisodeName', 'New frame'],
+    ['startEpisodeConditionId', '11111111-1111-4111-8111-111111111111'],
+    ['doseSource', 'schedule'],
+  ])('refuses %s with FIELD_NOT_CORRECTABLE, naming it (ISSUES #36)', async (field, value) => {
+    const pid = await patientWithWeight();
+    const d = await dose(pid, {});
+    const res = await patch(d.id, { notes: 'and this', [field]: value }).expect(400);
+    expect(res.body.message).toBe('FIELD_NOT_CORRECTABLE');
+    expect(res.body.fields).toEqual([field]);
+    expect((await get(d.id)).notes).toBeNull();
+    expect(await revisions(d.id)).toEqual([]);
+  });
+
+  it('refuses any doseSource on a scheduled dose, but corrects its other fields', async () => {
+    const pid = await patientWithWeight();
+    const schedule = await request(server())
+      .post(`/api/patients/${pid}/schedules`)
+      .set(auth())
+      .send({
+        type: 'medication_dose',
+        label: 'q8h',
+        medicationId,
+        medicationEmbodimentId: embodimentId,
+        doseMg: 150,
+        frequencyHours: 8,
+        startAt: new Date().toISOString(),
+      })
+      .expect(201);
+    const logged = await request(server()).post(`/api/schedules/${schedule.body.id}/log`).set(auth()).expect(201);
+    const id = logged.body.intervention.id;
+
+    const res = await patch(id, { doseSource: 'weight_based' }).expect(400);
+    expect(res.body.message).toBe('FIELD_NOT_CORRECTABLE');
+    expect(res.body.fields).toEqual(['doseSource']);
+
+    const ok = await patch(id, { amountMg: 140, notes: 'spat some out' }).expect(200);
+    expect(ok.body.scheduleId).toBe(schedule.body.id);
+    expect(ok.body.metadata.doseSource).toBe('schedule');
+    expect(ok.body.metadata.amountMg).toBe(140);
+    expect(ok.body.metadata.atypicalReason ?? null).toBeNull(); // the schedule exemption holds
+  });
+
+  it('reopens an episode when the resolving dose drops its resolve link', async () => {
+    const pid = await patientWithWeight();
+    const start = await request(server())
+      .post(`/api/patients/${pid}/observations`)
+      .set(auth())
+      .send({ observedAt: iso(nowSec() - 3 * HOUR), startEpisodeName: 'Fever', entries: [{ type: 'note', metadata: { text: 'hot' } }] })
+      .expect(201);
+    const episodeId = start.body.episodeIds[0];
+    const d = await dose(pid, { episodeIds: [episodeId], resolvesEpisodeIds: [episodeId] });
+    const res = await patch(d.id, { resolvesEpisodeIds: [] }).expect(200);
+    expect(res.body.resolvesEpisodeIds).toEqual([]);
+    const ep = await request(server()).get(`/api/episodes/${episodeId}`).set(auth()).expect(200);
+    expect(ep.body.status).toBe('active');
+
+    // And a corrected time before the episode's start is refused when it resolves it again.
+    const bad = await patch(d.id, { resolvesEpisodeIds: [episodeId], performedAt: iso(nowSec() - 4 * HOUR) }).expect(400);
+    expect(bad.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
+  });
+
+  it('writes nothing, the revision included, when the transaction fails partway (ISSUES #39)', async () => {
+    const pid = await patientWithWeight();
+    const d = await dose(pid, {});
+    const before = await advisoriesFor(pid, d.id);
+    const episodesService = app.get(EpisodesService);
+    const spy = jest
+      .spyOn(episodesService, 'applyEventEpisodeCorrection')
+      .mockRejectedValueOnce(new Error('simulated failure inside the transaction'));
+    try {
+      await patch(d.id, { amountMg: 250, notes: 'after' }).expect(500);
+    } finally {
+      spy.mockRestore();
+    }
+    const after = await get(d.id);
+    expect(after.notes).toBeNull();
+    expect(after.metadata).toEqual(d.metadata);
+    expect(await advisoriesFor(pid, d.id)).toEqual(before);
+    expect(await revisions(d.id)).toEqual([]);
+  });
+
+  it('404s a non-member, and lets any care team member correct any dose', async () => {
+    const pid = await patientWithWeight();
+    const d = await dose(pid, {});
+    const outsider = await registerAndLogin(app);
+    const denied = await patch(d.id, { notes: 'nope' }, outsider.token).expect(404);
+    expect(denied.body.message).toBe('PATIENT_NOT_FOUND');
+
+    const helper = await registerAndLogin(app);
+    await request(server())
+      .post(`/api/patients/${pid}/care-team`)
+      .set(auth())
+      .send({ userId: helper.userId, role: 'babysitter' })
+      .expect(201);
+    const res = await patch(d.id, { notes: 'fixed by the babysitter' }, helper.token).expect(200);
+    expect(res.body.notes).toBe('fixed by the babysitter');
+    expect(res.body.recordedByUserId).toBe(userId);
+    const revs = await revisions(d.id);
+    expect(revs).toHaveLength(1);
+    expect(revs[0].editedByUserId).toBe(helper.userId);
+    expect(revs[0].snapshot.notes).toBeNull();
   });
 });

@@ -286,7 +286,59 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
 - `GET /api/observations/:observationId`
   - Enforce caregiver access; 404 if the observation’s patient is not on the requester’s care team or the patient id in URL (when provided) does not match.
 - `PATCH /api/observations/:observationId`
-  - Allow editing text, tags, episode/resolution ids, and replacing entries (entries array replaces existing entries).
+  - The correction write (see "Corrections" below; frontend.md → "Correcting an entry"). Any care
+    team member may correct any observation, with no time limit; the `Revision` it captures is what
+    records who.
+  - Body — every field optional; an omitted field is left as it is:
+    ```json
+    {
+      "observedAt": "ISO datetime",    // the clinical time; same rules as create, incl. DATE_IN_FUTURE
+      "text": "note or null",
+      "episodeIds": ["uuid"],          // replaces the membership list whole
+      "resolvesEpisodeIds": ["uuid"],  // replaces the resolve list whole; must be subset of episodeIds
+      "entries": [                     // replaces the entries whole; an entry keeps its id when echoed
+        { "id": "uuid", "type": "temperature", "metadata": { "value": 38.4, "unit": "C", "method": "oral" } }
+      ]
+    }
+    ```
+    Tags are `tag` entries, so they are corrected through `entries` like any other entry.
+  - **Not correctable**, rejected with 400 `FIELD_NOT_CORRECTABLE` (body carries the offending
+    `fields`): `unitPreferenceAtEntry` (provenance of what the recorder saw — see create above),
+    `recordedByUserId`, `createdAt`, `startEpisodeName` and `startEpisodeConditionId`. A correction
+    fixes what was recorded; it does not open a new episode.
+  - Validation is create's, applied to the **merged** result:
+    - `entries`, when sent, must hold at least one entry (400 `AT_LEAST_ONE_ENTRY_REQUIRED`).
+      Removing an observation outright is voiding, not an empty `entries` array (see "Corrections"
+      → Voiding).
+    - **Every entry type create accepts round-trips**, `lab_result` and `document` included, with
+      the same metadata schemas and the same `PHOTO_FILE_NOT_FOUND` / `DOCUMENT_FILE_NOT_FOUND` /
+      `ANALYTE_NOT_FOUND` checks. A client echoing an entry back must omit the read-only
+      `labContext` (see above).
+    - `episodeIds` / `resolvesEpisodeIds`: same subset and same-patient rules as create
+      (`RESOLVES_MUST_BE_SUBSET_OF_EPISODES`, `EPISODE_NOT_FOUND`). An `episodeIds` that drops an
+      episode this observation **started** is rejected with 400 `CANNOT_UNLINK_STARTED_EPISODE`.
+      Resolving an episode another event already resolved is `EPISODE_ALREADY_RESOLVED`, as on
+      create.
+    - An `observedAt` that would put a resolving event before its episode's start, or a starting
+      event after its episode's resolution, is rejected with 400 `EPISODE_TIME_ORDER_INVALID`
+      (data-model.md → "Data integrity rules").
+  - What the server recomputes, in the same request:
+    - `patients.latestWeightKg` / `latestWeightRecordedAt`, from the patient's newest remaining
+      `weight` entry, whenever `entries` or `observedAt` is sent (data-model.md → Patient). It can
+      go down as well as up, and to `null`.
+    - Episode state: dropping a resolve link reopens the episode; a changed `observedAt` moves the
+      derived `startedAt`/`endedAt` of episodes this observation starts or resolves
+      (data-model.md → "Data integrity rules").
+    - **Protocols are re-checked** whenever `entries` or `observedAt` is sent, exactly as on create,
+      against the active Protocols of the patient's active Conditions. A trip writes a
+      `protocol_fired` Advisory unless one for the same Protocol already exists with this
+      observation as its context; existing advisories are never deleted or rewritten, even when the
+      correction means the trigger no longer holds. The response's `firedAdvisories` carries only
+      what this request wrote. A `text`- or episode-only correction re-checks nothing.
+  - **Atomic.** The revision, the observation, its entries, its pivot rows, episode state, the
+    patient's latest weight and any advisory are written in one transaction; a request that fails
+    any check writes nothing, the revision included.
+  - Response: `ObservationDto` (200), with `firedAdvisories` as above.
 
 ## Interventions
 - `POST /api/patients/:patientId/interventions`
@@ -383,7 +435,66 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     deliberately: retagging a medication re-classifies its past doses everywhere at once. Never
     accepted on write.
 - `PATCH /api/interventions/:interventionId`
-  - Allow updates with re-validation of atypical logic.
+  - The correction write (see "Corrections" below; frontend.md → "Correcting an entry"). Any care
+    team member may correct any intervention, with no time limit; the `Revision` it captures is
+    what records who.
+  - Body — every field optional; an omitted field is left as it is. The fields are create's, minus
+    the ones that are not correctable:
+    ```json
+    {
+      "performedAt": "ISO datetime",   // the clinical time; same rules as create, incl. DATE_IN_FUTURE
+      "notes": "text or null",
+      "episodeIds": ["uuid"],          // replaces the membership list whole
+      "resolvesEpisodeIds": ["uuid"],  // replaces the resolve list whole; must be subset of episodeIds
+      // medication_dose only:
+      "medicationId": "uuid",
+      "medicationEmbodimentId": "uuid",
+      "doseSource": "weight_based|age_based|override",
+      "amountMg": 250,
+      "amountMl": 5,
+      "pillCount": 2,
+      "guidelineId": "uuid",           // honored under override only, as on create
+      "weightKgUsed": 14.5,            // honored under override only, as on create
+      "ageMonthsUsed": 48,             // honored under override only, as on create
+      // dressing_change only:
+      "bodyLocation": "Left knee",
+      "side": "left",
+      "dressingType": "sterile gauze",
+      "metadata": {}                   // free-form client keys; RESERVED_METADATA_KEY as on create
+    }
+    ```
+  - **Not correctable**, rejected with 400 `FIELD_NOT_CORRECTABLE` (body carries the offending
+    `fields`): `type`, `interventionScheduleId`, `recordedByUserId`, `createdAt`,
+    `startEpisodeName` and `startEpisodeConditionId`; `doseSource: 'schedule'`; and **any**
+    `doseSource` on a dose whose stored `doseSource` is `'schedule'` or whose `scheduleId` is set.
+    The type and the schedule link are what the record *is* — a dressing change logged as a dose,
+    or a dose filed against the wrong plan, is voided and logged again (see "Corrections" →
+    Voiding), so the schedule's adherence count never silently gains or loses a dose.
+  - Validation is create's, applied to the **merged** result: `MEDICATION_ID_REQUIRED`,
+    `BODY_LOCATION_REQUIRED`, `RESERVED_METADATA_KEY`, the UUID and range checks, the episode subset
+    and same-patient rules, `CANNOT_UNLINK_STARTED_EPISODE`, `EPISODE_ALREADY_RESOLVED` and
+    `EPISODE_TIME_ORDER_INVALID` exactly as for observations above.
+  - **Re-evaluation is scoped to a dose change.** The dosing engine re-runs only when the body sends
+    a dose-affecting field — `performedAt`, `medicationId`, `medicationEmbodimentId`, `doseSource`
+    or `amountMg` — and then recomputes `guidelineId`, `weightKgUsed`, `ageMonthsUsed`,
+    `nextAllowedAt`, `isAtypical` and `atypicalReason` exactly as create does, at the (possibly
+    corrected) `performedAt`, excluding this dose from its own prior-dose totals. Any other
+    correction (`notes`, episodes, `amountMl`, `pillCount`, dressing fields) leaves every
+    engine-resolved field as it was logged: re-resolving them against today's catalog would rewrite
+    the dose's provenance (N-2) under a notes edit.
+  - **Advisories after a correction:** existing advisories are never deleted or rewritten. When the
+    engine re-runs, a new `atypical_dose` Advisory is written only if the re-evaluated
+    `atypicalReason` differs from the stored one and is non-empty; a `stale_weight` or
+    `expired_embodiment` Advisory only if this dose has none of that type already. A correction
+    that clears the atypical verdict writes nothing — the dose's `isAtypical` becomes `false`, and
+    the earlier advisory stays as the record that a warning was shown. A correction that does not
+    re-run the engine writes no advisory at all.
+  - **Later doses are not re-checked.** A corrected dose can change what a later dose's
+    `interval_too_short` or daily total would have been; those later doses keep the values they
+    were logged with (data-model.md → "Data integrity rules").
+  - **Atomic**, as for observations: the revision, the intervention, its pivot rows, episode state
+    and any advisory are written in one transaction or not at all.
+  - Response: `InterventionDto` (200).
 
 ## Dosing engine
 
@@ -393,9 +504,14 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
 - `POST /api/patients/:patientId/dose-checks`
   - **Preview only — computes, persists nothing.** Called debounced as the dose-entry form fills
     in; abandoning the form leaves no trace (see `advisories.md` → "Two lifecycles").
-  - Body: `{ medicationId, medicationEmbodimentId?, amountMg?, occurredAt? }`. `amountMg` is
-    optional — omit it to see guidance before an amount is chosen; the per-dose/per-day threshold
-    checks only run once an amount is supplied.
+  - Body: `{ medicationId, medicationEmbodimentId?, amountMg?, occurredAt?, excludeInterventionId? }`.
+    `amountMg` is optional — omit it to see guidance before an amount is chosen; the per-dose/per-day
+    threshold checks only run once an amount is supplied.
+  - `excludeInterventionId` (UUID) leaves that dose out of the prior-dose interval and daily-total
+    checks, exactly as the correcting `PATCH /api/interventions/:interventionId` does; the dose
+    correction form sends it so a dose is not checked against itself. It only ever matches this
+    patient's doses — an id that is not one of them is ignored, not an error, so the response says
+    nothing about whether it exists.
   - Response:
     ```json
     {
@@ -989,6 +1105,23 @@ of the record (F-1.4, data-model.md → `Revision`).
     entity's own `GET`. `PATCH /api/patients/:id/code-status` does **not** capture a revision —
     that field already carries its own dedicated attribution (`codeStatusSetByUserId`/
     `codeStatusSetAt`), a lighter-weight trail purpose-built for exactly this one field.
+- Observations and interventions are corrected through their own `PATCH` — field by field, with
+  what each recomputes, under "Observations" and "Interventions" above. Who may correct: any care
+  team member, any entry, with no time limit (data-model.md → "Data integrity rules").
+- **Not yet in the "since you last looked" diff.** A correction changes neither `createdAt` nor
+  `recordedByUserId`, so `GET .../whats-new` and the dashboard's `whatsNew` counts do not surface
+  another caregiver's edit — it is visible only in the entry's History. Known follow-up, not a
+  decision that it should stay this way.
+
+### Voiding — not yet built (next)
+There is **no hard delete** for an observation or intervention, and none is planned: F-1.4 requires
+the original to remain part of the record. Removal will be **voiding** — an attributed action with a
+required reason, which captures a `Revision` like any correction, takes the entry out of the
+timeline, dose math, dashboard and ER Brief, and stays visible, with its reason, in the entry's
+History. It is the answer for what a `PATCH` deliberately refuses: a wrong intervention type, a
+wrong schedule link, an entry logged on the wrong patient, or an entry that should not exist. Its
+endpoint, storage and error codes are specified when it is built; nothing about the correction
+endpoints above depends on it.
 
 ## Files
 
@@ -1311,7 +1444,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `OIDC_HANDOFF_ALREADY_USED` | 404 | `POST /api/auth/oidc/exchange` with a handoff code that has already been redeemed |
 | `SELF_RELATIONSHIP_ALREADY_EXISTS` | 400 | care team: adding a second "self" relationship |
 | `CANNOT_REMOVE_OWNER` | 400 | care team: removing the patient's owner |
-| `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation create with an empty `entries` array (interventions have no `entries` field) |
+| `AT_LEAST_ONE_ENTRY_REQUIRED` | 400 | observation create, or a correcting `PATCH` that sends `entries`, with an empty `entries` array (interventions have no `entries` field) |
 | `RESOLVES_MUST_BE_SUBSET_OF_EPISODES` | 400 | `resolvesEpisodeIds` not a subset of `episodeIds` |
 | `OBSERVATION_SCHEMA_INVALID` | 400 (array form) | an observation entry's `metadata` fails its type-specific schema — see "Error response shapes" above for how this arrives |
 | `INVALID_REACTION_SCOPE` | 400 | an `AdverseReaction` create whose scope target doesn't match exactly one of `medicationId`/`embodimentId`/`tag` per its `scopeType` |
@@ -1326,6 +1459,9 @@ sentence silently falls back to that call site's generic message rather than rea
 | `DATE_IN_FUTURE` | 400 (array form) | a past-event datetime (`dateOfBirth`, `observedAt`, `performedAt`, `occurredAt`) later than the server's clock |
 | `PHOTO_FILE_NOT_FOUND` | 400 (array form) | a `photo` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
 | `EPISODE_ALREADY_RESOLVED` | 400 | a second, different event attempting to resolve an already-resolved episode |
+| `CANNOT_UNLINK_STARTED_EPISODE` | 400 | an observation/intervention `PATCH` whose `episodeIds` drops an episode that event started |
+| `EPISODE_TIME_ORDER_INVALID` | 400 | an observation/intervention `PATCH` whose corrected `observedAt`/`performedAt` would put an episode's resolving event before its starting event |
+| `FIELD_NOT_CORRECTABLE` | 400 | an observation/intervention `PATCH` naming a field a correction may not change (type, schedule link, `doseSource: 'schedule'`, `unitPreferenceAtEntry`, attribution, `createdAt`, episode-start fields); body carries `fields` |
 | `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |
 | `CONCENTRATION_INPUT_CONFLICT` | 400 | embodiment create/update sending both `concentrationMgPerMl` and a `concentrationMg`/`concentrationVolumeMl` value |
 | `CONCENTRATION_PAIR_INCOMPLETE` | 400 | embodiment create/update whose merged concentration pair has only one of `concentrationMg`/`concentrationVolumeMl` |

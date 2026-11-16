@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
   careTeamMemberships,
@@ -14,6 +14,26 @@ import { normalizeTs } from '../persistence/time';
 import { ActiveEpisodeSummary, Episode } from '@salud/shared/types';
 
 type EpisodeEndType = 'observation' | 'intervention';
+export type EpisodeEventType = EpisodeEndType;
+
+/** What `planEventEpisodeCorrection` decided; written by `applyEventEpisodeCorrection`. */
+export interface EventEpisodeCorrectionPlan {
+  patientId: string;
+  eventType: EpisodeEventType;
+  eventId: string;
+  /** The merged membership / resolve lists the event will have — what the response reports. */
+  episodeIds: string[];
+  resolvesEpisodeIds: string[];
+  /** False when the request sent neither list: the pivot is then left exactly as it is. */
+  rewritePivot: boolean;
+  pivotRows: Array<{ episodeId: string; startsEpisode: boolean; resolvesEpisode: boolean }>;
+  /** Episodes to mark resolved by this event (newly resolved; re-asserting is a no-op). */
+  resolveEpisodeIds: string[];
+  /** Episodes this event ended whose resolve link the correction drops: back to active. */
+  reopenEpisodeIds: string[];
+}
+
+const uniq = (ids: string[]): string[] => Array.from(new Set(ids));
 
 @Injectable()
 export class EpisodesService {
@@ -125,6 +145,201 @@ export class EpisodesService {
         endedAtId,
       })
       .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, toResolve)));
+  }
+
+  /**
+   * Phase 1 of an event correction's episode side (data-model.md → "Data integrity rules" →
+   * Corrections; api.md → both correction PATCHes). Reads and validates only — run it BEFORE the
+   * caller's transaction, then hand the returned plan to `applyEventEpisodeCorrection(tx, plan)`
+   * inside it. The split exists because of `DatabaseService.withTransaction`'s sqlite caveat: the
+   * body of a transaction must be a straight run of writes, with every read done beforehand.
+   *
+   * `episodeIds` / `resolvesEpisodeIds` are the request's values, `undefined` meaning "not sent,
+   * keep what is there"; `clinicalTime` is the corrected `observedAt`/`performedAt` in epoch
+   * seconds, `undefined` when not sent. Throws, in order:
+   *  - 404 EPISODE_NOT_FOUND — a *sent* `episodeIds` naming another patient's episode (only what
+   *    was sent is checked, as before: carried-over ids may predate patient scoping);
+   *  - 400 RESOLVES_MUST_BE_SUBSET_OF_EPISODES — against the merged lists;
+   *  - 400 CANNOT_UNLINK_STARTED_EPISODE — a sent `episodeIds` that drops an episode this event
+   *    started (by the pivot's `startsEpisode` flag or the episode's own `startedAtId`);
+   *  - 400 EPISODE_ALREADY_RESOLVED — resolving an episode a different event already resolved;
+   *  - 400 EPISODE_TIME_ORDER_INVALID — when a time or the resolve list was sent, any episode this
+   *    event starts that would end before the (corrected) time, or that this event would resolve
+   *    before the episode's start.
+   */
+  async planEventEpisodeCorrection(input: {
+    patientId: string;
+    userId: string;
+    eventType: EpisodeEventType;
+    eventId: string;
+    episodeIds?: string[];
+    resolvesEpisodeIds?: string[];
+    clinicalTime?: number;
+  }): Promise<EventEpisodeCorrectionPlan> {
+    const { patientId, userId, eventType, eventId } = input;
+    const db = this.db.db as any;
+
+    const pivotRows = await db
+      .select()
+      .from(episodesEventsPivot)
+      .where(and(eq(episodesEventsPivot.eventId, eventId), eq(episodesEventsPivot.eventType, eventType)));
+    const existingEpisodeIds = uniq(pivotRows.filter((p: any) => !p.resolvesEpisode).map((p: any) => p.episodeId));
+    const existingResolvesIds = uniq(pivotRows.filter((p: any) => p.resolvesEpisode).map((p: any) => p.episodeId));
+
+    const episodeIds = input.episodeIds ? uniq(input.episodeIds) : existingEpisodeIds;
+    const resolvesEpisodeIds = input.resolvesEpisodeIds ? uniq(input.resolvesEpisodeIds) : existingResolvesIds;
+
+    if (input.episodeIds) {
+      await this.assertEpisodesBelongToPatient(patientId, userId, input.episodeIds);
+    }
+    this.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
+
+    // Every episode row this correction can touch: current and next links, plus any episode that
+    // names this event as its start or end even if the pivot lost the link (ISSUES #35).
+    const touchedIds = uniq([...existingEpisodeIds, ...existingResolvesIds, ...episodeIds, ...resolvesEpisodeIds]);
+    const linkedRows = touchedIds.length
+      ? await db.select().from(episodes).where(and(eq(episodes.patientId, patientId), inArray(episodes.id, touchedIds)))
+      : [];
+    const anchoredRows = await db
+      .select()
+      .from(episodes)
+      .where(
+        and(
+          eq(episodes.patientId, patientId),
+          or(
+            and(eq(episodes.startedAtType, eventType), eq(episodes.startedAtId, eventId)),
+            and(eq(episodes.endedAtType, eventType), eq(episodes.endedAtId, eventId)),
+          ),
+        ),
+      );
+    const byId = new Map<string, any>();
+    for (const r of [...linkedRows, ...anchoredRows]) byId.set(r.id, r);
+
+    const isThisEvent = (type: string | null, id: string | null) => type === eventType && id === eventId;
+    const started = new Set<string>(pivotRows.filter((p: any) => p.startsEpisode).map((p: any) => p.episodeId));
+    for (const r of byId.values()) if (isThisEvent(r.startedAtType, r.startedAtId)) started.add(r.id);
+
+    // (a) An event cannot leave a frame it started. Only a *sent* list can drop one; an omitted
+    // list carries the current links over, and must not fail on a link some earlier bug lost.
+    if (input.episodeIds) {
+      const next = new Set(episodeIds);
+      if ([...started].some((id) => !next.has(id))) {
+        throw new BadRequestException('CANNOT_UNLINK_STARTED_EPISODE');
+      }
+    }
+
+    // Rewritten only when the request sent either list, exactly as the PATCHes always have.
+    const rewritePivot = input.episodeIds !== undefined || input.resolvesEpisodeIds !== undefined;
+
+    // Resolution: the same identity-aware rule resolveEpisodes() applies on create, and like the
+    // old PATCH path only when a list was sent — an untouched link set is never re-validated.
+    const resolveEpisodeIds: string[] = [];
+    for (const id of rewritePivot ? resolvesEpisodeIds : []) {
+      const r = byId.get(id);
+      if (!r) throw new NotFoundException('EPISODE_NOT_FOUND');
+      if (r.status === 'resolved' && !isThisEvent(r.endedAtType, r.endedAtId)) {
+        throw new BadRequestException('EPISODE_ALREADY_RESOLVED');
+      }
+      if (r.status !== 'resolved' || !isThisEvent(r.endedAtType, r.endedAtId)) resolveEpisodeIds.push(id);
+    }
+
+    // (b) Dropping a resolve link reopens the frame — only when this event is the recorded end.
+    const nextResolves = new Set(resolvesEpisodeIds);
+    const reopenEpisodeIds = [...byId.values()]
+      .filter((r) => r.status === 'resolved' && isThisEvent(r.endedAtType, r.endedAtId) && !nextResolves.has(r.id))
+      .map((r) => r.id);
+
+    // (c) An episode may not end before it starts. Checked only when the time or the resolve list
+    // was sent, so an unrelated correction never fails on data that was already inverted.
+    if (input.clinicalTime !== undefined || input.resolvesEpisodeIds) {
+      const eventTime =
+        input.clinicalTime !== undefined ? input.clinicalTime : await this.resolveEventTimestamp(eventType, eventId);
+      if (eventTime !== null) {
+        for (const id of started) {
+          const r = byId.get(id);
+          if (!r) continue;
+          // Ends after this correction: at this event when it (still) resolves the frame, at the
+          // recorded end event when another event closed it, nowhere when it is or becomes open.
+          if (nextResolves.has(id) || reopenEpisodeIds.includes(id)) continue;
+          if (r.status === 'resolved' && r.endedAtId) {
+            const endTime = await this.resolveEventTimestamp(r.endedAtType, r.endedAtId);
+            if (endTime !== null && eventTime > endTime) throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
+          }
+        }
+        for (const id of resolvesEpisodeIds) {
+          const r = byId.get(id);
+          if (!r || started.has(id)) continue; // starting and ending on one event is a zero-length frame
+          const startTime = await this.resolveEventTimestamp(r.startedAtType, r.startedAtId);
+          if (startTime !== null && eventTime < startTime) throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
+        }
+      }
+    }
+
+    // The established pivot write pattern (CLAUDE.md → Episode model): one membership row per
+    // episode carrying `startsEpisode`, and a SEPARATE row per resolving link.
+    const pivotWrites: EventEpisodeCorrectionPlan['pivotRows'] = rewritePivot
+      ? [
+          ...episodeIds.map((episodeId) => ({ episodeId, startsEpisode: started.has(episodeId), resolvesEpisode: false })),
+          ...resolvesEpisodeIds.map((episodeId) => ({ episodeId, startsEpisode: false, resolvesEpisode: true })),
+        ]
+      : [];
+
+    return {
+      patientId,
+      eventType,
+      eventId,
+      episodeIds,
+      resolvesEpisodeIds,
+      rewritePivot,
+      pivotRows: pivotWrites,
+      resolveEpisodeIds,
+      reopenEpisodeIds,
+    };
+  }
+
+  /**
+   * Phase 2: writes a plan from `planEventEpisodeCorrection`, using the caller's transaction
+   * handle — `await this.db.withTransaction(async (tx) => { …; await
+   * episodesService.applyEventEpisodeCorrection(tx, plan); })`. Writes only, no reads (the
+   * sqlite caveat on `withTransaction`). The resolve and reopen updates are guarded in their
+   * WHERE clauses, so a plan gone stale under a concurrent correction cannot close a frame
+   * another event already closed, nor reopen one this event no longer ends.
+   */
+  async applyEventEpisodeCorrection(tx: any, plan: EventEpisodeCorrectionPlan): Promise<void> {
+    const { patientId, eventType, eventId } = plan;
+    if (plan.rewritePivot) {
+      await tx
+        .delete(episodesEventsPivot)
+        .where(and(eq(episodesEventsPivot.eventId, eventId), eq(episodesEventsPivot.eventType, eventType)));
+      for (const row of plan.pivotRows) {
+        await tx.insert(episodesEventsPivot).values({ id: randomUUID(), eventType, eventId, ...row });
+      }
+    }
+    if (plan.reopenEpisodeIds.length) {
+      await tx
+        .update(episodes)
+        .set({ status: 'active', endedAtType: null, endedAtId: null })
+        .where(
+          and(
+            eq(episodes.patientId, patientId),
+            inArray(episodes.id, plan.reopenEpisodeIds),
+            eq(episodes.endedAtType, eventType),
+            eq(episodes.endedAtId, eventId),
+          ),
+        );
+    }
+    if (plan.resolveEpisodeIds.length) {
+      await tx
+        .update(episodes)
+        .set({ status: 'resolved', endedAtType: eventType, endedAtId: eventId })
+        .where(
+          and(
+            eq(episodes.patientId, patientId),
+            inArray(episodes.id, plan.resolveEpisodeIds),
+            or(ne(episodes.status, 'resolved'), and(eq(episodes.endedAtType, eventType), eq(episodes.endedAtId, eventId))),
+          ),
+        );
+    }
   }
 
   // "Derived fields computed at query time: startedAt, resolvedAt from linked events" (data-model.md).

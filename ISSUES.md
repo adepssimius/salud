@@ -854,6 +854,221 @@ it again."), so the absence is stated rather than left as a missing affordance.
 
 ---
 
+## Correcting logged entries
+
+Found 2026-11-15 investigating "there is no way to edit an intervention or an observation once I have
+made it". The web never had an edit UI — the detail pages were built view-only on purpose — and
+these are the API defects a correction UI would hit, each filed against the spec that now governs it
+(frontend.md → "Correcting an entry"; api.md → the two `PATCH` sections and "Corrections").
+
+---
+
+### 31. ✅ The clinical time of an observation or intervention cannot be corrected
+
+`UpdateObservationDto` and `UpdateInterventionDto` (both `apps/api/src/app/*/dto/update-*.dto.ts`)
+declare neither `observedAt` nor `performedAt`, so "logged it at the wrong time" — likely the most
+common correction there is — has no write path at all.
+
+**Governing spec:** api.md → `PATCH /api/observations/:observationId` and
+`PATCH /api/interventions/:interventionId` (both now accept the time field, with `DATE_IN_FUTURE`
+and `EPISODE_TIME_ORDER_INVALID`); data-model.md → "Data integrity rules" → Corrections.
+
+**Fixed 2026-11-15:** Both update DTOs take the clinical time (`observedAt` / `performedAt`) with
+create's `@IsDateString()` + `@IsNotInFuture()`. A corrected time moves the derived episode
+start/end through `planEventEpisodeCorrection` (refused with `EPISODE_TIME_ORDER_INVALID` when it
+would invert a frame), re-runs the dosing engine for a dose, and recomputes the latest weight and
+re-checks protocols for an observation.
+
+---
+
+### 32. ✅ An observation `PATCH` rejects its own `lab_result` and `document` entries
+
+`UpdateObservationEntryDto.type`'s `@IsIn` list (`update-observation.dto.ts`) holds the twelve
+manual types and omits `lab_result` and `document`, which create accepts. Echoing back the entries of
+an imported lab report or an attached document is a 400, so those observations cannot have their
+entries corrected at all.
+
+**Governing spec:** api.md → `PATCH /api/observations/:observationId` ("Every entry type create
+accepts round-trips").
+
+**Fixed 2026-11-15:** `UpdateObservationEntryDto.type` lists all fourteen types; the file and
+analyte checks run on a correction as on create. An echoed entry keeps its id only if this
+observation already has it (any other id gets a fresh one rather than colliding with or adopting
+another observation's entry).
+
+---
+
+### 33. ✅ Every intervention `PATCH` writes a fresh set of dose advisories, even a notes-only edit
+
+`interventions.service.ts` `update()` calls `persistDoseAdvisories` unconditionally for any
+`medication_dose` (≈ line 461). Each correction therefore re-inserts `atypical_dose` /
+`stale_weight` / `expired_embodiment` rows for the same dose, self-acknowledged by the editor, and
+they then count as "advisories fired" for every other caregiver. It also re-resolves `guidelineId`
+and `weightKgUsed` against today's catalog on a notes edit, rewriting the dose's provenance.
+
+**Governing spec:** api.md → `PATCH /api/interventions/:interventionId` ("Re-evaluation is scoped
+to a dose change", "Advisories after a correction").
+
+**Fixed 2026-11-15:** The engine re-runs only when `performedAt`, `medicationId`,
+`medicationEmbodimentId`, `doseSource` or `amountMg` is sent; anything else leaves every
+engine-resolved field as logged. When it does re-run, a new `atypical_dose` is written only if the
+re-evaluated `atypicalReason` differs from the stored one and is non-empty, and `stale_weight` /
+`expired_embodiment` only if the dose has none of that type yet. Nothing is ever deleted or
+rewritten.
+
+---
+
+### 34. ✅ Removing or backdating a weight entry leaves `latestWeightKg` stale
+
+`observations.service.ts` `update()` only ever calls `applyLatestWeightIfNewer` for weight entries
+present in the new `entries`. Removing the newest weight entry, or correcting it to a lower value at
+an earlier time, never moves the denormalized fields back — and they feed mg/kg dosing.
+
+**Governing spec:** data-model.md → Patient → `latestWeightRecordedAt` ("Recomputed on
+correction").
+
+**Fixed 2026-11-15:** `ObservationsService.recomputeLatestWeight` derives both fields from scratch —
+the patient's other weight entries plus this observation's corrected entries at its corrected time —
+whenever `entries` or `observedAt` is sent; it can go down, or to null. Create keeps the incremental
+`applyLatestWeightIfNewer`.
+
+---
+
+### 35. ✅ Dropping a resolve link leaves the episode resolved; dropping a start link orphans the start
+
+On both `PATCH`es, removing an episode from `resolvesEpisodeIds` deletes the pivot row but never
+touches `episodes`, so the episode stays `resolved` with `endedAtId` naming an event that no longer
+resolves it. Dropping the starting episode from `episodeIds` silently loses the `startsEpisode`
+flag while `startedAtId` still points at the event.
+
+**Governing spec:** data-model.md → "Data integrity rules" → Corrections (reopen on a dropped
+resolve link; `CANNOT_UNLINK_STARTED_EPISODE`).
+
+**Fixed 2026-11-15:** Both PATCHes now route every episode effect through
+`EpisodesService.planEventEpisodeCorrection` (before the transaction) and
+`applyEventEpisodeCorrection` (inside it): a dropped resolve link reopens the episode, dropping a
+started episode is `CANNOT_UNLINK_STARTED_EPISODE`. Neither PATCH writes pivot rows itself or calls
+`resolveEpisodes()` any more.
+
+---
+
+### 36. ✅ An intervention `PATCH` can re-point or invent the schedule link
+
+`UpdateInterventionDto` accepts `interventionScheduleId` as any string, unvalidated against the
+patient, and writes it to `scheduleId` — moving a dose into or out of a schedule's adherence count,
+or onto another patient's schedule. It also accepts `doseSource: 'schedule'`, which api.md says only
+the schedule-log path writes.
+
+**Governing spec:** api.md → `PATCH /api/interventions/:interventionId` ("Not correctable",
+`FIELD_NOT_CORRECTABLE`).
+
+**Fixed 2026-11-15:** `CorrectionFieldsInterceptor`
+(`apps/api/src/app/revisions/correction-fields.ts`) refuses `type`, `interventionScheduleId`,
+attribution, `createdAt`, the episode-start fields and `doseSource: 'schedule'` with 400
+`FIELD_NOT_CORRECTABLE` + `fields`, on the raw body and before the ValidationPipe (whose whitelist
+would otherwise strip them silently). The service refuses any `doseSource` on a dose with a
+`scheduleId` or a stored `'schedule'` source. The observation PATCH refuses its own fixed fields the
+same way.
+
+---
+
+### 37. ✅ Protocols are not re-checked when an observation's entries are corrected
+
+`AdvisoriesService.evaluateProtocols()` runs only in `observations.service.ts` `create()`. A
+temperature corrected from 38.0 to 40.0 never trips the protocol it would have tripped had it been
+logged right the first time.
+
+**Governing spec:** api.md → `PATCH /api/observations/:observationId` ("Protocols are re-checked").
+
+**Fixed 2026-11-15:** The observation PATCH re-checks protocols whenever `entries` or `observedAt`
+is sent, through `AdvisoriesService.planProtocolTrips` (the reads half of `evaluateProtocols`, which
+create still uses unchanged), skipping a protocol that already fired with this observation as its
+context. `firedAdvisories` carries only what the request wrote.
+
+---
+
+### 38. 🟢 Correcting a dose does not re-check later doses — **not a bug, do not "fix" it**
+
+Recorded so nobody adds it: a corrected dose is re-evaluated, but later doses keep the
+`nextAllowedAt` / `isAtypical` / `atypicalReason` they were logged with. That is what the caregiver
+was shown at the time (N-2). The edit form says so.
+
+**Governing spec:** data-model.md → "Data integrity rules" → Corrections; frontend.md → "Correcting
+an entry".
+
+---
+
+### 39. ✅ Observation and intervention `PATCH`es are not atomic
+
+Both `update()` methods capture the revision, delete the entries / pivot rows, and re-insert them
+as separate statements with no transaction. A failure partway (a bad `fileId` caught after the
+revision is written, a resolve conflict after the pivot delete) leaves the entry with lost links and
+a revision describing a change that never completed.
+
+**Governing spec:** api.md → both `PATCH` sections ("Atomic"); data-model.md → Revision.
+
+**Fixed 2026-11-15:** Every check and read happens first; then one `DatabaseService.withTransaction`
+holds only writes — the revision (`RevisionsService.capture` takes an optional `tx`; conditions and
+patients still call it without one), the row, entries, pivot rows, episode state, latest weight and
+advisories (`AdvisoriesService.create` also takes an optional `tx`). Tested by failing the
+transaction partway: nothing is written, the revision included.
+
+---
+
+### 40. 🔴 Revisions tie on SQLite's one-second `editedAt`
+
+`RevisionsService.listFor` orders by `editedAt` alone. Two corrections of one entry inside a second
+— a caregiver fixing their own fix — tie on SQLite, and History's order is then undefined. Same
+hazard `care_document_statements` solved with `seq`; the fix needs a column in both schema modules
+and a migration in both lineages, so it is its own change.
+
+**Governing spec:** data-model.md → Revision ("Ordering is by `editedAt`, newest first — a known
+hazard").
+
+---
+
+### 41. ✅ The api's update DTO classes don't `implements` their shared interfaces
+
+`UpdateObservationDto` / `UpdateInterventionDto` exist in `libs/shared/types/src/lib/types.ts`
+(≈ lines 214, 315), but the class-validator DTOs of the same names don't declare `implements`, so
+the "both apps fail to compile when they drift" convention (CLAUDE.md → Conventions to match) does
+not hold for the two correction bodies. Worth closing in the same change that adds the time fields
+(#31).
+
+**Governing spec:** repo-structure.md (type-sharing rules); api.md → both `PATCH` sections.
+
+**Fixed 2026-11-15:** Both class-validator DTOs `implements` their shared interface (and the entry
+DTO `UpdateObservationEntry`); the intervention DTO's `doseSource` is typed `CorrectableDoseSource`
+and its `interventionScheduleId` is gone.
+
+---
+
+### 42. 🔴 Another caregiver's correction is invisible to "since you last looked"
+
+A correction changes neither `createdAt` nor `recordedByUserId`, so the journal marker and the
+dashboard's `whatsNew` counts never surface it; it shows only in the entry's History. Accepted for
+now — a follow-up, not a decision that it should stay this way.
+
+**Governing spec:** api.md → "Corrections"; frontend.md → "Correcting an entry".
+
+---
+
+### 43. ✅ No `bruno/observations/update.bru`
+
+`bruno/interventions/update.bru` exists; the observation `PATCH` has no request in the collection,
+against the "every endpoint needs a Bruno request" convention.
+
+**Governing spec:** tooling.md (Bruno); api.md → `PATCH /api/observations/:observationId`.
+
+**Fixed 2026-11-15:** Added `bruno/observations/update.bru`; `bruno/interventions/update.bru` now
+shows a time correction and documents the correction rules.
+
+---
+
+## Medication editing
+
+---
+
 ### 44. 🔴 Retiring a medication changes nothing a caregiver can see
 
 `defaultActive: false` is documented as *the* way to retire a medication instead of deleting it
@@ -935,7 +1150,8 @@ so the list below is re-sequenced.
 | 13 | ~~**Follow-up from #20**~~ ✅ | ~~24~~ | **Done 2026-08-09.** The type change alone was cosmetic — the return annotations were the actual fix. |
 | 14 | **Follow-ups from the #21/#25 investigation** | 26, 27 | #26 is a real coverage gap (the validation pipe is never tested); #27 is two small clarity items, no urgency. |
 | 15 | **Follow-ups from the QA-findings batch** | 28, 29, 30 | #28 is the only 🔴 of the three and is a real integrity hole — a client can erase an atypical-dose flag. #29 and #30 are both "the third time is when you extract it" items. |
-| 16 | **Medication editing** | 44, ~~45, 46, 47~~ | 45–47 landed with the API half of medication editing (2026-11-15); #44 closes with the web half. |
+| 16 | **Correcting logged entries** | ~~31–37, 39, 41, 43~~ ✅; then 40, 42 | The server half of the correction feature, landing before the edit pages. #38 is a do-not-fix note; #40 needs a migration in both lineages, #42 a design. |
+| 17 | **Medication editing** | 44, ~~45, 46, 47~~ | 45–47 landed with the API half of medication editing (2026-11-15); #44 closes with the web half. |
 
 ## Conventions for working these
 

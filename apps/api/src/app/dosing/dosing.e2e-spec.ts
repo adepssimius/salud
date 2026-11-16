@@ -390,4 +390,53 @@ describe('Dosing engine (e2e)', () => {
     expect(check.body.guidance.weightBased.computedMl).toBeNull();
     expect(check.body.guidance.weightBased.concentrationMgPerMl).toBeNull();
   });
+
+  // api.md → dose-checks → excludeInterventionId: the correction form's preview must not check a
+  // dose against itself, and the field must never reach another patient's doses.
+  it('excludes the dose being corrected from its own preview, and ignores a foreign intervention id', async () => {
+    const pid = await createPatient(18);
+    await logWeight(pid, 10, 1);
+    const at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const own = await logDose(pid, {
+      performedAt: at,
+      medicationId,
+      medicationEmbodimentId: embodimentId,
+      doseSource: 'weight_based',
+      amountMg: 150,
+    });
+    const body = { medicationId, medicationEmbodimentId: embodimentId, amountMg: 150, occurredAt: at };
+    const reasonsOf = (check: any) =>
+      check.advisories.find((a: any) => a.type === 'atypical_dose')?.payload.reasons ?? [];
+
+    // Unchanged without the field: the logged dose counts as a prior dose at the same second.
+    const plain = await doseCheck(pid, body);
+    expect(reasonsOf(plain)).toContain('interval_too_short');
+    expect(plain.dailyTotalMg).toBe(300);
+
+    // With it: no interval or total contribution from itself.
+    const excluded = await doseCheck(pid, { ...body, excludeInterventionId: own.id });
+    expect(reasonsOf(excluded)).not.toContain('interval_too_short');
+    expect(excluded.dailyTotalMg).toBe(150);
+
+    // Another patient's dose id: no effect either way, so nothing about it can be inferred.
+    const other = await createPatient(18);
+    await logWeight(other, 10, 1);
+    const foreign = await logDose(other, {
+      performedAt: at,
+      medicationId,
+      medicationEmbodimentId: embodimentId,
+      doseSource: 'weight_based',
+      amountMg: 150,
+    });
+    expect(await doseCheck(pid, { ...body, excludeInterventionId: foreign.id })).toEqual(plain);
+    const otherPlain = await doseCheck(other, body);
+    expect(await doseCheck(other, { ...body, excludeInterventionId: own.id })).toEqual(otherPlain);
+
+    // Same id format as the other ids.
+    await request(app.getHttpServer())
+      .post(`/api/patients/${pid}/dose-checks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...body, excludeInterventionId: 'not-a-uuid' })
+      .expect(400);
+  });
 });

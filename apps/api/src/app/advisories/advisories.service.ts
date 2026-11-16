@@ -61,9 +61,13 @@ export class AdvisoriesService {
 
   // Called by services persisting the event that triggered the advisory (e.g. InterventionsService
   // on a medication_dose create). Not itself an HTTP endpoint.
-  async create(input: CreateAdvisoryInput) {
-    const db = this.db.db as any;
-    const id = randomUUID();
+  //
+  // `tx` is a `DatabaseService.withTransaction` handle, for a caller writing the advisory in the
+  // same transaction as the event (the correction PATCHes); `input.id` lets that caller have
+  // decided the id beforehand. Writes only.
+  async create(input: CreateAdvisoryInput & { id?: string }, tx?: any) {
+    const db = tx ?? (this.db.db as any);
+    const id = input.id ?? randomUUID();
     await db.insert(advisories).values({
       id,
       patientId: input.patientId,
@@ -122,6 +126,28 @@ export class AdvisoriesService {
     observationId: string,
     entries: Array<{ type: string; metadata?: Record<string, any> | null }>,
   ): Promise<Advisory[]> {
+    const trips = await this.planProtocolTrips(patientId, userId, observationId, entries);
+    for (const trip of trips) await this.create(trip);
+    return trips.map((trip) => this.firedFromInput(trip));
+  }
+
+  /**
+   * The reads half of `evaluateProtocols`, for a caller that must write inside its own transaction
+   * (the observation correction PATCH — api.md → "Protocols are re-checked"). Returns the
+   * advisories to write, ids already chosen; hand each to `create(input, tx)` and report them with
+   * `firedFromInput`.
+   *
+   * `skipAlreadyFired` drops a trip when a `protocol_fired` advisory for the same Protocol already
+   * has this observation as its context, so a correction never fires a protocol twice for one
+   * observation. Create has no prior advisories to skip and leaves it off.
+   */
+  async planProtocolTrips(
+    patientId: string,
+    userId: string,
+    observationId: string,
+    entries: Array<{ type: string; metadata?: Record<string, any> | null }>,
+    options: { skipAlreadyFired?: boolean } = {},
+  ): Promise<Array<CreateAdvisoryInput & { id: string }>> {
     const db = this.db.db as any;
     const conditionRows = await db
       .select()
@@ -137,8 +163,24 @@ export class AdvisoriesService {
       .where(and(inArray(protocols.conditionId, conditionIds), eq(protocols.active, true)));
     if (!protocolRows.length) return [];
 
-    const fired: Advisory[] = [];
+    const alreadyFired = new Set<string>();
+    if (options.skipAlreadyFired) {
+      const prior = await db
+        .select()
+        .from(advisories)
+        .where(
+          and(
+            eq(advisories.type, 'protocol_fired'),
+            eq(advisories.contextType, 'observation'),
+            eq(advisories.contextId, observationId),
+          ),
+        );
+      for (const row of prior) if (row.sourceId) alreadyFired.add(row.sourceId);
+    }
+
+    const trips: Array<CreateAdvisoryInput & { id: string }> = [];
     for (const protocol of protocolRows) {
+      if (alreadyFired.has(protocol.id)) continue;
       const entry = entries.find((e) => e.type === protocol.triggerMetric);
       if (!entry || !entry.metadata) continue;
       const value = this.extractMetricValue(protocol.triggerMetric, entry.metadata);
@@ -147,18 +189,8 @@ export class AdvisoriesService {
         protocol.triggerOperator === 'gte' ? value >= protocol.triggerValue : value <= protocol.triggerValue;
       if (!tripped) continue;
 
-      const payload = {
-        conditionId: protocol.conditionId,
-        conditionName: conditionNameById.get(protocol.conditionId) ?? null,
-        protocolName: protocol.name,
-        instructionText: protocol.instructionText,
-        sourceText: protocol.sourceText,
-        triggerMetric: protocol.triggerMetric,
-        triggerOperator: protocol.triggerOperator,
-        triggerValue: protocol.triggerValue,
-        observedValue: value,
-      };
-      const id = await this.create({
+      trips.push({
+        id: randomUUID(),
         patientId,
         type: 'protocol_fired',
         severity: 'danger',
@@ -166,27 +198,41 @@ export class AdvisoriesService {
         sourceId: protocol.id,
         contextType: 'observation',
         contextId: observationId,
-        payload,
+        payload: {
+          conditionId: protocol.conditionId,
+          conditionName: conditionNameById.get(protocol.conditionId) ?? null,
+          protocolName: protocol.name,
+          instructionText: protocol.instructionText,
+          sourceText: protocol.sourceText,
+          triggerMetric: protocol.triggerMetric,
+          triggerOperator: protocol.triggerOperator,
+          triggerValue: protocol.triggerValue,
+          observedValue: value,
+        },
         acknowledgedByUserId: userId,
-      });
-      const nowTs = Math.floor(Date.now() / 1000);
-      fired.push({
-        id,
-        patientId,
-        type: 'protocol_fired',
-        severity: 'danger',
-        sourceType: 'protocol',
-        sourceId: protocol.id,
-        contextType: 'observation',
-        contextId: observationId,
-        payload,
-        acknowledgedByUserId: userId,
-        acknowledgedAt: nowTs,
-        createdAt: nowTs,
-        updatedAt: nowTs,
       });
     }
-    return fired;
+    return trips;
+  }
+
+  /** The response shape of a protocol trip `planProtocolTrips` returned and `create` wrote. */
+  firedFromInput(input: CreateAdvisoryInput & { id: string }): Advisory {
+    const nowTs = Math.floor(Date.now() / 1000);
+    return {
+      id: input.id,
+      patientId: input.patientId,
+      type: input.type,
+      severity: input.severity,
+      sourceType: input.sourceType ?? null,
+      sourceId: input.sourceId ?? null,
+      contextType: input.contextType ?? null,
+      contextId: input.contextId ?? null,
+      payload: input.payload ?? null,
+      acknowledgedByUserId: input.acknowledgedByUserId ?? null,
+      acknowledgedAt: input.acknowledgedByUserId ? nowTs : null,
+      createdAt: nowTs,
+      updatedAt: nowTs,
+    } as Advisory;
   }
 
   async ack(id: string, userId: string) {
