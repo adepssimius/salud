@@ -63,7 +63,13 @@ const GUIDELINE_TYPE_LABELS: Record<string, string> = {
   imports: [CommonModule, RevisionHistoryComponent],
   template: `
     <div class="card">
-      <button type="button" class="link" (click)="backToJournal()">&larr; Journal</button>
+      <!-- The one way out to change this entry: always visible in the loaded state, never behind a
+           menu — a hidden affordance is how patient editing became unfindable once before
+           (frontend.md → "Observation & intervention detail"). -->
+      <div class="page-nav">
+        <button type="button" class="link" (click)="backToJournal()">&larr; Journal</button>
+        <button type="button" class="secondary edit-button" *ngIf="intervention()" (click)="edit()">Edit</button>
+      </div>
 
       <p class="error" *ngIf="error()">{{ error() }}</p>
 
@@ -129,7 +135,7 @@ const GUIDELINE_TYPE_LABELS: Record<string, string> = {
         <section>
           <h2>History</h2>
           <app-revision-history entityType="intervention" [entityId]="iv.id"></app-revision-history>
-          <p class="muted small">Corrections are recorded here; this page does not edit.</p>
+          <p class="muted small">Earlier versions are kept here each time this entry is corrected.</p>
         </section>
       </ng-container>
     </div>
@@ -142,8 +148,11 @@ const GUIDELINE_TYPE_LABELS: Record<string, string> = {
         flex-direction: column;
         gap: 0.85rem;
       }
-      .link {
-        align-self: flex-start;
+      .page-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
       }
       .muted,
       .notes {
@@ -389,6 +398,10 @@ export class InterventionDetailPage implements OnInit {
 
   goToSchedule(scheduleId: string) {
     this.router.navigate(['/schedules', scheduleId]);
+  }
+
+  edit() {
+    this.router.navigate(['/interventions', this.interventionId, 'edit']);
   }
 
   backToJournal() {

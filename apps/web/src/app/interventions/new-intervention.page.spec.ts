@@ -201,6 +201,9 @@ describe('NewInterventionPage', () => {
       expect.objectContaining({ medicationId: 'med-1' }),
     );
     expect(component.doseCheckResult()).toEqual(doseCheckResult);
+    // Only a correction excludes a dose from its own preview; create sends no such key at all.
+    const [, createBody] = apiMock.post.mock.calls.find(([path]: [string]) => path.endsWith('/dose-checks'));
+    expect('excludeInterventionId' in createBody).toBe(false);
   }));
 
   it('clears the dose-check result when the medication is cleared', fakeAsync(() => {
