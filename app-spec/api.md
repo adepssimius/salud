@@ -770,6 +770,10 @@ gap completely, and `defaultActive: false` already covers "retire this, don't de
 - `GET /api/medications`
   - Query: `q?` (matches against `name`, `brandNames`, and `tags`, case-insensitive — this is how "the
     box says Tylenol, not acetaminophen" search works, F-1.2), `tag?`, `activeOnly?`.
+  - `activeOnly=true` returns only `defaultActive: true` medications. The pickers that choose a
+    medication for something new — logging a dose, creating a schedule, recording a reaction — send
+    it; the catalog list does not (frontend.md → "Medication catalog"). It is what makes retirement
+    take effect.
   - Returns medications including `brandNames` and `tags`.
 - `POST /api/medications`
   - Body: `{ name, brandNames?, description?, tags?, defaultActive? }`.
@@ -782,6 +786,10 @@ gap completely, and `defaultActive: false` already covers "retire this, don't de
 - `PATCH /api/medications/:medicationId`
   - Body: any subset of the create fields. Renaming enforces the same 409; renaming a medication to
     the name it already has is a no-op, not a conflict.
+  - A rename **deliberately relabels past doses**: doses, schedules and reactions store the
+    medication's id and read its name live. Fixing "psuedophedrine" should fix it everywhere.
+  - Catalog edits — medications, embodiments, guidelines — are not revisioned (`Revision` covers
+    patient entries only); the catalog is reference data, edited in place.
 - `DELETE /api/medications/:medicationId`
   - 409 `MEDICATION_IN_USE` when anything still references it — its own embodiments or guidelines, an
     adverse reaction, a schedule, or a dose already logged. The response body carries a `dependents`
@@ -824,6 +832,36 @@ half):
   `concentrationMgPerMl` — the derived value has no independent existence once its inputs are gone.
   Setting `concentrationMgPerMl` directly on a row that had a pair clears the pair for the same
   reason in reverse: the stored printed figures would no longer describe the stored concentration.
+
+#### Concentration lock
+An embodiment's **dosing fields** — `concentrationMgPerMl`, `concentrationMg`,
+`concentrationVolumeMl`, `strengthMgPerUnit`, `unitType` — say what "5 mL" or "one tablet" of it
+*means*. A logged dose keeps its `medicationEmbodimentId` and is displayed against the embodiment
+live, and a schedule stores `doseMg` and `doseMl` side by side and copies `amountMl` onto every dose
+`POST /schedules/:id/log` writes. Changing a dosing field in place under either would silently
+rewrite what an existing amount means. So, on `PATCH /api/embodiments/:embodimentId`:
+- If the embodiment is referenced by **at least one logged dose** (an intervention whose
+  `metadata.medicationEmbodimentId` is this embodiment) **or at least one schedule**, a request that
+  would **change** any dosing field is 409 `EMBODIMENT_CONCENTRATION_IN_USE`, and nothing in the
+  request is applied. The body carries `dependents` in the same shape as the delete refusals, counting
+  only what locks the row: `{ "schedules"?: n, "interventions"?: n }`, non-zero entries only.
+  Guidelines and reactions pointing at the embodiment do **not** lock it — neither records an amount
+  in its units.
+- **"Change" is judged on the result, not on which keys were sent.** The server resolves the request
+  against the stored row exactly as it would to write it (the pair rules above), then compares each
+  dosing field with what is stored: numbers within a relative tolerance of 1e-9, `null` equal only to
+  `null`. A client that echoes the whole row back unchanged succeeds, which is what an edit form that
+  submits every field needs.
+- A consequence of the pair rules, stated so nobody is surprised by it: sending
+  `concentrationMgPerMl` alone against a row that holds a label pair clears the pair, so on a locked
+  row it is refused **even when the figure is identical** (`32` against a stored `160 mg / 5 mL`). A
+  client echoing a pair-backed row echoes the pair, not the derived figure — which it must do anyway,
+  since sending both is `CONCENTRATION_INPUT_CONFLICT`.
+- `label`, `notes`, `atHome`, `expiresAt` and `runningLow` stay editable regardless. A relabelled
+  bottle with a new concentration is a **new embodiment**; frontend.md → "Medication catalog" offers
+  that as "Add as a new form".
+- The 400s above are checked first: a malformed concentration is rejected as malformed whether or not
+  the row is locked.
 - `DELETE /api/embodiments/:embodimentId`
   - 409 `EMBODIMENT_IN_USE` when a guideline, reaction, schedule or logged dose still points at it.
     Same `dependents` body as above.
@@ -1230,7 +1268,8 @@ Adding a filter later is a breaking change for clients parsing these shapes.
     "statusCode": 413 }`.
 - **An explicit throw may carry extra keys alongside the string `message`.** Nest spreads an object
   argument into the response body, so a code can ship structured detail without changing how
-  `message` is read. The three catalog `IN_USE` conflicts use this to say what is in the way:
+  `message` is read. The catalog `*_IN_USE` conflicts (including `EMBODIMENT_CONCENTRATION_IN_USE`)
+  use this to say what is in the way:
   ```json
   {
     "message": "MEDICATION_IN_USE",
@@ -1242,7 +1281,7 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-52 codes are thrown today (53 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
+53 codes are thrown today (54 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
 implementation), all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
@@ -1295,6 +1334,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `MEDICATION_IN_USE` | 409 | `DELETE /api/medications/:id` with dependent rows; body carries `dependents` |
 | `EMBODIMENT_IN_USE` | 409 | `DELETE /api/embodiments/:id` with dependent rows; body carries `dependents` |
 | `GUIDELINE_IN_USE` | 409 | `DELETE /api/guidelines/:id` with dependent rows; body carries `dependents` |
+| `EMBODIMENT_CONCENTRATION_IN_USE` | 409 | `PATCH /api/embodiments/:id` that would change a dosing field (`concentrationMgPerMl`, the pair, `strengthMgPerUnit`, `unitType`) while a logged dose or schedule references the embodiment; body carries `dependents` (`schedules`, `interventions`) |
 | `REACTION_NOT_FOUND` | 404 | reaction delete — unknown id, or one belonging to another patient |
 | `DOCUMENT_FILE_NOT_FOUND` | 400 (array form) | a `document` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — same semantics as `PHOTO_FILE_NOT_FOUND` |
 | `LAB_FILE_NOT_FOUND` | 400 | `POST .../lab-imports` with a `fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |

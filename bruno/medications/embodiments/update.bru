@@ -1,0 +1,44 @@
+meta {
+  name: Update Embodiment
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}embodiments/{{embodimentId}}
+  body: json
+  auth: inherit
+}
+
+docs {
+  Edits an embodiment's label, notes, cabinet fields and -- while nothing references it --
+  its concentration, strength and unit type.
+
+  Once a logged dose or a schedule references the embodiment, a request that would *change*
+  `concentrationMgPerMl`, `concentrationMg`, `concentrationVolumeMl`, `strengthMgPerUnit` or
+  `unitType` is 409 `EMBODIMENT_CONCENTRATION_IN_USE` with a `dependents` body
+  (`{ schedules?, interventions? }`). Echoing the stored values is not a change. Sending
+  `concentrationMgPerMl` alone against a row that holds a label pair clears the pair, so it
+  counts as a change even when the figure is identical -- echo the pair instead.
+  See app-spec/api.md -> Embodiments -> "Concentration lock".
+}
+
+body:json {
+  {
+    "label": "160 mg/5 mL suspension (Children's Tylenol, cherry)",
+    "notes": "Shake well",
+    "concentrationMg": 160,
+    "concentrationVolumeMl": 5,
+    "unitType": "ml",
+    "expiresAt": "2027-09-30T00:00:00.000Z"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
