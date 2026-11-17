@@ -844,10 +844,48 @@ app. They therefore need somewhere to be entered.
 - `new-schedule.page.ts` at `/schedules/new`. Query params pre-fill it: `patientId`, and either
   `conditionId` (from a condition — a standing regimen) or `episodeId` (from an episode's "Add a
   schedule" — an acute course). It returns to where it came from: the episode, the condition, or
-  the dashboard.
-- **The embodiment decides which amount boxes show**, by the same rule as dose entry (see "Dose
-  entry"): a cream, ointment or gel course shows no mg, mL or count, says "No amount to measure for
-  this form", and is saved with no amount; a box holding a value always shows.
+  the dashboard (or to the new schedule's link checklist, see "Schedule detail").
+- **The amount is chosen the way a dose's is** (see "Dose entry"), with the dose form's own code,
+  not a copy:
+  - **Which boxes show** is the embodiment's kind: mg, plus mL for a liquid or a count for tablets,
+    chewables, capsules and drops (labelled as such, with the same count input). A cream, ointment
+    or gel shows no amount at all, says "No amount to measure for this form", and is saved with
+    none. A box holding a value always shows.
+  - **The boxes fill each other** from the embodiment's concentration or per-unit strength
+    (`DoseAmountSync`), and switching embodiment clears what the new one hides.
+  - **The patient's dose guidance**: the same weight-based and age-band cards
+    (`app-dose-guidance`, shared with the dose form) from `POST .../dose-checks`, each with
+    "Use this". **Guidance only** — the check's timing advisories judge one dose given now, not a
+    plan, so they are not shown here; every dose logged from the schedule is checked as usual.
+- **How often — two different instructions, chosen explicitly.** "Every 6 hours" (q6h) and "4
+  times a day" (QID) are not the same order, and the form must not let one pass for the other:
+  - **Every N hours (strict)** — a strict interval (`frequencyHours`): the next dose is due exactly
+    N hours after the last, day and night. The label itself says **"(strict)"**.
+  - **N times a day** — at times of day (`explicitTimes`), no overnight doses. Choosing the count
+    lays the times out across the waking day, 08:00 to 20:00 to the quarter hour (2 → 08:00,
+    20:00; 3 → 08:00, 14:00, 20:00; 4 → 08:00, 12:00, 16:00, 20:00), each an editable time input.
+    Next due, overdue and missed follow those times.
+  - **The explanations are tooltips, not page text**: an ⓘ beside each option
+    (`core/info-tip.component.ts`) shows it on hover or focus, and toggles it on tap on a phone;
+    Escape or a tap elsewhere closes it. The strict one shows the interval **on the clock**,
+    worked out from the hours typed — "Every 6 hours: 08:00 → 14:00 → 20:00 → 02:00 → 08:00 → …
+    around the clock" — and **never as a count per day**: "4 doses a day" is the other instruction,
+    and saying it under the strict one is exactly the confusion the two options exist to prevent.
+  - Typing in either box selects its option. No schema change: both were always storable; only
+    the form's question was unclear.
+- **The name comes last, and writes itself.** At the bottom of the form, prefilled with what a
+  nurse would call it, so it is recognisable where the ER Brief lists schedules:
+  - dose, then medicine (first letter capitalised), then frequency — "500 mg Acetaminophen q6h";
+    a liquid adds its volume, "160 mg (5 mL) Acetaminophen q6h"; a count alone reads
+    "2 tablets Ibuprofen"; a topical form is named by its embodiment with no amount,
+    "Clotrimazole 1% cream q12h"; with nothing chosen yet, "Amoxicillin q8h".
+  - Frequency in nurse shorthand: an interval reads `qNh`, except every 24 h, which reads "daily";
+    fixed times read daily / BID / TID / QID by how many a day, then the times —
+    "BID (08:00, 20:00)"; five or more read "at …".
+  - A dressing change: "Dressing change, left knee daily" (the side is put in front of the
+    location unless the location already says it).
+  - It follows the form as fields change **until the caregiver types in it**; from then on it is
+    theirs and left alone. Emptying it hands it back to the form.
 
 ## Observation & intervention detail
 

@@ -11,6 +11,7 @@ import { DangerInterstitialComponent } from '../core/danger-interstitial.compone
 import { ERROR_SENTENCES, errorText } from '../core/error-display';
 import { AmountBoxes, DoseAmountSync, amountBoxesFor } from './dose-amount-sync';
 import { PillCountInputComponent } from './pill-count-input.component';
+import { DoseGuidanceComponent } from './dose-guidance.component';
 import {
   CorrectionEpisodeState,
   correctionResolves,
@@ -64,6 +65,7 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
     DangerInterstitialComponent,
     EpisodeAttachmentComponent,
     PillCountInputComponent,
+    DoseGuidanceComponent,
   ],
   template: `
     <app-danger-interstitial
@@ -197,45 +199,13 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
               </select>
             </label>
           </div>
-          <div class="guidance-cards" *ngIf="selectedMedication()">
-            <div class="guidance-card" *ngIf="doseCheckResult()?.guidance?.weightBased as wb">
-              <div class="guidance-header">
-                <span class="pill">Weight-based</span>
-              </div>
-              <div class="guidance-amount">
-                {{ wb.computedMg | number: '1.0-1' }} mg<span *ngIf="wb.computedMl"> ({{ wb.computedMl }} mL)</span>
-              </div>
-              <div class="muted small">
-                {{ wb.mgPerKg }} mg/kg × {{ wb.weightKgUsed }} kg
-                <span *ngIf="wb.maxMgPerDose"> · max {{ wb.maxMgPerDose }} mg/dose</span>
-              </div>
-              <div class="muted small">Source: {{ wb.source }}</div>
-              <button type="button" class="secondary small" (click)="useWeightBasedAmount()">Use this</button>
-            </div>
-            <div class="guidance-card" *ngIf="doseCheckResult()?.guidance?.ageBand as ab">
-              <div class="guidance-header">
-                <span class="pill">Age-band</span>
-              </div>
-              <div class="guidance-amount">
-                {{ ab.doseMg }} mg<span *ngIf="ab.doseMl"> ({{ ab.doseMl }} mL)</span>
-              </div>
-              <div class="muted small">{{ ab.frequencyPerDay }}x/day · max {{ ab.maxMgPerDay }} mg/day</div>
-              <div class="muted small">Source: {{ ab.source }}</div>
-              <!-- A derived volume must never read as coming from the source line above it. -->
-              <div class="muted small" *ngIf="ab.doseMlSource === 'derived'">
-                mL from the selected bottle's concentration
-              </div>
-              <button type="button" class="secondary small" (click)="useAgeBandAmount()">Use this</button>
-            </div>
-            <p
-              class="muted small"
-              *ngIf="doseCheckResult() && !doseCheckResult()!.guidance.weightBased && !doseCheckResult()!.guidance.ageBand"
-            >
-              No applicable dosing guidance found for this medication{{
-                embodiments().length ? '/embodiment' : ''
-              }} yet.
-            </p>
-          </div>
+          <app-dose-guidance
+            *ngIf="selectedMedication()"
+            [result]="doseCheckResult()"
+            [hasEmbodiments]="embodiments().length > 0"
+            (useWeightBased)="useWeightBasedAmount()"
+            (useAgeBand)="useAgeBandAmount()"
+          ></app-dose-guidance>
 
           <div class="advisories" *ngIf="nonDangerAdvisories().length">
             <app-advisory-banner *ngFor="let a of nonDangerAdvisories()" [advisory]="a"></app-advisory-banner>
@@ -406,29 +376,6 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
       }
       .link {
         font-size: 0.85rem;
-      }
-      .guidance-cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 0.75rem;
-      }
-      .guidance-card {
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-        padding: 0.75rem;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(255, 255, 255, 0.04);
-      }
-      .guidance-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
-      .guidance-amount {
-        font-size: 1.3rem;
-        font-weight: 700;
       }
       .advisories {
         display: flex;
