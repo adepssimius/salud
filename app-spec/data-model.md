@@ -641,6 +641,13 @@ episodes.
     dose correction. Such a dose carries the reserved `metadata.scheduleLinked: true`, keeps its
     own `doseSource`, and gets a `Revision` per change. Only these can be unlinked; a dose logged
     from the schedule stays linked.
+- Editing and deleting (api.md → Intervention schedules → "Editing a schedule" / "Deleting a
+  schedule"):
+  - An edit replaces the plan as if it had always been so; there is no plan history. `type` and
+    `medicationId` are fixed once any dose is linked. `patientId` never changes.
+  - Deleting is a hard delete of the schedule and its `ScheduleSkip`s. Its doses are never deleted:
+    each keeps its `doseSource`, loses `scheduleId` (and the schedule metadata keys), and gets a
+    `Revision` of its prior state.
 
 
 ### ScheduleSkip

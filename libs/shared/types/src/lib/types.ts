@@ -923,29 +923,47 @@ export interface CreateScheduleDto {
   notes?: string;
 }
 
+/**
+ * `PATCH /api/schedules/:id` — any subset of the create fields, plus `status` (api.md → Intervention
+ * schedules → "Editing a schedule"). `null` clears an optional field. Setting `frequencyHours` clears
+ * `explicitTimes` and vice versa unless both are sent. `type` and `medicationId` cannot change while
+ * any dose is linked (409 SCHEDULE_HAS_DOSES). The patient never changes.
+ */
 export interface UpdateScheduleDto {
+  type?: ScheduleType;
   label?: string;
   episodeId?: string | null;
   conditionId?: string | null;
-  medicationId?: string;
-  medicationEmbodimentId?: string;
-  doseMg?: number;
-  doseMl?: number;
-  pillCount?: number;
-  bodyLocation?: string;
-  side?: 'left' | 'right' | 'bilateral' | 'n/a';
-  dressingType?: string;
-  frequencyHours?: number;
-  explicitTimes?: string[];
+  medicationId?: string | null;
+  medicationEmbodimentId?: string | null;
+  doseMg?: number | null;
+  doseMl?: number | null;
+  pillCount?: number | null;
+  bodyLocation?: string | null;
+  side?: 'left' | 'right' | 'bilateral' | 'n/a' | null;
+  dressingType?: string | null;
+  frequencyHours?: number | null;
+  explicitTimes?: string[] | null;
   timeZone?: string; // IANA zone; the web sends the browser's
   missedDoseAction?: MissedDoseAction | null;
   missedDoseCutoffHours?: number | null;
   missedDoseCourseEffect?: MissedDoseCourseEffect | null;
   missedDoseNote?: string | null;
-  endAfterOccurrences?: number;
+  startAt?: string; // ISO datetime
+  endAfterOccurrences?: number | null;
   endAt?: string | null;
-  notes?: string;
+  notes?: string | null;
   status?: ScheduleStatus;
+}
+
+/**
+ * `DELETE /api/schedules/:id`. The schedule and its skips are gone; its doses stay in the record,
+ * unlinked, each with a Revision of its prior state (api.md → "Deleting a schedule").
+ */
+export interface ScheduleDeleteResponse {
+  deleted: true;
+  unlinkedDoseCount: number;
+  removedSkipCount: number;
 }
 
 /**

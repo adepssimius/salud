@@ -1,0 +1,38 @@
+meta {
+  name: Edit Schedule
+  type: http
+  seq: 14
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "label": "200 mg q6h",
+    "doseMg": 200,
+    "frequencyHours": 6,
+    "endAfterOccurrences": null
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.frequencyHours: eq 6
+  res.body.explicitTimes: isNull
+}
+
+docs {
+  Edit a schedule: any subset of the create fields; null clears an optional one. Setting
+  frequencyHours clears explicitTimes and vice versa. The edit replaces the plan as if it had
+  always been so — adherence and nextDueAt recompute over the whole course; linked doses stay.
+  type and medicationId cannot change once a dose is linked (409 SCHEDULE_HAS_DOSES).
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

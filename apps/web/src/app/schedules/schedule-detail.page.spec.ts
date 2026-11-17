@@ -264,4 +264,48 @@ describe('ScheduleDetailPage', () => {
       expect(apiMock.delete).toHaveBeenCalledWith('/schedules/s1/skips/k1');
     });
   });
+
+  // ── Editing and deleting (frontend.md → Schedule detail → "Editing" / "Deleting") ───────────
+  describe('edit and delete', () => {
+    const respond = (schedule: any, linked: any[], skips: any[] = []) =>
+      apiMock.get.mockImplementation((path: string) =>
+        path.endsWith('/skips') ? of(skips) : of({ schedule, linked, candidates: [] }),
+      );
+
+    it('Edit opens the form at /schedules/:id/edit', () => {
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      fixture.componentInstance.edit();
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1', 'edit']);
+    });
+
+    it('the confirmation says the logged doses stay and the skips go, then deletes and returns to the episode', () => {
+      respond({ ...baseSchedule, episodeId: 'e1' }, [dose('d1', false), dose('d2', true)], [{ id: 'k1', slotAt: 1700000000, reason: 'skipped' }]);
+      apiMock.delete = jest.fn().mockReturnValue(of({ deleted: true, unlinkedDoseCount: 2, removedSkipCount: 1 }));
+      const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+
+      fixture.componentInstance.deleteSchedule();
+      const message = confirm.mock.calls[0][0] as string;
+      expect(message).toContain('Delete "Amoxicillin q8h"?');
+      expect(message).toContain('2 logged doses stay in the journal and the care record');
+      expect(message).toContain('1 skipped dose is removed');
+      expect(message).toContain('Mark complete keeps it');
+      expect(apiMock.delete).toHaveBeenCalledWith('/schedules/s1');
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'e1']);
+      confirm.mockRestore();
+    });
+
+    it('does nothing when the confirmation is declined', () => {
+      apiMock.delete = jest.fn();
+      const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      fixture.componentInstance.deleteSchedule();
+      expect(confirm.mock.calls[0][0]).toContain('No doses are logged on this schedule.');
+      expect(apiMock.delete).not.toHaveBeenCalled();
+      confirm.mockRestore();
+    });
+  });
 });

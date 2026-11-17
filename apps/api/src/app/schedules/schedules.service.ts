@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
@@ -8,7 +8,7 @@ import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
 import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
 import { RevisionsService } from '../revisions/revisions.service';
-import { InterventionSchedule, ScheduleDose, ScheduleDosesResponse, ScheduleSkip } from '@salud/shared/types';
+import { InterventionSchedule, ScheduleDeleteResponse, ScheduleDose, ScheduleDosesResponse, ScheduleSkip } from '@salud/shared/types';
 import { SkipScheduleDoseDto } from './dto/skip-schedule-dose.dto';
 import { persistScheduleState, scheduleStateFor } from './schedule-state';
 import { InterventionsService } from '../interventions/interventions.service';
@@ -139,30 +139,78 @@ export class SchedulesService {
     return this.pickSchedule(row);
   }
 
+  /**
+   * Edit a schedule (api.md → Intervention schedules → "Editing a schedule"): any subset of the
+   * create fields, checked on the merged result exactly as create checks the body. The edit
+   * replaces the plan as if it had always been so — adherence, missed and next due are recomputed
+   * over the whole course from the new timing; linked doses stay linked. `type` and the medicine
+   * cannot change once a dose is linked (409 SCHEDULE_HAS_DOSES): a dose of one medicine would
+   * otherwise count toward a schedule for another.
+   */
   async update(id: string, userId: string, dto: UpdateScheduleDto) {
     const row = await this.getRow(id, userId);
     const db = this.db.db as any;
 
-    const resolvedEpisodeId = dto.episodeId !== undefined ? dto.episodeId : row.episodeId;
-    const resolvedConditionId = dto.conditionId !== undefined ? dto.conditionId : row.conditionId;
-    if (resolvedEpisodeId && resolvedConditionId) {
+    // Required columns: null is not a value for them, only "not sent".
+    for (const key of ['type', 'label', 'startAt', 'status', 'timeZone'] as const) {
+      if (dto[key] === null) delete dto[key];
+    }
+
+    // Setting one timing mode clears the other, so the web can switch "every N hours" to "times a
+    // day" without sending both; both sent stays an explicit choice of the caller.
+    if (dto.frequencyHours != null && dto.explicitTimes === undefined) dto.explicitTimes = null;
+    if (dto.explicitTimes != null && dto.frequencyHours === undefined) dto.frequencyHours = null;
+
+    const merged = <K extends keyof UpdateScheduleDto>(key: K, column: string = key) =>
+      dto[key] !== undefined ? dto[key] : row[column];
+    const type = merged('type');
+
+    // A changed type clears the other type's fields: a dressing change has no medicine, and a dose
+    // no body location.
+    if (dto.type !== undefined && dto.type !== row.type) {
+      const cleared =
+        dto.type === 'medication_dose'
+          ? (['bodyLocation', 'side', 'dressingType'] as const)
+          : (['medicationId', 'medicationEmbodimentId', 'doseMg', 'doseMl', 'pillCount'] as const);
+      for (const key of cleared) if (dto[key] === undefined) (dto as any)[key] = null;
+    }
+
+    const typeChanges = dto.type !== undefined && dto.type !== row.type;
+    const medicineChanges = dto.medicationId !== undefined && (dto.medicationId ?? null) !== (row.medicationId ?? null);
+    if (typeChanges || medicineChanges) {
+      const linked = await db.select({ id: interventions.id }).from(interventions).where(eq(interventions.scheduleId, id)).limit(1);
+      if (linked.length) throw new ConflictException('SCHEDULE_HAS_DOSES');
+    }
+
+    if (type === 'medication_dose' && !merged('medicationId')) {
+      throw new BadRequestException('MEDICATION_ID_REQUIRED');
+    }
+    if (type === 'dressing_change' && !merged('bodyLocation')) {
+      throw new BadRequestException('BODY_LOCATION_REQUIRED');
+    }
+    if (merged('frequencyHours') == null && merged('explicitTimes') == null) {
+      throw new BadRequestException('FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED');
+    }
+    if (merged('episodeId') && merged('conditionId')) {
       throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
     }
     if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
       throw new BadRequestException('INVALID_TIME_ZONE');
     }
     // Checked against the merged result, as a correction is.
-    const merged = (key: keyof UpdateScheduleDto, column: string) => (dto[key] !== undefined ? dto[key] : row[column]);
     this.assertMissedDoseInstruction({
-      action: (merged('missedDoseAction', 'missedDoseAction') as any) ?? null,
-      cutoffHours: (merged('missedDoseCutoffHours', 'missedDoseCutoffHours') as any) ?? null,
-      courseEffect: (merged('missedDoseCourseEffect', 'missedDoseCourseEffect') as any) ?? null,
-      hasEnd: merged('endAt', 'endAt') != null || merged('endAfterOccurrences', 'endAfterOccurrences') != null,
+      action: (merged('missedDoseAction') as any) ?? null,
+      cutoffHours: (merged('missedDoseCutoffHours') as any) ?? null,
+      courseEffect: (merged('missedDoseCourseEffect') as any) ?? null,
+      hasEnd: merged('endAt') != null || merged('endAfterOccurrences') != null,
     });
 
     const updates: Record<string, any> = {};
     const directFields = [
+      'type',
       'label',
+      'episodeId',
+      'conditionId',
       'medicationId',
       'medicationEmbodimentId',
       'doseMg',
@@ -171,31 +219,65 @@ export class SchedulesService {
       'bodyLocation',
       'side',
       'dressingType',
+      'frequencyHours',
+      'timeZone',
       'endAfterOccurrences',
       'notes',
       'status',
+      'missedDoseAction',
+      'missedDoseCutoffHours',
+      'missedDoseCourseEffect',
     ] as const;
     for (const key of directFields) {
       if (dto[key] !== undefined) updates[key] = dto[key];
     }
-    if (dto.episodeId !== undefined) updates.episodeId = dto.episodeId;
-    if (dto.conditionId !== undefined) updates.conditionId = dto.conditionId;
-    if (dto.frequencyHours !== undefined) updates.frequencyHours = dto.frequencyHours;
-    if (dto.explicitTimes !== undefined) updates.explicitTimes = JSON.stringify(dto.explicitTimes);
-    if (dto.timeZone !== undefined) updates.timeZone = dto.timeZone;
+    if (dto.explicitTimes !== undefined) updates.explicitTimes = dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null;
+    if (dto.startAt !== undefined) updates.startAt = new Date(dto.startAt);
     if (dto.endAt !== undefined) updates.endAt = dto.endAt ? new Date(dto.endAt) : null;
-    if (dto.missedDoseAction !== undefined) updates.missedDoseAction = dto.missedDoseAction;
-    if (dto.missedDoseCutoffHours !== undefined) updates.missedDoseCutoffHours = dto.missedDoseCutoffHours;
-    if (dto.missedDoseCourseEffect !== undefined) updates.missedDoseCourseEffect = dto.missedDoseCourseEffect;
     if (dto.missedDoseNote !== undefined) updates.missedDoseNote = dto.missedDoseNote?.trim() || null;
 
     if (Object.keys(updates).length) {
-      await db.update(interventionSchedules).set(updates).where(eq(interventionSchedules.id, id));
+      await db.update(interventionSchedules).set({ ...updates, updatedAt: new Date() }).where(eq(interventionSchedules.id, id));
     }
     // Timing, status, end and instruction all move the next due moment; recompute from the result.
     await persistScheduleState(db, id);
 
     return this.get(id, userId);
+  }
+
+  /**
+   * Delete a schedule (api.md → Intervention schedules → "Deleting a schedule"). A hard delete of
+   * the plan, never of the care record: every linked dose stays, loses its link (`scheduleId`,
+   * `metadata.interventionScheduleId`, `metadata.scheduleLinked`) and gets a Revision of its prior
+   * state, so its History still shows the schedule it was on; its `doseSource` is left as it was.
+   * The schedule's skips are plan bookkeeping and go with it. One transaction.
+   */
+  async remove(id: string, userId: string): Promise<ScheduleDeleteResponse> {
+    await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const doses: any[] = await db.select().from(interventions).where(eq(interventions.scheduleId, id));
+    const skips: any[] = await db.select({ id: scheduleSkips.id }).from(scheduleSkips).where(eq(scheduleSkips.scheduleId, id));
+
+    // Snapshots before the transaction opens (RevisionsService.capture's contract).
+    const snapshots = new Map<string, any>();
+    for (const d of doses) snapshots.set(d.id, await this.interventionsService.get(d.id, userId));
+
+    await this.db.withTransaction(async (tx: any) => {
+      for (const d of doses) {
+        const m = d.metadata ? JSON.parse(d.metadata) : {};
+        m.interventionScheduleId = null;
+        delete m.scheduleLinked;
+        await this.revisionsService.capture('intervention', d.id, snapshots.get(d.id), userId, tx);
+        await tx
+          .update(interventions)
+          .set({ scheduleId: null, metadata: JSON.stringify(m), updatedAt: new Date() })
+          .where(eq(interventions.id, d.id));
+      }
+      await tx.delete(scheduleSkips).where(eq(scheduleSkips.scheduleId, id));
+      await tx.delete(interventionSchedules).where(eq(interventionSchedules.id, id));
+    });
+
+    return { deleted: true, unlinkedDoseCount: doses.length, removedSkipCount: skips.length };
   }
 
   async log(id: string, userId: string, dto: LogScheduleDto) {
