@@ -294,10 +294,13 @@ export class PatientMedsPage implements OnInit {
     // is a real action -- confirm, matching the care-team and patient delete convention.
     if (!window.confirm(`Remove the reaction "${r.description}"?`)) return;
     this.reactionsError.set(null);
-    this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}/reactions/${r.id}`).subscribe({
+    const id = this.patientId;
+    this.api.delete<{ deleted: boolean }>(`/patients/${id}/reactions/${r.id}`).subscribe({
       // Through the store, so the hub header's danger pills drop the reaction at the same moment
-      // this list does.
-      next: () => this.store.reactions.set(this.store.reactions().filter((x) => x.id !== r.id)),
+      // this list does — unless the hub has since moved on to another patient.
+      next: () => {
+        if (this.store.isCurrent(id)) this.store.reactions.set(this.store.reactions().filter((x) => x.id !== r.id));
+      },
       error: (err) => this.reactionsError.set(errorText(err, 'Could not remove the reaction.')),
     });
   }

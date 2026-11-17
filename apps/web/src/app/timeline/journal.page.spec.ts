@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
-import { ActivatedRoute, Router } from '@angular/router';
+import { Router } from '@angular/router';
+import { PatientHubStore } from '../patients/patient-hub.store';
 import { JournalPage } from './journal.page';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
@@ -96,7 +97,8 @@ describe('JournalPage', () => {
       providers: [
         { provide: ApiClientService, useValue: apiMock },
         { provide: Router, useValue: routerMock },
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 'p1']]) } } },
+        // Only the id is read off the hub store; the shell owns loading it.
+        { provide: PatientHubStore, useValue: { patientId: () => 'p1' } },
       ],
     }).compileComponents();
   });

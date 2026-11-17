@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router } from '@angular/router';
+import { Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
@@ -10,6 +10,7 @@ import { timeAgo } from '../core/relative-time';
 import { Episode, Medication, TimelineEntry, TimelineResponse, WhatsNewResponse } from '@salud/shared/types';
 import { JournalChartComponent } from './journal-chart.component';
 import { DocumentLinkComponent } from './document-link.component';
+import { PatientHubStore } from '../patients/patient-hub.store';
 
 /** One rendered line in the feed. */
 interface FeedRow {
@@ -205,10 +206,16 @@ function prefersChartOpen(): boolean {
 export class JournalPage implements OnInit {
   private readonly api = inject(ApiClientService);
   private readonly auth = inject(AuthService);
-  private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly store = inject(PatientHubStore);
 
-  patientId = this.route.snapshot.paramMap.get('id')!;
+  /**
+   * The hub's patient, like every other tab — not a route snapshot. The shell rebuilds the tab when
+   * the patient changes (patient-hub.shell.ts), so this never has to follow a change in place.
+   */
+  get patientId() {
+    return this.store.patientId();
+  }
 
   timeline = signal<TimelineResponse | null>(null);
   episodes = signal<Episode[]>([]);

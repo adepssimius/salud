@@ -1,6 +1,7 @@
 import { Route } from '@angular/router';
 import { authGuard, guestGuard } from './core/auth.guard';
 import { PatientHubStore } from './patients/patient-hub.store';
+import { REBUILD_ON_PARAM_CHANGE } from './core/route-reuse.strategy';
 
 // Every page is loaded lazily, including login. Importing them statically put all 21 pages — and
 // @angular/forms, which only pages use — into the initial bundle, which is what pushed it 72 kB past
@@ -218,6 +219,9 @@ export const appRoutes: Route[] = [
     // stale the moment the caregiver switches patients mid-entry.
     title: 'New observation',
     canActivate: [authGuard],
+    // The form reads its query params once; Quick log can re-enter it for another patient in place
+    // (core/route-reuse.strategy.ts).
+    data: { [REBUILD_ON_PARAM_CHANGE]: true },
   },
   // Correcting an entry (frontend.md → "Correcting an entry"). Declared before its `:id` sibling,
   // as the spec asks; a two-segment path never matches `observations/:id` anyway.
@@ -248,6 +252,8 @@ export const appRoutes: Route[] = [
       ),
     title: 'New intervention',
     canActivate: [authGuard],
+    // Same as `observations/new`: Quick log's dose path re-enters it in place for another patient.
+    data: { [REBUILD_ON_PARAM_CHANGE]: true },
   },
   {
     path: 'interventions/:id/edit',
