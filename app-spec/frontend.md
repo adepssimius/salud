@@ -99,6 +99,12 @@ rules follow:
   another patient's last dose, precisely because two children on the same medication at different
   amounts is the normal concurrent-illness case. Logging onto the wrong child's record is the most
   dangerous data error the UI can invite — worth a permanent pixel budget on every entry surface.
+- **What is on screen belongs to the patient in the URL.** Switching patients — from the sidebar
+  inside a hub, or from Quick log onto an entry form already open — replaces everything tied to
+  the previous patient at once: the hub header (name, age, sex, accent, chips) blanks until the new
+  patient loads, every tab reloads for the new patient, and an unsaved edit or entry for the
+  previous patient is discarded rather than carried over. A response that arrives for a patient no
+  longer on screen is dropped, never rendered.
 
 ### Patient hub
 
