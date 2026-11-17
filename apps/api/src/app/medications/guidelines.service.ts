@@ -28,6 +28,7 @@ export class GuidelinesService {
       doseMl: row.doseMl,
       pillCount: row.pillCount,
       frequencyPerDay: row.frequencyPerDay,
+      underDose: row.underDose ?? 'allowed',
       notes: row.notes ?? null,
     };
   }
@@ -58,6 +59,7 @@ export class GuidelinesService {
       doseMl: dto.doseMl ?? null,
       pillCount: dto.pillCount ?? null,
       frequencyPerDay: dto.frequencyPerDay ?? null,
+      underDose: dto.underDose ?? 'allowed',
       notes: dto.notes ?? null,
     });
     return this.get(id);
@@ -107,6 +109,7 @@ export class GuidelinesService {
       'doseMl',
       'pillCount',
       'frequencyPerDay',
+      'underDose',
       'notes',
     ] as const;
     for (const field of fields) {

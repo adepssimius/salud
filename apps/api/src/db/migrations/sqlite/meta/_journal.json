@@ -92,6 +92,13 @@
       "when": 1788035819888,
       "tag": "0012_white_the_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1794875305821,
+      "tag": "0013_fuzzy_wind_dancer",
+      "breakpoints": true
     }
   ]
 }

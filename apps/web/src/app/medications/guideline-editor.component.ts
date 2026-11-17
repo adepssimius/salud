@@ -1,7 +1,7 @@
 import { Component, EventEmitter, Input, OnInit, Output, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { GuidelineType, MedicationGuideline } from '@salud/shared/types';
+import { GuidelineType, GuidelineUnderDose, MedicationGuideline } from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { apiErrorCode, errorText } from '../core/error-display';
 import { dependentsFrom, dependentsText } from './catalog-dependents';
@@ -87,6 +87,18 @@ type NumericField = (typeof NUMERIC)[number];
         <span class="error small" *ngIf="showFieldError('maxMgPerDay')">Required for both guideline types.</span>
       </label>
 
+      <label class="field">
+        <span>Smaller doses</span>
+        <select formControlName="underDose">
+          <option value="allowed">Fine — it’s a maximum</option>
+          <option value="flagged">Flag — give the full dose</option>
+        </select>
+        <span class="muted small" *ngIf="form.controls.underDose.value === 'flagged'">
+          A dose more than 10% below {{ isWeightBased() ? 'the dose worked out from weight' : 'this dose' }} is
+          marked atypical.
+        </span>
+      </label>
+
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <div class="editor-actions">
@@ -168,6 +180,7 @@ export class GuidelineEditorComponent implements OnInit {
     // Required for both guideline types server-side (CreateGuidelineDto), and the reported
     // hole: with no validator here the form submitted blank, 400'd, and did nothing visible.
     maxMgPerDay: [null as number | null, Validators.required],
+    underDose: ['allowed' as GuidelineUnderDose],
   });
 
   // A signal, not `computed(() => this.form.controls.type.value)`. A control's `.value` is a plain
@@ -198,6 +211,7 @@ export class GuidelineEditorComponent implements OnInit {
         doseMl: g.doseMl,
         frequencyPerDay: g.frequencyPerDay,
         maxMgPerDay: g.maxMgPerDay,
+        underDose: g.underDose ?? 'allowed',
       });
     }
     this.form.controls.type.valueChanges.subscribe((type) => this.applyType(type));
@@ -239,7 +253,7 @@ export class GuidelineEditorComponent implements OnInit {
 
   createBody(): Record<string, unknown> {
     const val = this.form.getRawValue();
-    const body: Record<string, unknown> = { source: val.source, type: val.type };
+    const body: Record<string, unknown> = { source: val.source, type: val.type, underDose: val.underDose };
     for (const field of NUMERIC) body[field] = val[field] ?? undefined;
     return body;
   }
@@ -250,6 +264,7 @@ export class GuidelineEditorComponent implements OnInit {
     const val = this.form.getRawValue();
     const body: Record<string, unknown> = {};
     if (val.source.trim() !== g.source) body['source'] = val.source.trim();
+    if (val.underDose !== (g.underDose ?? 'allowed')) body['underDose'] = val.underDose;
     for (const field of this.fieldsForType()) {
       if ((val[field] ?? null) !== (g[field] ?? null)) body[field] = val[field];
     }

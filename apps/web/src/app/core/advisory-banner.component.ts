@@ -6,6 +6,8 @@ const REASON_LABELS: Record<string, string> = {
   exceeds_max_per_dose: 'exceeds max per dose',
   exceeds_max_per_day: 'exceeds max per day',
   interval_too_short: 'too soon since the last dose',
+  below_full_dose: 'below the full dose',
+  // Legacy: no longer produced (any hand-typed amount used to be flagged), kept so old rows read.
   override: 'no guideline followed',
 };
 
@@ -125,8 +127,11 @@ export class AdvisoryBannerComponent {
     if (this.advisory.type === 'stale_weight') {
       return 'Log a fresh weight before leaning on weight-based guidance.';
     }
-    if (this.advisory.type === 'atypical_dose' && payload['dailyTotalMg'] != null) {
-      return `Prospective daily total: ${payload['dailyTotalMg']} mg`;
+    if (this.advisory.type === 'atypical_dose') {
+      const parts: string[] = [];
+      if (payload['fullDoseMg'] != null) parts.push(`Full dose: ${payload['fullDoseMg']} mg`);
+      if (payload['dailyTotalMg'] != null) parts.push(`Prospective daily total: ${payload['dailyTotalMg']} mg`);
+      return parts.length ? parts.join(' · ') : null;
     }
     if (this.advisory.type === 'expired_embodiment' && payload['expiresAt']) {
       return `Expired ${new Date(payload['expiresAt'] * 1000).toLocaleDateString()}`;

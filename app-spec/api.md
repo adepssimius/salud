@@ -403,7 +403,8 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     ```
   - `doseSource` records **how the caregiver arrived at the amount**, not how good the amount is:
     `weight_based` and `age_based` mean they took the engine's number, `override` means they typed
-    their own, and `schedule` means the dose came from `POST /api/schedules/:scheduleId/log` — a
+    their own (provenance only — no value of `doseSource` is ever itself a reason to flag a dose),
+    and `schedule` means the dose came from `POST /api/schedules/:scheduleId/log` — a
     plan already set up rather than a decision made in the moment. A client only ever sends the first
     three; `schedule` is written by the schedule-log path itself.
   - The API runs the same dosing engine used by `POST .../dose-checks` (see "Dosing engine" below)
@@ -415,6 +416,14 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     - `weightKgUsed`, `ageMonthsUsed` — the patient's weight/age at `performedAt`.
     - `nextAllowedAt` — this dose's forward next-allowed time; `null` if no guideline supplied an
       interval.
+    - `amountMg`, when the body carries none, **derived from the selected embodiment**:
+      `amountMl × concentrationMgPerMl`, else `pillCount × strengthMgPerUnit`, rounded to 0.01 mg,
+      with `amountMgDerived: true`. With no embodiment, or one without the figure the amount needs,
+      nothing is derived and the amount checks are skipped. A body that sends both `amountMg` and a
+      volume keeps the `amountMg` it sent — the server does not adjudicate a mismatch between them
+      (the form keeps them consistent). Without this, a dose recorded as "10 mL" skipped the
+      per-dose maximum and never counted toward any later dose's daily total. `amountMl` and
+      `pillCount` are never derived server-side (see "mL derivation" below).
     - `isAtypical` + `atypicalReason` (comma-joined reason list; see `data-model.md` → "Data
       integrity rules" for the full rule set). Request is always accepted (N-3, P1) — the flag
       only indicates a warning was shown and the caregiver saved anyway.
@@ -447,7 +456,7 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     - **`metadata` may not name a key the service owns** (400 `RESERVED_METADATA_KEY`, body carries
       the offending `keys`). `metadata` is otherwise free-form and a client may park its own keys
       there, but the dosing engine's resolved fields (`isAtypical`, `atypicalReason`,
-      `nextAllowedAt`, `guidelineId`, `weightKgUsed`, `ageMonthsUsed`) and the validated top-level
+      `nextAllowedAt`, `guidelineId`, `weightKgUsed`, `ageMonthsUsed`, `amountMgDerived`) and the validated top-level
       fields (`medicationId`, `amountMg`, `side`, …) are the server's to write. Two things this
       closes: a client could otherwise hand back `isAtypical: false` over the verdict just
       computed — erasing the permanent trace that a dose didn't follow guidance (F-2.4), with
@@ -527,6 +536,13 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     that clears the atypical verdict writes nothing — the dose's `isAtypical` becomes `false`, and
     the earlier advisory stays as the record that a warning was shown. A correction that does not
     re-run the engine writes no advisory at all.
+  - **A derived `amountMg` follows its inputs.** When the stored `amountMg` was derived
+    (`amountMgDerived`) and the body does not send one, a change to `amountMl`, `pillCount` or
+    `medicationEmbodimentId` re-derives it and re-runs the engine. An entered `amountMg` is never
+    replaced by a derived one; sending `amountMg` makes it entered, and sending `amountMg: null` hands
+    it back to derivation (what the form sends when the caregiver changed the volume of a dose whose
+    mg was typed). A dose stored with a volume and no `amountMg` at all is derived on any correction
+    that re-runs the engine.
   - **Later doses are not re-checked.** A corrected dose can change what a later dose's
     `interval_too_short` or daily total would have been; those later doses keep the values they
     were logged with (data-model.md → "Data integrity rules").
@@ -542,9 +558,14 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
 - `POST /api/patients/:patientId/dose-checks`
   - **Preview only — computes, persists nothing.** Called debounced as the dose-entry form fills
     in; abandoning the form leaves no trace (see `advisories.md` → "Two lifecycles").
-  - Body: `{ medicationId, medicationEmbodimentId?, amountMg?, occurredAt?, excludeInterventionId? }`.
-    `amountMg` is optional — omit it to see guidance before an amount is chosen; the per-dose/per-day
-    threshold checks only run once an amount is supplied.
+  - Body: `{ medicationId, medicationEmbodimentId?, amountMg?, amountMl?, pillCount?, occurredAt?,
+    excludeInterventionId? }`. All three amounts are optional — omit them to see guidance before an
+    amount is chosen; the amount checks only run once there is an `amountMg`, sent or derived from
+    `amountMl`/`pillCount` exactly as the save path derives it, so a preview and the save it
+    previews always judge the same milligrams.
+  - An `atypical_dose` candidate is returned under exactly the rules the save applies
+    (data-model.md → "Data integrity rules") — none of them depends on `doseSource`, which this
+    body does not carry, so the preview and the saved verdict agree in every case.
   - `excludeInterventionId` (UUID) leaves that dose out of the prior-dose interval and daily-total
     checks, exactly as the correcting `PATCH /api/interventions/:interventionId` does; the dose
     correction form sends it so a dose is not checked against itself. It only ever matches this
@@ -591,6 +612,12 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
     the patient's age at `occurredAt` falls outside that range. An age-band guideline with no match
     for the patient's current age yields `guidance.ageBand: null` ("applicable only while the
     patient hasn't grown into adult dosing").
+  - **Below the full dose**: each applicable guideline also reports, through `underDose`, whether a
+    lower amount is fine. A guideline set to `'flagged'` judges an amount against its dose —
+    `computedMg` (weight-based) or `doseMg` (age-band) — and the amount is `below_full_dose` when it
+    is under 90% of that for every guideline that can judge it. The advisory payload then carries
+    `fullDoseMg`, the smallest such dose. Rule and rationale in data-model.md → "Data integrity
+    rules".
   - **Daily total**: sum of `amountMg` across the same patient's same-medication doses in the
     trailing 24 hours before `occurredAt`, plus the candidate amount if supplied.
   - **`nextAllowedAt`**: computed forward from `occurredAt` using the resolved guideline's
@@ -600,6 +627,9 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
     **selected embodiment**, and `null` when no embodiment was supplied or it has no concentration
     (tablets and capsules). The caregiver is holding a syringe, not a scale — and per the rule at the
     top of this section, the client never does guideline arithmetic, including this division.
+    (Converting the caregiver's *own* typed amount between mg, mL and pills is not guideline math:
+    the form does it with the shared `dose-amounts` helpers, the same code the API derives
+    `amountMg` with — frontend.md → "Dose entry".)
     `concentrationMgPerMl` is echoed so the UI can show its working.
     - **Rounding is syringe-realistic**: to the nearest 0.1 mL at or above 1 mL, and the nearest
       0.05 mL below — the graduations actually printed on a paediatric oral syringe. Reporting
@@ -723,15 +753,14 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
   - Advances `nextDueAt` forward from the logged dose's time using the schedule's interval.
     When `endAfterOccurrences` is reached, or the next `nextDueAt` would fall after `endAt`, the
     schedule's `status` becomes `completed` and `nextDueAt` becomes `null`.
-  - The logged dose is recorded with **`doseSource: 'schedule'`**, and is **not** flagged atypical
-    for it (data-model.md → "Data integrity rules") — it's executing a plan, not an ad-hoc
-    deviation. Magnitude/interval checks against any matching guideline still apply.
-    `'override'` would be the wrong label: a dose given exactly as the schedule specifies is the most
-    plan-conforming dose there is, and calling it an override misreads it in the ER Brief and muddies
-    the atypical-dose signal. The exemption itself is keyed on the dose having a `scheduleId`, not on
-    its `doseSource`, so this is a provenance fix and changes no flagging behavior.
-  - Existing rows written before this change carry `doseSource: 'override'` and are not rewritten.
-    They remain correctly un-flagged, since the exemption never depended on the value.
+  - The logged dose is recorded with **`doseSource: 'schedule'`**. It is checked exactly like any
+    other dose — maximums, interval, and `below_full_dose` against a `'flagged'` guideline — since
+    every atypical rule judges the amount and the time, not how the amount was arrived at
+    (data-model.md → "Data integrity rules"). `'override'` would be the wrong label: a dose given
+    exactly as the schedule specifies is the most plan-conforming dose there is, and calling it an
+    override misreads it in the ER Brief.
+  - Existing rows written before `'schedule'` existed carry `doseSource: 'override'` and are not
+    rewritten.
 
 ## Timeline & dashboard
 - `GET /api/patients/:patientId/timeline`
@@ -1026,6 +1055,9 @@ rewrite what an existing amount means. So, on `PATCH /api/embodiments/:embodimen
     server-side per data-model.md's field list). `source` is **required** on every guideline — it is
     the provenance shown alongside the computed dose (N-4, P2); no guideline may be created without one.
     `medicationEmbodimentId` is optional (omit for a guideline that applies across embodiments).
+  - `underDose` (`'allowed'` | `'flagged'`, both types) is optional and defaults to `'allowed'`:
+    whether a dose below this guideline's dose is fine or flagged `below_full_dose`
+    (data-model.md → `MedicationGuideline`). `PATCH` takes it too.
   - Numeric fields are range-checked; a negative `mgPerKg` would feed a negative recommended dose.
   - On an `age_band` guideline, `ageMinMonths` must be ≤ `ageMaxMonths` — 400
     `GUIDELINE_AGE_RANGE_INVALID`. An inverted band can never match any patient, and it fails
@@ -1601,16 +1633,16 @@ sentence silently falls back to that call site's generic message rather than rea
 
 ### Dosing warnings are not error codes
 `atypical_dose` is an advisory `type`, not an error — see "Dosing engine" above. A dose that exceeds
-guidance is still saved (`isAtypical=true`); the advisory's `payload.reasons` is an array of zero or
-more of `'override' | 'exceeds_max_per_dose' | 'exceeds_max_per_day' | 'interval_too_short'` (plural,
-since more than one can apply at once), alongside `amountMg` and `dailyTotalMg`. Front-end is
+guidance is still saved (`isAtypical=true`); the advisory's `payload.reasons` is an array of one or
+more of `'exceeds_max_per_dose' | 'exceeds_max_per_day' | 'interval_too_short' | 'below_full_dose'`
+(plural, since more than one can apply at once), alongside `amountMg` (the effective amount, entered
+or derived), `dailyTotalMg`, and `fullDoseMg` when `below_full_dose` is among them. Front-end is
 expected to surface these as warnings before the caregiver finalizes the save; the API never blocks
 on them.
 
-`'override'` is the one that isn't a magnitude problem: it records that the caregiver's amount
-followed neither computed guideline (data-model.md → "Data integrity rules"), which is a legitimate
-decision worth a permanent trace, not a mistake. It is suppressed when the dose carries a
-`scheduleId` — a scheduled dose is executing a plan.
+Rows written before 2026-11 may also carry `'override'`, once raised for any hand-typed amount
+regardless of size. It is no longer produced — how an amount was arrived at is provenance
+(`doseSource`), not a warning — but readers keep a label for it so old rows still read.
 
 ## Real-time considerations
 - No WebSocket in MVP. Front-end polls `/timeline` or `/dashboard`.

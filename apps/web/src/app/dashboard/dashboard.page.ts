@@ -796,7 +796,7 @@ export class DashboardPage implements OnInit {
     if (m.lastAmountMg != null) queryParams['amountMg'] = String(m.lastAmountMg);
     if (m.lastAmountMl != null) queryParams['amountMl'] = String(m.lastAmountMl);
     // How the caregiver arrived at that amount travels with it — otherwise the form's `override`
-    // default records every repeat as an ad-hoc deviation and flags it atypical.
+    // default records every repeat as a hand-typed amount, which misstates its provenance.
     if (m.lastDoseSource) queryParams['doseSource'] = m.lastDoseSource;
     this.router.navigate(['/interventions/new'], { queryParams });
   }

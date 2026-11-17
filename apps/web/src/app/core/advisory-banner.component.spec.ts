@@ -22,6 +22,22 @@ describe('AdvisoryBannerComponent', () => {
     expect(text).toContain('900');
   });
 
+  it('renders below_full_dose with the full dose it fell short of', async () => {
+    const fixture = await render({
+      type: 'atypical_dose',
+      severity: 'warning',
+      payload: { reasons: ['below_full_dose'], amountMg: 100, dailyTotalMg: 100, fullDoseMg: 180 },
+    });
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('below the full dose');
+    expect(text).toContain('Full dose: 180 mg');
+  });
+
+  it('still reads a legacy override reason on an old row', async () => {
+    const fixture = await render({ type: 'atypical_dose', severity: 'warning', payload: { reasons: ['override'] } });
+    expect(fixture.nativeElement.textContent).toContain('no guideline followed');
+  });
+
   it('renders stale_weight with days-since detail', async () => {
     const fixture = await render({
       type: 'stale_weight',

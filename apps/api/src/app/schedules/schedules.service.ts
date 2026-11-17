@@ -336,9 +336,8 @@ export class SchedulesService {
         medicationEmbodimentId: row.medicationEmbodimentId ?? undefined,
         // 'schedule', not 'override': a dose given exactly as the schedule specifies is the most
         // plan-conforming dose there is, and labelling it an override misreads it in the ER Brief
-        // and muddies the atypical-dose signal (api.md -> Intervention schedules). The atypical
-        // exemption itself keys on the scheduleId, not on this value, so nothing about flagging
-        // changes -- rows written before this value existed carry 'override' and stay exempt.
+        // (api.md -> Intervention schedules). Provenance only: the atypical checks judge the
+        // amount and time, so a scheduled dose is checked like any other.
         doseSource: 'schedule' as const,
         amountMg: row.doseMg ?? undefined,
         amountMl: row.doseMl ?? undefined,

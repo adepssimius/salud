@@ -209,9 +209,12 @@ export function describeEvent(
   if (entry.kind === 'intervention') {
     if (display.type === 'medication_dose') {
       const mg = display.metadata?.amountMg;
+      const ml = display.metadata?.amountMl;
+      // A dose recorded before mg was derived from the volume reads as its volume, not "? mg".
+      const amount = mg != null ? `${mg} mg` : ml != null ? `${ml} mL` : '? mg';
       const atypical = display.metadata?.isAtypical ? ' (atypical)' : '';
       const name = options.medicationNames?.get(display.metadata?.medicationId);
-      return name ? `${mg ?? '?'} mg ${name}${atypical}` : `medication dose — ${mg ?? '?'} mg${atypical}`;
+      return name ? `${amount} ${name}${atypical}` : `medication dose — ${amount}${atypical}`;
     }
     return `dressing change${display.metadata?.bodyLocation ? ` — ${display.metadata.bodyLocation}` : ''}`;
   }
