@@ -998,6 +998,24 @@ days cannot tell the two series apart, let alone read either one forwards. This 
   does not attempt a count. When a save would remove one or more tags, it shows a note beside the
   tag list, in the same register as the reaction form's tag-typo note: "Removing a tag can stop a
   reaction recorded against that tag from warning about this medication." Saving goes ahead.
+- **"Check repo catalog"** pulls in medications the repo ships (api.md → "Repo catalog"). A
+  secondary button on `/medications`, beside "+ Add medication". It calls the preview endpoint and
+  opens a panel, in `catalog-seed-preview.component.ts`, with three groups — **New medications**
+  (name, its forms and guideline count), **New forms** on medications already in the list, and
+  **New guidelines** on forms already in the list — each item a checkbox, **all ticked by default**.
+  A fourth group, **Already in your list**, is collapsed: each row names the medication or form and,
+  where the file says something different, lists the fields in words ("Description differs", with
+  both values on expand). Nothing in that group is selectable; the line under its heading says why
+  in one sentence: "Your list keeps your edits — change these on the medication itself if you want
+  the repo's version." An empty preview says "Your list already has everything in the repo catalog."
+  - **"Add selected (n)"** calls apply with the preview's `sourceHash` and the ticked
+    `selectionId`s, then reports in words ("Added 2 medications and 1 form") — naming anything
+    skipped because it was added meanwhile — and reloads the list. Unticking a new medication's
+    parent while its child is ticked is not possible: a new medication is one checkbox.
+  - On 409 `CATALOG_SEED_CHANGED` the panel says so and offers "Preview again"; it never re-applies
+    silently against a file the caregiver has not seen.
+  - The panel says where it looked, small and muted: the source URL and fetch time, so a
+    self-hoster can tell which repo answered.
 - **Errors** from these forms go through `core/error-display.ts`, which carries a sentence for
   `EMBODIMENT_CONCENTRATION_IN_USE` alongside the existing `MEDICATION_NAME_TAKEN`, `*_IN_USE`,
   `CONCENTRATION_*` and `GUIDELINE_AGE_RANGE_INVALID` codes.

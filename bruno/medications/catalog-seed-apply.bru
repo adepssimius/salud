@@ -1,0 +1,33 @@
+meta {
+  name: Repo Catalog Apply
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/catalog-seed/apply
+  body: json
+  auth: inherit
+}
+
+docs {
+  Adds the selected items from the preview. Run "Repo Catalog Preview" first: it stores the hash and
+  every offered selectionId. 409 CATALOG_SEED_CHANGED if the file changed since. Never updates or
+  deletes an existing row.
+}
+
+body:json {
+  {
+    "sourceHash": "{{catalogSeedHash}}",
+    "select": {{catalogSeedSelect}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

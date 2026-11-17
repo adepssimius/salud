@@ -30,8 +30,10 @@ yarn start:api && yarn start:web    # api on :3000, web on :4200 (proxies /api v
   suite against SQLite. CI runs both legs — see "Migrations" below for why that matters.
 - `yarn lint:api` / `yarn lint:web`, `yarn build:api` / `yarn build:web`, `yarn e2e:api` / `yarn e2e:web`
 - `yarn seed:test-user` — creates `test@example.com` / password `test`
-- `yarn seed:catalog` — acetaminophen + ibuprofen with embodiments and both guideline types
-  (`tools/seed-catalog.ts`, idempotent by medication name). Dose guidance does nothing without it.
+- `yarn seed:catalog` — adds whatever is missing from `catalog/medication-catalog.json` (the repo
+  catalog: acetaminophen + ibuprofen with both guideline types, plus the creams) through the same
+  reconcile code the API uses, then the chart overlay defaults (`tools/seed-catalog.ts`). Only ever
+  inserts. Dose guidance does nothing without a catalog.
 - `yarn drizzle-kit generate --config=drizzle.config.ts` then `yarn drizzle-kit migrate --config=drizzle.config.ts`
   — generate/apply **once per dialect** (`DB_CLIENT=sqlite`/`DB_CLIENT=postgres`); see "Migrations".
 - `yarn migrate:attachments` — copies attachment blobs between storage backends (local⇄s3, s3⇄s3),
@@ -80,8 +82,13 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
   (incl. `POST /api/schedules/:id/log`), adverse reactions, advisories, revisions, files, dosing
   engine (`POST .../dose-checks`), timeline + dashboard, What's-New, ER Brief + frozen snapshots,
   care documents (living will / advance directive / medical PoA).
-- `yarn seed:catalog` seeds a starter medication catalog; without it every dose-guidance feature is
-  inert, since the catalog starts empty.
+- **Repo catalog.** New catalog medications ship as entries in `catalog/medication-catalog.json`,
+  merged to `main`. A deployed instance pulls them in from the Medication catalog page's "Check
+  repo catalog" (`POST /api/medications/catalog-seed/preview|apply`), which fetches the file from
+  `CATALOG_SEED_URL` (default: GitHub `main`), previews what is missing, and adds only what the
+  caregiver confirms — never updating or deleting a row, never at boot. Without it (or
+  `yarn seed:catalog` locally) every dose-guidance feature is inert, since the catalog starts empty.
+  See `app-spec/api.md` → "Repo catalog".
 - Web: auth, profile, patient detail + care team, new-observation/intervention, dashboard, the
   journal (attributed feed + collapsible chart + the since-you-last-looked marker, which replaced
   the What's-New page), episodes, conditions, schedules, medications, ER Brief + `/brief/:token`,
