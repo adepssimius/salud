@@ -46,6 +46,8 @@ export interface ScheduleState {
   missed: number;
   remainingOccurrences: number | null;
   overdue: boolean;
+  /** When the last planned dose falls; null when open-ended or nothing is next (data-model.md). */
+  courseEndsAt: number | null;
   missedDose: MissedDoseState | null;
 }
 
@@ -169,6 +171,8 @@ export function computeScheduleState(t: ScheduleTiming, doses: number[], skips: 
       ? null
       : Math.max(0, t.endAfterOccurrences - (t.courseEffect === 'end_on_date' ? covered : loggedCount));
 
+  const courseEndsAt = next != null ? lastPlannedDose(t, next, isGrid(t.action) ? next : Math.max(next, now), remainingOccurrences, end.endAt) : null;
+
   return {
     nextDueAt: next,
     completed,
@@ -178,8 +182,32 @@ export function computeScheduleState(t: ScheduleTiming, doses: number[], skips: 
     missed: Math.max(0, expectedCount - loggedCount - skippedCount),
     remainingOccurrences,
     overdue,
+    courseEndsAt,
     missedDose,
   };
+}
+
+/**
+ * The course's last planned dose, counted on from the next one: `remaining` doses for a count
+ * course, the last slot at or before `endAt` for a date course, whichever comes first. `from` is
+ * where the count starts — the next slot itself on a grid, or now when a late dose under "restart
+ * the clock" moves every dose after it. Null for an open-ended course: the app never invents an end.
+ */
+function lastPlannedDose(t: ScheduleTiming, next: number, from: number, remaining: number | null, endAt: number): number | null {
+  if (remaining == null && !Number.isFinite(endAt)) return null;
+  const more = remaining == null ? Infinity : Math.max(0, remaining - 1);
+  if (from > endAt) return next <= endAt ? next : null;
+  if (t.frequencyHours) {
+    const step = t.frequencyHours * HOUR;
+    return from + Math.min(more, Math.floor((endAt - from) / step)) * step;
+  }
+  let last = from;
+  for (let i = 0; i < Math.min(more, MAX_SLOTS); i++) {
+    const n = slotFrom(t, last, true);
+    if (n == null || n > endAt) break;
+    last = n;
+  }
+  return last;
 }
 
 /** The doses (by `performedAt`) and skipped slots of a schedule, as epoch seconds, ascending. */

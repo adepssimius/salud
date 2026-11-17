@@ -122,6 +122,7 @@ export async function toScheduleView(db: any, row: any, episodeIds?: string[]): 
       missed: state.missed,
       remainingOccurrences: state.remainingOccurrences,
       overdue: state.overdue,
+      courseEndsAt: state.courseEndsAt,
     },
   };
 }

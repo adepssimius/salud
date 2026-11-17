@@ -818,8 +818,10 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     `endAfterOccurrences`; a finished course stops accruing missed doses),
     `loggedCount` (doses actually logged against this schedule, via `intervention.scheduleId`),
     `missed` (`max(0, expectedCount - loggedCount)`), `remainingOccurrences`
-    (`endAfterOccurrences - loggedCount`, `null` for open-ended schedules), and `overdue`
-    (`nextDueAt` in the past while `status = 'active'`).
+    (`endAfterOccurrences - loggedCount`, `null` for open-ended schedules), `overdue`
+    (`nextDueAt` in the past while `status = 'active'`), and `courseEndsAt` (when the last planned
+    dose falls, epoch seconds; `null` when open-ended, completed or paused — data-model.md →
+    `ScheduleAdherence`).
 - `GET /api/schedules/:scheduleId` — same shape, single schedule.
 - `PATCH /api/schedules/:scheduleId` — see "Editing a schedule" below.
 - `DELETE /api/schedules/:scheduleId` — see "Deleting a schedule" below.

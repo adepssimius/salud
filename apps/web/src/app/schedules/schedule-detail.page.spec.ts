@@ -89,6 +89,56 @@ describe('ScheduleDetailPage', () => {
     expect(text).toContain('missed');
   });
 
+  // frontend.md → Schedule detail: the two day tiles count calendar days in the viewer's zone.
+  describe('day tiles', () => {
+    const dayAt = (offsetDays: number, h: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offsetDays);
+      d.setHours(h, 0, 0, 0);
+      return Math.floor(d.getTime() / 1000);
+    };
+    const tiles = (schedule: any) => {
+      apiMock.get.mockReturnValue(of({ schedule, linked: [], candidates: [] }));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      return ([...fixture.nativeElement.querySelectorAll('.stat')] as HTMLElement[]).map(
+        (t) => `${t.querySelector('.stat-value')!.textContent!.trim()} ${t.querySelector('.stat-label')!.textContent!.trim()}`,
+      );
+    };
+    const withEnd = (over: any, courseEndsAt: number | null) => ({
+      ...baseSchedule,
+      ...over,
+      adherence: { ...baseSchedule.adherence, courseEndsAt },
+    });
+
+    it('counts calendar days since the start and to the last planned dose', () => {
+      // Started late on the 4th day back, ending early on the 6th day ahead: calendar days, not 24 h periods.
+      const t = tiles(withEnd({ startAt: dayAt(-4, 23) }, dayAt(6, 1)));
+      expect(t).toContain('4 days since start');
+      expect(t).toContain('6 days until done');
+      // Six tiles: logged, expected, missed, remaining, and the two day tiles.
+      expect(t).toHaveLength(6);
+    });
+
+    it('says one day, and today, in words', () => {
+      expect(tiles(withEnd({ startAt: dayAt(-1, 9) }, dayAt(1, 9)))).toEqual(expect.arrayContaining(['1 day since start', '1 day until done']));
+      expect(tiles(withEnd({ startAt: dayAt(0, 0) }, dayAt(0, 23)))).toEqual(expect.arrayContaining(['0 days since start', 'Today last dose']));
+      // An overdue last dose is today, never a negative count.
+      expect(tiles(withEnd({}, dayAt(-2, 9)))).toContain('Today last dose');
+    });
+
+    it('counts to the start of a course not yet begun', () => {
+      expect(tiles(withEnd({ startAt: dayAt(3, 8) }, dayAt(9, 8)))).toContain('3 days until start');
+    });
+
+    it('says done or paused instead of a count, and shows no end for an open-ended course', () => {
+      expect(tiles(withEnd({ status: 'completed' }, null))).toContain('Done course complete');
+      expect(tiles(withEnd({ status: 'paused' }, null))).toContain('Paused resumes where it stopped');
+      const open = tiles(withEnd({ endAfterOccurrences: null, endAt: null }, null));
+      expect(open.some((x) => x.includes('until done'))).toBe(false);
+    });
+  });
+
   it('logNow posts to the log endpoint and updates the schedule from the response', () => {
     apiMock.post.mockReturnValue(
       of({ intervention: { id: 'int-1' }, schedule: { ...baseSchedule, adherence: { ...baseSchedule.adherence, loggedCount: 2 } } }),
