@@ -1,0 +1,33 @@
+meta {
+  name: Repo Catalog Preview
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/catalog-seed/preview
+  body: none
+  auth: inherit
+}
+
+docs {
+  Fetches catalog/medication-catalog.json from CATALOG_SEED_URL (default: the repo on GitHub main)
+  and reports what it would add. Writes nothing. See app-spec/api.md -> "Repo catalog".
+}
+
+script:post-response {
+  bru.setVar('catalogSeedHash', res.body.sourceHash);
+  bru.setVar('catalogSeedSelect', JSON.stringify(
+    [...res.body.newMedications, ...res.body.newEmbodiments, ...res.body.newGuidelines].map((i) => i.selectionId)
+  ));
+}
+
+assert {
+  res.status: eq 200
+  res.body.sourceHash: isNotEmpty
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

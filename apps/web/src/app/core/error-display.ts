@@ -36,6 +36,15 @@ export const ERROR_SENTENCES = {
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
+  // Repo catalog (api.md → "Repo catalog"). The detail (which host, which field) is in the api's
+  // log for whoever maintains the instance; the caregiver gets what to do next.
+  CATALOG_SEED_CHANGED:
+    'The repo catalog changed after you previewed it, so nothing was added. Preview again to see the current list.',
+  CATALOG_SEED_INVALID:
+    "The repo catalog file couldn't be read — it may be from a newer version of Salud. Nothing was added; try again after the next update.",
+  CATALOG_SEED_NOT_CONFIGURED: 'Checking the repo catalog is turned off on this server.',
+  CATALOG_SEED_UNAVAILABLE:
+    "The repo catalog couldn't be reached just now. Nothing was added; try again in a minute.",
   CONCENTRATION_INPUT_CONFLICT:
     'Give the concentration one way or the other: either as it is printed (mg per mL) or as a single mg/mL figure, not both.',
   CONCENTRATION_OUT_OF_RANGE:

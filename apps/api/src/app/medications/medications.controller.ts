@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -23,6 +24,8 @@ import { CreateEmbodimentDto } from './dto/create-embodiment.dto';
 import { UpdateEmbodimentDto } from './dto/update-embodiment.dto';
 import { CreateGuidelineDto } from './dto/create-guideline.dto';
 import { UpdateGuidelineDto } from './dto/update-guideline.dto';
+import { ApplyCatalogSeedDto } from './dto/apply-catalog-seed.dto';
+import { CatalogSeedService } from './catalog-seed/catalog-seed.service';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -32,7 +35,23 @@ export class MedicationsController {
     private readonly medications: MedicationsService,
     private readonly embodiments: EmbodimentsService,
     private readonly guidelines: GuidelinesService,
+    private readonly catalogSeed: CatalogSeedService,
   ) {}
+
+  // Repo catalog (api.md → "Repo catalog"). POST, not GET, for preview too: it reaches out to
+  // another host on every call and must never be prefetched or cached. 200 on both — neither
+  // creates a resource of its own.
+  @Post('medications/catalog-seed/preview')
+  @HttpCode(200)
+  async previewCatalogSeed() {
+    return await this.catalogSeed.preview();
+  }
+
+  @Post('medications/catalog-seed/apply')
+  @HttpCode(200)
+  async applyCatalogSeed(@Body() dto: ApplyCatalogSeedDto) {
+    return await this.catalogSeed.apply(dto.sourceHash, dto.select);
+  }
 
   @Post('medications')
   async create(@Body() dto: CreateMedicationDto) {

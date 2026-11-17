@@ -5,11 +5,12 @@ import { Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 import { Medication } from '@salud/shared/types';
+import { CatalogSeedPreviewComponent } from './catalog-seed-preview.component';
 
 @Component({
   selector: 'app-medications-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, CatalogSeedPreviewComponent],
   template: `
     <div class="card">
       <h1>Medication Catalog</h1>
@@ -44,9 +45,14 @@ import { Medication } from '@salud/shared/types';
       </ng-template>
 
       <div class="new-med">
-        <button type="button" class="secondary" (click)="toggleNewForm()">
-          {{ showNewForm() ? 'Cancel' : '+ Add medication' }}
-        </button>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="toggleNewForm()">
+            {{ showNewForm() ? 'Cancel' : '+ Add medication' }}
+          </button>
+          <button type="button" class="secondary" (click)="showSeed.set(!showSeed())">
+            {{ showSeed() ? 'Hide repo catalog' : 'Check repo catalog' }}
+          </button>
+        </div>
         <form *ngIf="showNewForm()" [formGroup]="newForm" (ngSubmit)="createMedication()">
           <label class="field">
             <span>Name (generic)</span>
@@ -66,6 +72,8 @@ import { Medication } from '@salud/shared/types';
           <div class="error" *ngIf="error()">{{ error() }}</div>
         </form>
       </div>
+
+      <app-catalog-seed-preview *ngIf="showSeed()" (applied)="reload()" (closed)="showSeed.set(false)" />
     </div>
   `,
   styles: [
@@ -116,6 +124,11 @@ import { Medication } from '@salud/shared/types';
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.75rem;
       }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
       .new-med form {
         display: flex;
         flex-direction: column;
@@ -137,6 +150,7 @@ export class MedicationsPage implements OnInit {
   medications = signal<Medication[]>([]);
   query = signal('');
   showNewForm = signal(false);
+  showSeed = signal(false);
   saving = signal(false);
   error = signal<string | null>(null);
 
@@ -157,6 +171,10 @@ export class MedicationsPage implements OnInit {
         next: (res) => this.medications.set(res),
         error: () => this.medications.set([]),
       });
+  }
+
+  reload() {
+    this.load();
   }
 
   onQueryChange(event: Event) {
