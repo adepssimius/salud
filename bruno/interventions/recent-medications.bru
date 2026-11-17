@@ -18,6 +18,10 @@ docs {
 
   Empty until this patient has a dose logged in the last 14 days or an active medication
   schedule. `yarn seed:catalog` seeds the medications the dose guidance needs.
+
+  `canGiveAt` / `limitedBy` are the live "can I give it now?" — interval AND daily maximum, computed
+  at request time from the patient's latest dose (api.md → "Dosing engine" → "Live availability").
+  `nextAllowedAt` is the frozen interval only; nothing should read "can give now" off it.
 }
 
 script:pre-request {
@@ -34,6 +38,15 @@ script:pre-request {
 
 assert {
   res.status: eq 200
+}
+
+tests {
+  test("every row carries the live availability fields", function () {
+    for (const row of res.getBody()) {
+      expect(row).to.have.property('canGiveAt');
+      expect(row).to.have.property('limitedBy');
+    }
+  });
 }
 
 settings {

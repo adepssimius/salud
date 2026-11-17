@@ -10,6 +10,7 @@ import { errorText } from '../core/error-display';
 import {
   DashboardPayload,
   DashboardTemperaturePoint,
+  DoseLimitedBy,
   DoseSource,
   PatientAccentColor,
   TemperatureMethod,
@@ -34,6 +35,9 @@ interface SickMedication {
   medicationName: string;
   lastDoseAt: number;
   nextAllowedAt: number | null;
+  /** The live interval-and-daily-max answer every countdown here reads (api.md → "Live availability"). */
+  canGiveAt: number | null;
+  limitedBy: DoseLimitedBy | null;
   isAtypicalLastDose: boolean;
   /** The repeat-dose prefill, carried by both payload arrays (api.md → GET /api/dashboard). */
   lastEmbodimentId: string | null;
@@ -116,7 +120,7 @@ interface SickCard {
               <div class="nb-med" *ngFor="let m of c.medications">
                 <span class="nb-med-name">{{ m.medicationName }}</span>
                 <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
-                <span class="nb-count" [class.ready]="doseReady(m.nextAllowedAt)">{{ countdown(m.nextAllowedAt) }}</span>
+                <span class="nb-count" [class.ready]="doseReady(m.canGiveAt)">{{ countdown(m) }}</span>
               </div>
             </div>
           </div>
@@ -143,7 +147,7 @@ interface SickCard {
                  anything else on the card is. -->
             <p class="muted small" *ngIf="!c.medications.length">Nothing given in the last 24 hours.</p>
             <div class="dose-block" *ngFor="let m of c.medications">
-              <div class="dose-hero" [class.ready]="doseReady(m.nextAllowedAt)">{{ countdown(m.nextAllowedAt) }}</div>
+              <div class="dose-hero" [class.ready]="doseReady(m.canGiveAt)">{{ countdown(m) }}</div>
               <div class="dose-meta">
                 <span class="med-name">{{ m.medicationName }}</span>
                 <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
@@ -265,7 +269,7 @@ interface SickCard {
               <span class="med-name">{{ d.medicationName }}</span>
               <span class="pill pill-danger" *ngIf="d.isAtypicalLastDose">atypical</span>
               <span class="ago">{{ ago(d.lastDoseAt) }}</span>
-              <span class="next" [class.ready]="doseReady(d.nextAllowedAt)" *ngIf="nextDose(d.nextAllowedAt) as label">{{
+              <span class="next" [class.ready]="doseReady(d.canGiveAt)" *ngIf="nextDose(d) as label">{{
                 label
               }}</span>
             </div>
@@ -648,12 +652,12 @@ export class DashboardPage implements OnInit {
     for (const card of byPatient.values()) {
       // Soonest-actionable first inside the card too, so the hero countdown at the top of a card is
       // the next thing that card is asking for.
-      card.medications.sort((a, b) => nullsLast(a.nextAllowedAt) - nullsLast(b.nextAllowedAt) || b.lastDoseAt - a.lastDoseAt);
+      card.medications.sort((a, b) => nullsLast(a.canGiveAt) - nullsLast(b.canGiveAt) || b.lastDoseAt - a.lastDoseAt);
 
       const scheduleTimes = this.dashboard()!
         .upcomingSchedules.filter((s) => s.patientId === card.patientId)
         .map((s) => s.nextDueAt);
-      const candidates = [...card.medications.map((m) => m.nextAllowedAt), ...scheduleTimes].filter(
+      const candidates = [...card.medications.map((m) => m.canGiveAt), ...scheduleTimes].filter(
         (t): t is number => t != null,
       );
       card.nextActionableAt = candidates.length ? Math.min(...candidates) : null;
@@ -674,7 +678,7 @@ export class DashboardPage implements OnInit {
       card.lastTempMethod = methodByPatient.get(card.patientId) ?? null;
     }
 
-    // The top of the screen is the next thing to do — a "can give now" (a next-allowed already
+    // The top of the screen is the next thing to do — a "can give now" (a canGiveAt already
     // elapsed) sorts above a countdown still running, because a past timestamp is a smaller number.
     return Array.from(byPatient.values()).sort(
       (a, b) => nullsLast(a.nextActionableAt) - nullsLast(b.nextActionableAt) || a.patientName.localeCompare(b.patientName),
@@ -906,20 +910,24 @@ export class DashboardPage implements OnInit {
     return relativeTime(ts, this.nowTs());
   }
 
-  nextDose(ts: number | null) {
-    return nextDoseLabel(ts, this.nowTs());
+  nextDose(d: { canGiveAt: number | null; limitedBy: DoseLimitedBy | null }) {
+    return nextDoseLabel(d.canGiveAt, this.nowTs(), d.limitedBy);
   }
 
   /**
-   * The bare countdown the night board and the sick-card hero read: "can give now" / "in 1h 40m",
-   * without the "next dose" prefix the strip's fuller sentence carries.
+   * The bare countdown the night board and the sick-card hero read: "can give now" / "in 1h 40m" /
+   * "daily max · in 5h 10m", without the "next dose" prefix the strip's fuller sentence carries.
+   * Reads the live `canGiveAt`, never the frozen interval-only `nextAllowedAt` (api.md → "Dosing
+   * engine" → "Live availability").
    *
    * `null` is *no guidance*, not *cannot give* (api.md → GET /api/dashboard), so it says so in
    * words rather than rendering an em dash the caregiver has to interpret.
    */
-  countdown(nextAllowedAt: number | null) {
-    if (nextAllowedAt == null) return 'no interval given';
-    return this.doseReady(nextAllowedAt) ? 'can give now' : timeUntil(nextAllowedAt, this.nowTs());
+  countdown(m: { canGiveAt: number | null; limitedBy: DoseLimitedBy | null }) {
+    if (m.canGiveAt == null) return 'no interval given';
+    if (this.doseReady(m.canGiveAt)) return 'can give now';
+    const wait = timeUntil(m.canGiveAt, this.nowTs());
+    return m.limitedBy === 'daily_max' ? `daily max · ${wait}` : wait;
   }
 
   doseReady(ts: number | null) {
