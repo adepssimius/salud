@@ -342,7 +342,9 @@ export class PatientSettingsPage {
     const dto: UpdatePatientDto = { ...rest, ...(accentColor ? { accentColor } : {}) };
     this.api.patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, dto).subscribe({
       next: (p) => {
-        this.store.patient.set(p);
+        // Through acceptPatient: a save that answers after a switch to a sibling must not put
+        // this patient back in the hub's header.
+        this.store.acceptPatient(p);
         this.form.markAsPristine();
         this.savingPatient.set(false);
         this.saveMessage.set('Saved');
@@ -367,7 +369,7 @@ export class PatientSettingsPage {
       .patch<Patient, UpdateCodeStatusDto>(`/patients/${this.patientId}/code-status`, { codeStatus })
       .subscribe({
         next: (p) => {
-          this.store.patient.set(p);
+          this.store.acceptPatient(p);
           this.savingCodeStatus.set(false);
           this.editingCodeStatus.set(false);
         },
