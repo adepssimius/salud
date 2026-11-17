@@ -96,4 +96,29 @@ describe('AuthService', () => {
     expect(service.user()).toBeNull();
     expect(routerMock.navigateByUrl).toHaveBeenCalledWith('/login');
   });
+
+  describe('hasSession', () => {
+    const tokenWithExp = (exp: unknown) => `h.${btoa(JSON.stringify({ sub: 'u1', exp }))}.s`;
+
+    it('is false with no token', () => {
+      expect(service.hasSession()).toBe(false);
+    });
+
+    it('is true for an unexpired token', () => {
+      localStorage.setItem('salud_jwt', tokenWithExp(2_000_000_000));
+      expect(service.hasSession(1_000_000_000_000)).toBe(true);
+    });
+
+    it('drops an expired token and the user with it', () => {
+      localStorage.setItem('salud_jwt', tokenWithExp(1_000));
+      expect(service.hasSession(2_000_000)).toBe(false);
+      expect(service.token).toBeNull();
+      expect(service.user()).toBeNull();
+    });
+
+    it('leaves a token it cannot read to the server to judge', () => {
+      localStorage.setItem('salud_jwt', 'not-a-jwt');
+      expect(service.hasSession()).toBe(true);
+    });
+  });
 });
