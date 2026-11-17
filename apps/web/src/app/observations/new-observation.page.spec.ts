@@ -1,4 +1,6 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+import { EntryMetadataFormComponent } from './entry-metadata-form.component';
 import { of, throwError } from 'rxjs';
 import { NewObservationPage } from './new-observation.page';
 import { ApiClientService } from '../core/api-client.service';
@@ -357,6 +359,168 @@ describe('NewObservationPage', () => {
     });
   });
 
+  // frontend.md → "Entry list and the add-entry sheet".
+  describe('entry list and add-entry sheet', () => {
+    function renderFull() {
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/episodes')) return of([]);
+        return of([{ id: 'p1', fullName: 'Isla', dateOfBirth: '2020-01-01' }]);
+      });
+      apiMock.post.mockReturnValue(of({}));
+      const fixture = TestBed.createComponent(NewObservationPage);
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      const composer = () =>
+        fixture.debugElement.query(By.directive(EntryMetadataFormComponent))
+          .componentInstance as EntryMetadataFormComponent;
+      const click = (selector: string) => {
+        (el.querySelector(selector) as HTMLButtonElement).click();
+        fixture.detectChanges();
+      };
+      const sheetOpen = () => !!el.querySelector('.entry-sheet')?.classList.contains('open');
+      const rows = () => Array.from(el.querySelectorAll('.entries li')) as HTMLElement[];
+      return { fixture, el, composer, click, sheetOpen, rows };
+    }
+
+    it('starts with an empty list, a closed sheet and an Add entry button', () => {
+      const { el, sheetOpen, rows } = renderFull();
+      expect(rows().length).toBe(0);
+      expect(sheetOpen()).toBe(false);
+      expect(el.textContent).toContain('No entries yet');
+      expect(el.querySelector('button.add-entry')?.textContent?.trim()).toBe('Add entry');
+      // The composer has no Add button of its own here; the sheet's Save stands in for it.
+      expect(el.querySelector('app-entry-metadata-form .entry-builder > button.secondary')).toBeNull();
+    });
+
+    it('adds an entry from the sheet, closes it, and lists the entry', () => {
+      const { fixture, el, composer, click, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      expect(sheetOpen()).toBe(true);
+      expect(el.querySelector('#entry-sheet-title')?.textContent).toContain('Add entry');
+      composer().tempValue = 101.2;
+      click('.entry-sheet-panel .actions .primary');
+      expect(sheetOpen()).toBe(false);
+      expect(rows().length).toBe(1);
+      expect(rows()[0].textContent).toContain('101.2');
+      expect(fixture.componentInstance.entries()[0].type).toBe('temperature');
+    });
+
+    it('keeps the sheet open and says why when the entry is incomplete', () => {
+      const { el, click, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      click('.entry-sheet-panel .actions .primary');
+      expect(sheetOpen()).toBe(true);
+      expect(rows().length).toBe(0);
+      expect(el.querySelector('.entry-sheet .error')?.textContent).toContain('Temperature is required');
+    });
+
+    it('edits a listed entry in place through the sheet', () => {
+      const { fixture, el, composer, click, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      composer().tempValue = 99.5;
+      click('.entry-sheet-panel .actions .primary');
+      click('button.add-entry');
+      composer().entryType = 'heart_rate';
+      composer().numberValue = 120;
+      click('.entry-sheet-panel .actions .primary');
+
+      (rows()[0].querySelector('button.edit-entry') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(sheetOpen()).toBe(true);
+      expect(el.querySelector('#entry-sheet-title')?.textContent).toContain('Edit entry');
+      expect(composer().tempValue).toBe(99.5);
+      composer().tempValue = 100.4;
+      click('.entry-sheet-panel .actions .primary');
+
+      const entries = fixture.componentInstance.entries();
+      expect(entries.length).toBe(2);
+      expect(entries[0].metadata.value).toBe(100.4);
+      expect(entries[1].type).toBe('heart_rate');
+    });
+
+    it('removes a listed entry', () => {
+      const { fixture, composer, click, rows } = renderFull();
+      click('button.add-entry');
+      composer().tempValue = 99.5;
+      click('.entry-sheet-panel .actions .primary');
+      (rows()[0].querySelector('button[aria-label="Remove this entry"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(rows().length).toBe(0);
+    });
+
+    it('closes an untouched sheet without asking', () => {
+      const { el, click, sheetOpen } = renderFull();
+      click('button.add-entry');
+      click('.entry-sheet-panel .actions .secondary');
+      expect(sheetOpen()).toBe(false);
+      expect(el.querySelector('.entry-sheet-confirm')).toBeNull();
+    });
+
+    it('asks before discarding a half-filled entry, from Cancel, the scrim or Esc', () => {
+      const { fixture, el, composer, click, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      composer().tempValue = 98.6;
+
+      click('.entry-sheet-panel .actions .secondary');
+      expect(sheetOpen()).toBe(true);
+      expect(el.querySelector('.entry-sheet-confirm')?.textContent).toContain('Discard this entry?');
+      click('.entry-sheet-confirm .secondary:not(.discard)'); // Keep editing
+      expect(composer().tempValue).toBe(98.6);
+
+      click('.entry-sheet-scrim');
+      expect(el.querySelector('.entry-sheet-confirm')).not.toBeNull();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      fixture.detectChanges();
+      expect(el.querySelector('.entry-sheet-confirm')).toBeNull(); // Esc backs out of the question
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      fixture.detectChanges();
+      click('.entry-sheet-confirm .discard');
+      expect(sheetOpen()).toBe(false);
+      expect(rows().length).toBe(0);
+      expect(composer().tempValue).toBeNull();
+    });
+
+    it('does not ask when an edited entry is closed unchanged', () => {
+      const { fixture, el, composer, click, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      composer().tempValue = 99.5;
+      click('.entry-sheet-panel .actions .primary');
+      (rows()[0].querySelector('button.edit-entry') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      click('.entry-sheet-panel .actions .secondary');
+      expect(sheetOpen()).toBe(false);
+      expect(el.querySelector('.entry-sheet-confirm')).toBeNull();
+      expect(fixture.componentInstance.entries()[0].metadata.value).toBe(99.5);
+    });
+
+    it('saves the entry on Enter in one of its fields, never the observation', () => {
+      const { el, fixture, click, composer, sheetOpen, rows } = renderFull();
+      click('button.add-entry');
+      composer().tempValue = 100.1;
+      const input = el.querySelector('.entry-sheet input[name="tempValue"]') as HTMLInputElement;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      fixture.detectChanges();
+      expect(sheetOpen()).toBe(false);
+      expect(rows().length).toBe(1);
+      expect(apiMock.post).not.toHaveBeenCalled();
+    });
+
+    it('submits every listed entry with the observation', () => {
+      const { fixture, composer, click } = renderFull();
+      for (const v of [99.1, 100.2]) {
+        click('button.add-entry');
+        composer().tempValue = v;
+        click('.entry-sheet-panel .actions .primary');
+      }
+      click('button[type="submit"]');
+      const [path, payload] = apiMock.post.mock.calls[0];
+      expect(path).toBe('/patients/p1/observations');
+      expect(payload.entries.map((e: any) => e.metadata.value)).toEqual([99.1, 100.2]);
+      expect(fixture.componentInstance.entries().length).toBe(2);
+    });
+  });
+
   describe('episode attachment', () => {
     function renderWithEpisodes(episodes: Array<{ id: string; name: string }>) {
       routeMock.snapshot.queryParamMap = new Map([['patientId', 'p1']]);
@@ -432,6 +596,15 @@ describe('NewObservationPage', () => {
       const fixture = renderCompact('pain_score');
       const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
       expect(save?.textContent?.trim()).toBe('Save');
+    });
+
+    // Quick Log's verbs keep their inline composer: no list header, no sheet (frontend.md → Quick Log).
+    it('keeps the inline composer and has no add-entry sheet', () => {
+      const fixture = renderCompact('temperature');
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('.entry-sheet')).toBeNull();
+      expect(el.querySelector('button.add-entry')).toBeNull();
+      expect(el.querySelector('app-entry-metadata-form button.secondary')?.textContent?.trim()).toBe('Add entry');
     });
 
     it('ignores an entryType it does not offer as a verb', () => {

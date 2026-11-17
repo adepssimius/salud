@@ -152,11 +152,14 @@ describe('EditObservationPage', () => {
 
   it('changes an entry in the reader’s units, keeps its id, and echoes the lab result untouched', () => {
     const { fixture, form, el } = render();
-    const change = Array.from(el.querySelectorAll('button.change-entry')) as HTMLButtonElement[];
+    const change = Array.from(el.querySelectorAll('button.edit-entry')) as HTMLButtonElement[];
     // Only the temperature is changeable — the lab result is read-only.
     expect(change.length).toBe(1);
     change[0].click();
     fixture.detectChanges();
+    // Edit opens the add-entry sheet, prefilled (frontend.md → "Correcting an entry").
+    expect(el.querySelector('.entry-sheet')?.classList).toContain('open');
+    expect(el.querySelector('#entry-sheet-title')?.textContent).toContain('Edit entry');
 
     const composer = fixture.debugElement.query(By.directive(EntryMetadataFormComponent))
       .componentInstance as EntryMetadataFormComponent;
@@ -166,8 +169,9 @@ describe('EditObservationPage', () => {
     expect(composer.tempMethod).toBe('tympanic');
 
     composer.tempValue = 102.2;
-    composer.add();
+    (el.querySelector('.entry-sheet-panel .actions .primary') as HTMLButtonElement).click();
     fixture.detectChanges();
+    expect(el.querySelector('.entry-sheet')?.classList).not.toContain('open');
     save(fixture);
 
     const [, body] = apiMock.patch.mock.calls[0];
