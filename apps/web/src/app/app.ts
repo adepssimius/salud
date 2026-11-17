@@ -4,13 +4,25 @@ import { CommonModule } from '@angular/common';
 import { AuthService } from './core/auth.service';
 import { ApiClientService } from './core/api-client.service';
 import { QuickLogSheetComponent } from './quick-log/quick-log-sheet.component';
+import {
+  DeferredChunkFailedComponent,
+  StaleBuildBannerComponent,
+} from './core/stale-build-banner.component';
 import { Patient } from '@salud/shared/types';
 
 /** `/patients/<uuid>` — anything deeper is still inside that patient's hub. */
 const HUB_PATH = /^\/patients\/([0-9a-fA-F-]{36})(\/|$)/;
 
 @Component({
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, CommonModule, QuickLogSheetComponent],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    RouterLinkActive,
+    CommonModule,
+    QuickLogSheetComponent,
+    StaleBuildBannerComponent,
+    DeferredChunkFailedComponent,
+  ],
   selector: 'app-root',
   templateUrl: './app.html',
   styleUrl: './app.css',

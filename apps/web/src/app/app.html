@@ -37,6 +37,10 @@
     </nav>
   </header>
 
+  <!-- Only renders when a page's code could not be loaded even after the automatic reload
+       (core/stale-build.ts): the one visible answer to a click that would otherwise do nothing. -->
+  <app-stale-build-banner></app-stale-build-banner>
+
   <!-- The two-column grid is conditional on the rail, not just on the width: the rail is only
        rendered when signed in, and a grid with `13.5rem minmax(0, 1fr)` puts its single remaining
        child in the *first* track. Every signed-out desktop route — login, register, and the public
@@ -93,12 +97,16 @@
   </nav>
 
   <!-- Deferred so the sheet and its dependencies stay out of the initial bundle; the *ngIf is what
-       tears it down again, since a `when` trigger never reverts on its own. -->
+       tears it down again, since a `when` trigger never reverts on its own. The `@error` block is
+       not optional: without it a sheet chunk a deploy has replaced fails once with an opaque
+       NG0750 and then leaves the `+` dead and silent for the life of the tab. -->
   @defer (when quickLogOpen()) {
     <app-quick-log-sheet
       *ngIf="quickLogOpen()"
       [lockedPatientId]="hubPatientId()"
       (dismiss)="closeQuickLog()"
     ></app-quick-log-sheet>
+  } @error {
+    <app-deferred-chunk-failed></app-deferred-chunk-failed>
   }
 </main>
