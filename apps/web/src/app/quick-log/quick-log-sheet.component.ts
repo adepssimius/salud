@@ -34,8 +34,8 @@ const VERBS: Verb[] = [
  *
  * Patient scoping is the wrong-chart guard (frontend.md → "Patient identity"): pre-scoped inside a
  * hub, skipped entirely for a single-patient household, and otherwise chips ordered sick-first.
- * The chosen name stays pinned at the top of the sheet, and the form it hands off to names the
- * patient again on the save button.
+ * The chosen name stays pinned at the top of the sheet, and the form it hands off to pins it
+ * again at the top.
  */
 @Component({
   selector: 'app-quick-log-sheet',
