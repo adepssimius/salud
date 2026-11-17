@@ -566,6 +566,13 @@ derives from existing payloads:
   action that routes to `/interventions/new?scheduleId=...`, pre-filling patient, medication,
   embodiment, and amount from the schedule (F-4.2) — the caregiver still reviews and confirms
   before saving, consistent with every other dose entry.
+- **Fixed-time schedules carry the household's zone from the browser.** The new-schedule form
+  sends the browser's IANA zone as `timeZone` on every create (data-model.md →
+  `InterventionSchedule.timeZone`); there is no zone picker. The schedule page names the zone
+  beside the times only when it differs from the viewing browser's ("At 08:00, 20:00 ·
+  America/Chicago time"), so a caregiver reading from another zone isn't misled. A fixed-time
+  schedule with no stored zone (one that predates the field) says its times follow the server's
+  clock and offers a one-tap **"Use my time zone"** that `PATCH`es the browser's zone.
 - Shopping list: embodiments flagged `runningLow` across the household's catalog, each with a
   one-tap "Restocked" action (`POST /api/embodiments/:id/restock`).
 - Unacknowledged advisories surface here too. Still renders empty in practice today — every

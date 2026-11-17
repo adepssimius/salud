@@ -812,6 +812,9 @@ export interface InterventionSchedule {
   dressingType: string | null;
   frequencyHours: number | null;
   explicitTimes: string[] | null;
+  // IANA zone the explicitTimes are wall-clock times in. Null only on schedules created before
+  // the field existed; those read their times on the API server's clock (data-model.md).
+  timeZone: string | null;
   startAt: number; // epoch seconds
   endAfterOccurrences: number | null;
   endAt: number | null; // epoch seconds
@@ -839,6 +842,7 @@ export interface CreateScheduleDto {
   dressingType?: string;
   frequencyHours?: number;
   explicitTimes?: string[];
+  timeZone?: string; // IANA zone; the web sends the browser's
   startAt: string; // ISO datetime
   endAfterOccurrences?: number;
   endAt?: string; // ISO datetime
@@ -859,6 +863,7 @@ export interface UpdateScheduleDto {
   dressingType?: string;
   frequencyHours?: number;
   explicitTimes?: string[];
+  timeZone?: string; // IANA zone; the web sends the browser's
   endAfterOccurrences?: number;
   endAt?: string | null;
   notes?: string;

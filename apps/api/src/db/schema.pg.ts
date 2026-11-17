@@ -376,6 +376,9 @@ export const interventionSchedules = pgTable('intervention_schedules', {
   dressingType: text('dressing_type'),
   frequencyHours: doublePrecision('frequency_hours'),
   explicitTimes: text('explicit_times'), // JSON array of times
+  // IANA zone the explicitTimes are wall-clock times in (data-model.md → InterventionSchedule).
+  // Null only on rows that predate the column; those fall back to the server's own zone.
+  timeZone: text('time_zone'),
   startAt: timestamp('start_at', { withTimezone: true, mode: 'date' }).notNull(),
   endAfterOccurrences: integer('end_after_occurrences'),
   endAt: timestamp('end_at', { withTimezone: true, mode: 'date' }),

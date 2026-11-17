@@ -9,10 +9,14 @@ import { LogScheduleDto } from './dto/log-schedule.dto';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs, toDate } from '../persistence/time';
+import { isValidTimeZone, serverTimeZone, zonedDate, zonedWallTimeToInstant } from './zoned-time';
 
 interface TimingConfig {
   frequencyHours: number | null;
   explicitTimes: string[] | null;
+  // The zone explicitTimes are wall-clock times in. Null only on rows that predate the column,
+  // which keep the server-clock reading they always had (data-model.md → InterventionSchedule).
+  timeZone: string | null;
 }
 
 @Injectable()
@@ -35,18 +39,28 @@ export class SchedulesService {
   }
 
   // Finds the next occurrence of any HH:MM in `times`, at-or-after `from` (or strictly after,
-  // when advancing past a just-logged dose).
-  private nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean): Date {
+  // when advancing past a just-logged dose). The times are wall-clock times in `timeZone`.
+  private nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean, timeZone: string | null): Date {
+    const zone = timeZone ?? serverTimeZone();
     const sorted = [...times].sort();
     const fromMs = from.getTime();
+    const start = zonedDate(fromMs, zone);
+    // Walk calendar days in the schedule's zone, starting on `from`'s own local date: no slot on
+    // an earlier local date can fall at or after `from`.
     for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+      const day = new Date(Date.UTC(start.year, start.month - 1, start.day + dayOffset));
       for (const t of sorted) {
         const [h, m] = t.split(':').map(Number);
-        const candidate = new Date(from);
-        candidate.setDate(from.getDate() + dayOffset);
-        candidate.setHours(h, m, 0, 0);
-        const ok = strictlyAfter ? candidate.getTime() > fromMs : candidate.getTime() >= fromMs;
-        if (ok) return candidate;
+        const candidateMs = zonedWallTimeToInstant(
+          day.getUTCFullYear(),
+          day.getUTCMonth() + 1,
+          day.getUTCDate(),
+          h,
+          m,
+          zone,
+        );
+        const ok = strictlyAfter ? candidateMs > fromMs : candidateMs >= fromMs;
+        if (ok) return new Date(candidateMs);
       }
     }
     // Unreachable with valid HH:MM input; fail safe rather than throw mid-schedule-math.
@@ -60,7 +74,7 @@ export class SchedulesService {
       return new Date(base + offsetMs);
     }
     if (timing.explicitTimes && timing.explicitTimes.length) {
-      return this.nextExplicitTime(timing.explicitTimes, from, strictlyAfter);
+      return this.nextExplicitTime(timing.explicitTimes, from, strictlyAfter, timing.timeZone);
     }
     return null;
   }
@@ -97,11 +111,12 @@ export class SchedulesService {
         expectedCount = Math.floor(elapsedHours / row.frequencyHours) + 1;
       } else if (row.explicitTimes) {
         const times: string[] = JSON.parse(row.explicitTimes);
-        let cursor = this.nextExplicitTime(times, startAt, false);
+        const zone: string | null = row.timeZone ?? null;
+        let cursor = this.nextExplicitTime(times, startAt, false, zone);
         let guard = 0;
         while (cursor.getTime() <= now.getTime() && guard < 2000) {
           expectedCount++;
-          cursor = this.nextExplicitTime(times, cursor, true);
+          cursor = this.nextExplicitTime(times, cursor, true, zone);
           guard++;
         }
       }
@@ -137,6 +152,7 @@ export class SchedulesService {
       dressingType: row.dressingType ?? null,
       frequencyHours: row.frequencyHours ?? null,
       explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+      timeZone: row.timeZone ?? null,
       startAt: normalizeTs(row.startAt),
       endAfterOccurrences: row.endAfterOccurrences ?? null,
       endAt: normalizeTs(row.endAt),
@@ -165,6 +181,9 @@ export class SchedulesService {
     if (dto.episodeId && dto.conditionId) {
       throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
     }
+    if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
+      throw new BadRequestException('INVALID_TIME_ZONE');
+    }
 
     const db = this.db.db as any;
     const id = randomUUID();
@@ -172,6 +191,7 @@ export class SchedulesService {
     const timing: TimingConfig = {
       frequencyHours: dto.frequencyHours ?? null,
       explicitTimes: dto.explicitTimes ?? null,
+      timeZone: dto.timeZone ?? null,
     };
     const initialNextDueAt = this.computeNextDueAt(timing, startAtDate, false);
 
@@ -192,6 +212,7 @@ export class SchedulesService {
       dressingType: dto.dressingType ?? null,
       frequencyHours: dto.frequencyHours ?? null,
       explicitTimes: dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null,
+      timeZone: dto.timeZone ?? null,
       startAt: startAtDate,
       endAfterOccurrences: dto.endAfterOccurrences ?? null,
       endAt: dto.endAt ? new Date(dto.endAt) : null,
@@ -246,6 +267,9 @@ export class SchedulesService {
     if (resolvedEpisodeId && resolvedConditionId) {
       throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
     }
+    if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
+      throw new BadRequestException('INVALID_TIME_ZONE');
+    }
 
     const updates: Record<string, any> = {};
     const directFields = [
@@ -269,10 +293,14 @@ export class SchedulesService {
     if (dto.conditionId !== undefined) updates.conditionId = dto.conditionId;
     if (dto.frequencyHours !== undefined) updates.frequencyHours = dto.frequencyHours;
     if (dto.explicitTimes !== undefined) updates.explicitTimes = JSON.stringify(dto.explicitTimes);
+    if (dto.timeZone !== undefined) updates.timeZone = dto.timeZone;
     if (dto.endAt !== undefined) updates.endAt = dto.endAt ? new Date(dto.endAt) : null;
 
     const timingChanged =
-      dto.frequencyHours !== undefined || dto.explicitTimes !== undefined || dto.status !== undefined;
+      dto.frequencyHours !== undefined ||
+      dto.explicitTimes !== undefined ||
+      dto.timeZone !== undefined ||
+      dto.status !== undefined;
 
     if (timingChanged) {
       const newStatus = dto.status ?? row.status;
@@ -283,6 +311,7 @@ export class SchedulesService {
           frequencyHours: dto.frequencyHours !== undefined ? dto.frequencyHours : row.frequencyHours,
           explicitTimes:
             dto.explicitTimes !== undefined ? dto.explicitTimes : row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+          timeZone: dto.timeZone !== undefined ? dto.timeZone : row.timeZone ?? null,
         };
         const loggedCount = await this.loggedCount(id);
         let base: Date;
@@ -357,6 +386,7 @@ export class SchedulesService {
     const timing: TimingConfig = {
       frequencyHours: row.frequencyHours,
       explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+      timeZone: row.timeZone ?? null,
     };
     const loggedCount = await this.loggedCount(id);
     const next = this.computeNextDueAt(timing, performedAtDate, true);

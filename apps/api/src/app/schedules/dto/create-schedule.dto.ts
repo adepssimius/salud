@@ -79,6 +79,13 @@ export class CreateScheduleDto {
   @IsString({ each: true })
   explicitTimes?: string[];
 
+  // IANA zone (e.g. "America/Chicago") the explicitTimes are wall-clock times in. The web sends
+  // the browser's zone; an unknown zone is rejected in the service as INVALID_TIME_ZONE so the
+  // code reaches the user rather than a generic validation message.
+  @IsOptional()
+  @IsString()
+  timeZone?: string;
+
   // No @IsNotInFuture here, deliberately: a course starts and ends in the future by definition
   // (api.md -> Conventions). Same for endAt below.
   @IsDateString()

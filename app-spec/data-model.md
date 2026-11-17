@@ -587,6 +587,17 @@ episodes.
     - `dressingType: string | null`
   - `frequencyHours: decimal | null` (simple interval)
   - `explicitTimes: time[] | null` (for fixed times per day)
+  - `timeZone: string | null` — the IANA zone (e.g. `America/Chicago`) that `explicitTimes` are
+    wall-clock times in. **The household's zone comes from the schedule itself**, captured from
+    the creating browser's zone, not from the API server's clock, a user setting or a
+    deployment-wide `TZ` — the server (UTC on the cluster) has no idea where the household is,
+    and two caregivers must see the same due time for a shared schedule (P4). A schedule keeps
+    its zone when caregivers travel until someone changes it. Ignored by `frequencyHours`
+    schedules, which are intervals between instants. Across a DST change a slot that occurs
+    twice (fall back) is due at its first occurrence, and a slot that never occurs (spring
+    forward, e.g. 02:30) is due the length of the gap later (03:30). `null` only on schedules
+    created before the field existed: those read their times on the server's own zone, as they
+    always did, until a caregiver sets one (the schedule page offers the browser's zone).
   - `startAt: datetime`
   - `endAfterOccurrences: integer | null`
   - `endAt: datetime | null`

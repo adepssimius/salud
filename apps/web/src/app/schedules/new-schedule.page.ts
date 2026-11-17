@@ -385,6 +385,10 @@ export class NewSchedulePage implements OnInit {
       startAt: new Date(val.startAt).toISOString(),
       frequencyHours: explicitTimes ? undefined : val.frequencyHours ?? undefined,
       explicitTimes,
+      // Fixed times are wall-clock times where the household is; the server's clock is not that
+      // (data-model.md → InterventionSchedule.timeZone). Sent for interval schedules too, so the
+      // zone is already right if the timing later changes to fixed times.
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       endAfterOccurrences: val.endAfterOccurrences ?? undefined,
       endAt: val.endAt ? new Date(val.endAt).toISOString() : undefined,
       notes: val.notes || undefined,

@@ -377,6 +377,9 @@ export const interventionSchedules = sqliteTable('intervention_schedules', {
   dressingType: text('dressing_type'),
   frequencyHours: real('frequency_hours'),
   explicitTimes: text('explicit_times'), // JSON array of times
+  // IANA zone the explicitTimes are wall-clock times in (data-model.md → InterventionSchedule).
+  // Null only on rows that predate the column; those fall back to the server's own zone.
+  timeZone: text('time_zone'),
   startAt: integer('start_at', { mode: 'timestamp' }).notNull(),
   endAfterOccurrences: integer('end_after_occurrences'),
   endAt: integer('end_at', { mode: 'timestamp' }),
