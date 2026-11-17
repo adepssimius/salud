@@ -148,13 +148,21 @@ interface SickCard {
                 <span class="med-name">{{ m.medicationName }}</span>
                 <span class="pill pill-danger" *ngIf="m.isAtypicalLastDose">atypical</span>
                 <span class="ago">last dose {{ ago(m.lastDoseAt) }}</span>
-                <!-- "Same as last time", labeled with exactly what it will prefill — at 3 AM the
-                     button has to say what it is going to do. One button per active medication:
-                     the tylenol+ibuprofen alternation is the design case (frontend.md → Home). -->
-                <button type="button" class="secondary small" (click)="repeatDose(c.patientId, m)">
-                  ↻ {{ repeatLabel(m) }}
-                </button>
               </div>
+              <!-- "Same as last time", labeled with exactly what it will prefill — at 3 AM the
+                   button has to say what it is going to do. One button per active medication:
+                   the tylenol+ibuprofen alternation is the design case (frontend.md → Home). It is
+                   the card's main action, so it is the filled one, sitting under the countdown it
+                   answers rather than trailing the meta line. -->
+              <button
+                type="button"
+                class="primary small repeat-dose"
+                [attr.aria-label]="repeatAriaLabel(c, m)"
+                (click)="repeatDose(c.patientId, m)"
+              >
+                <span class="repeat-amount">{{ repeatLabel(m) }}</span>
+                <span class="repeat-bottle" *ngIf="m.lastEmbodimentLabel">{{ m.lastEmbodimentLabel }}</span>
+              </button>
             </div>
 
             <!-- The curve is only readable as a measurement if it says what it is measured
@@ -205,7 +213,14 @@ interface SickCard {
               <span class="spark-latest" *ngIf="c.latest">
                 {{ c.latest.valueShown }} °{{ tempUnit() }} · {{ ago(c.latest.timestamp) }}
               </span>
-              <button type="button" class="secondary small" (click)="quickTemp(c)">Temp</button>
+              <button
+                type="button"
+                class="secondary small"
+                [attr.aria-label]="'Log temp for ' + c.patientName"
+                (click)="quickTemp(c)"
+              >
+                Log temp
+              </button>
             </div>
             <!-- Named in words as well as shaded: the colour alone doesn't say 36.1–37.2, and at
                  3 AM the number is what gets repeated down a phone to a nurse. -->
@@ -213,11 +228,18 @@ interface SickCard {
               <span *ngFor="let b of c.bands; let i = index">{{ i ? ' · ' : '' }}{{ bandTitle(b) }}</span>
             </p>
 
-            <!-- Temp lives beside the reading above, and each medication carries its own repeat
-                 button, so what is left here is the search-first path: a medication this card is
-                 not already showing. -->
+            <!-- "Log temp" lives beside the reading above, and each medication carries its own
+                 repeat button, so what is left here is the search-first path: a medication this
+                 card is not already showing. -->
             <div class="quick-actions">
-              <button type="button" class="secondary small" (click)="quickDose(c.patientId)">Dose</button>
+              <button
+                type="button"
+                class="secondary small"
+                [attr.aria-label]="'Log another dose for ' + c.patientName"
+                (click)="quickDose(c.patientId)"
+              >
+                Log another dose
+              </button>
             </div>
           </li>
         </ul>
@@ -396,6 +418,29 @@ interface SickCard {
       }
       .med-name {
         font-weight: 600;
+      }
+      /* Two lines — the amount, then the bottle — left-aligned under the countdown it answers. The
+         global .primary sets the 44px floor; this only stacks the lines and lets a long product
+         label wrap inside the button instead of widening the card. */
+      .repeat-dose {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 0.1rem;
+        align-self: flex-start;
+        max-width: 100%;
+        /* The space below separates this medication from the next one's countdown. */
+        margin: 0.35rem 0 0.6rem;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+        text-align: left;
+      }
+      .repeat-bottle {
+        font-size: 0.8rem;
+        font-weight: 400;
+        opacity: 0.85;
+        overflow-wrap: anywhere;
       }
       .ago {
         color: var(--text-muted);
@@ -801,13 +846,34 @@ export class DashboardPage implements OnInit {
     this.router.navigate(['/interventions/new'], { queryParams });
   }
 
-  /** The button says what it will prefill — "160 mg · Children's syrup" — or falls back to words. */
+  /**
+   * The repeat button's first line: the verb plus the amount it will prefill — "Repeat 160 mg ·
+   * 5 mL". The bottle goes on a second line of its own (the template), so a long product label
+   * never pushes the amount off a phone-width button. With no amount recorded the line still says
+   * what the tap does — "Repeat last dose" — and the bottle line, if any, says which one.
+   */
   repeatLabel(m: SickMedication): string {
+    const amount = this.repeatAmountParts(m);
+    return amount.length ? `Repeat ${amount.join(' · ')}` : 'Repeat last dose';
+  }
+
+  /**
+   * The visible label leans on the card around it — the medication name on the line above, the
+   * patient at the top. A screen reader landing on the button alone gets all of it.
+   */
+  repeatAriaLabel(card: SickCard, m: SickMedication): string {
+    // Commas, not the visible middot, which some screen readers voice as "middle dot".
+    const what = [m.medicationName, ...this.repeatAmountParts(m), m.lastEmbodimentLabel]
+      .filter(Boolean)
+      .join(', ');
+    return `Repeat ${what} for ${card.patientName}`;
+  }
+
+  private repeatAmountParts(m: SickMedication): string[] {
     const parts: string[] = [];
     if (m.lastAmountMg != null) parts.push(`${m.lastAmountMg} mg`);
     if (m.lastAmountMl != null) parts.push(`${m.lastAmountMl} mL`);
-    if (m.lastEmbodimentLabel) parts.push(m.lastEmbodimentLabel);
-    return parts.length ? parts.join(' · ') : 'Repeat dose';
+    return parts;
   }
 
   goToSchedule(scheduleId: string) {

@@ -564,12 +564,18 @@ describe('DashboardPage', () => {
         const sparkButtons = Array.from(
           fixture.nativeElement.querySelectorAll('.spark-wrap button'),
         ) as HTMLElement[];
-        expect(sparkButtons.map((b) => b.textContent!.trim())).toEqual(['Temp']);
+        expect(sparkButtons.map((b) => b.textContent!.trim())).toEqual(['Log temp']);
         // What is left below is the search-first path for a medication not already on the card.
         const bottom = Array.from(
           fixture.nativeElement.querySelectorAll('.quick-actions button'),
         ) as HTMLElement[];
-        expect(bottom.map((b) => b.textContent!.trim())).toEqual(['Dose']);
+        expect(bottom.map((b) => b.textContent!.trim())).toEqual(['Log another dose']);
+        // Both stay secondary: the filled button on a sick card is the repeat.
+        expect(sparkButtons[0].classList).toContain('secondary');
+        expect(bottom[0].classList).toContain('secondary');
+        // The visible text leans on the card; the accessible name carries the patient.
+        expect(sparkButtons[0].getAttribute('aria-label')).toBe('Log temp for Ada');
+        expect(bottom[0].getAttribute('aria-label')).toBe('Log another dose for Ada');
       });
 
       it('still offers Temp with no readings at all — that is exactly when one is wanted', () => {
@@ -578,7 +584,7 @@ describe('DashboardPage', () => {
           recentTemperatures: [{ patientId: 'p1', lastMethod: null, points: [] }],
         });
         expect(fixture.nativeElement.textContent).toContain('No temperature logged in the last 48 hours.');
-        expect(fixture.nativeElement.querySelector('.spark-wrap button')!.textContent!.trim()).toBe('Temp');
+        expect(fixture.nativeElement.querySelector('.spark-wrap button')!.textContent!.trim()).toBe('Log temp');
       });
 
       it('offers Temp and Dose quick actions scoped to that patient, landing on the compact forms', () => {
@@ -642,9 +648,18 @@ describe('DashboardPage', () => {
             fixture.nativeElement.querySelectorAll('.dose-block button'),
           ) as HTMLElement[];
           expect(buttons.length).toBe(2);
-          const labels = buttons.map((b) => b.textContent!.replace(/\s+/g, ' ').trim());
-          expect(labels).toContain("↻ 160 mg · 5 mL · Children's syrup");
-          expect(labels).toContain("↻ 160 mg · Children's syrup");
+          // Amount on the first line, the bottle on its own line beneath.
+          const lines = buttons.map((b) => [
+            b.querySelector('.repeat-amount')!.textContent!.trim(),
+            b.querySelector('.repeat-bottle')?.textContent!.trim() ?? null,
+          ]);
+          expect(lines).toContainEqual(['Repeat 160 mg · 5 mL', "Children's syrup"]);
+          expect(lines).toContainEqual(['Repeat 160 mg', "Children's syrup"]);
+          // The main action on a sick card is the filled one.
+          for (const b of buttons) expect(b.classList).toContain('primary');
+          expect(buttons.map((b) => b.getAttribute('aria-label'))).toContain(
+            "Repeat Tylenol, 160 mg, Children's syrup for Ada",
+          );
         });
 
         it('navigates with the same prefill contract Quick Log recents hand the dose form', () => {
@@ -669,7 +684,9 @@ describe('DashboardPage', () => {
         it('still offers a plain repeat when the last dose carries no amounts or embodiment', () => {
           const fixture = render({ activeEpisodes: [episode({ medications: [dose()] })] });
           const comp = fixture.componentInstance;
-          expect(fixture.nativeElement.textContent).toContain('Repeat dose');
+          const button = fixture.nativeElement.querySelector('.dose-block button') as HTMLElement;
+          expect(button.querySelector('.repeat-amount')!.textContent!.trim()).toBe('Repeat last dose');
+          expect(button.querySelector('.repeat-bottle')).toBeNull();
 
           comp.repeatDose('p1', comp.sickCards()[0].medications[0]);
           expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], {
