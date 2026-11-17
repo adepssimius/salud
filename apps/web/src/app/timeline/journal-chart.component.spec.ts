@@ -1,6 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import { AuthService } from '../core/auth.service';
-import { JournalChartComponent } from './journal-chart.component';
+import { GAP_BREAK_SECONDS, JournalChartComponent, WINDOW_SECONDS } from './journal-chart.component';
+
+// The fixtures sit at 1700000000; pin the chart's clock a few hours after them so they fall inside
+// its rolling 5-day window.
+const NOW = 1700000000 + 4 * 3600;
+const HOUR = 3600;
 
 const entries = [
   {
@@ -47,6 +52,7 @@ describe('JournalChartComponent', () => {
 
   function render(temperatureRanges: any[] = []) {
     const fixture = TestBed.createComponent(JournalChartComponent);
+    fixture.componentInstance.now.set(NOW);
     fixture.componentInstance.entries = entries;
     fixture.componentInstance.episodes = episodes;
     fixture.componentInstance.temperatureRanges = temperatureRanges;
@@ -134,6 +140,7 @@ describe('JournalChartComponent', () => {
 
     function renderTagged(overlayTags: string[], showAllDoses = false) {
       const fixture = TestBed.createComponent(JournalChartComponent);
+      fixture.componentInstance.now.set(NOW);
       fixture.componentInstance.entries = taggedEntries;
       fixture.componentInstance.episodes = [] as any;
       fixture.componentInstance.temperatureRanges = [];
@@ -240,5 +247,140 @@ describe('JournalChartComponent', () => {
     const text: string = fixture.nativeElement.textContent;
     expect(text.toLowerCase()).not.toContain('responsive');
     expect(text.toLowerCase()).not.toContain('effective');
+  });
+
+  // frontend.md → Timeline: a fixed rolling 5-day window ending now, a labeled time axis, and no
+  // line across a long gap except within an episode.
+  describe('fixed recent window', () => {
+    const temp = (id: string, at: number, value: number) => ({
+      id,
+      kind: 'observation',
+      type: 'temperature',
+      timestamp: at,
+      recordedBy: { id: 'u1', displayName: 'Dana' },
+      display: {
+        id,
+        observedAt: at,
+        createdAt: at,
+        entries: [{ type: 'temperature', metadata: { value, unit: 'C', method: 'oral' } }],
+      },
+    });
+    const dose = (id: string, at: number) => ({
+      id,
+      kind: 'intervention',
+      type: 'medication_dose',
+      timestamp: at,
+      recordedBy: { id: 'u1', displayName: 'Dana' },
+      display: { id, performedAt: at, createdAt: at, metadata: { medicationId: 'm1', amountMg: 160 } },
+    });
+
+    function renderAt(list: any[], opts: { episodes?: any[]; ranges?: any[]; overlayTags?: string[] } = {}) {
+      const fixture = TestBed.createComponent(JournalChartComponent);
+      fixture.componentInstance.now.set(NOW);
+      fixture.componentInstance.entries = list as any;
+      fixture.componentInstance.episodes = (opts.episodes ?? []) as any;
+      fixture.componentInstance.temperatureRanges = opts.ranges ?? [];
+      fixture.componentInstance.overlayTags = opts.overlayTags ?? [];
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    // The user's shape: a couple of readings two months back, then a cluster in the last day.
+    const twoMonthsAgo = NOW - 60 * 86400;
+    const shaped = [
+      temp('old-1', twoMonthsAgo, 41.0),
+      temp('old-2', twoMonthsAgo + HOUR, 34.0),
+      temp('new-1', NOW - 20 * HOUR, 38.4),
+      temp('new-2', NOW - 16 * HOUR, 38.9),
+      temp('new-3', NOW - 2 * HOUR, 37.8),
+      dose('old-dose', twoMonthsAgo),
+      dose('new-dose', NOW - 15 * HOUR),
+    ];
+
+    it('does not plot a reading older than the window, on either axis', () => {
+      const comp = renderAt(shaped).componentInstance;
+      expect(comp.temperaturePoints().map((p) => p.value)).toEqual([38.4, 38.9, 37.8]);
+      // 41.0 and 34.0 are outside the window: neither stretches the y-domain.
+      expect(comp.scaleHigh()).toBeLessThan(41);
+      expect(comp.scaleLow()).toBeGreaterThan(34);
+      // …nor the x-domain, which is the window and nothing else.
+      expect(comp.timeRange()).toEqual({ min: NOW - WINDOW_SECONDS, max: NOW });
+      expect(comp.doseMarkers().map((d) => d.timestamp)).toEqual([NOW - 15 * HOUR]);
+    });
+
+    it('spans the full window even with a single reading', () => {
+      const comp = renderAt([temp('only', NOW - HOUR, 38)]).componentInstance;
+      expect(comp.timeRange()).toEqual({ min: NOW - WINDOW_SECONDS, max: NOW });
+      const [p] = comp.temperaturePlotted();
+      // One hour before now, out of 120: right at the right-hand edge, not stretched to fill.
+      expect(p.x).toBeCloseTo(comp.chartWidth * (119 / 120), 5);
+    });
+
+    it('labels each local midnight in the window and "now" at the right edge', () => {
+      const fixture = renderAt(shaped);
+      const ticks = fixture.componentInstance.dayTicks();
+      // A rolling 120 hours always holds four or five local midnights.
+      expect(ticks.length).toBeGreaterThanOrEqual(4);
+      expect(ticks.length).toBeLessThanOrEqual(5);
+      for (const t of ticks) {
+        expect(new Date((NOW - WINDOW_SECONDS) * 1000 + (t.pct / 100) * WINDOW_SECONDS * 1000).getHours()).toBe(0);
+      }
+      const labels = Array.from(fixture.nativeElement.querySelectorAll('.time-axis-label')).map(
+        (el: any) => el.textContent.trim(),
+      );
+      expect(labels[labels.length - 1]).toBe('now');
+      expect(labels.length).toBe(ticks.filter((t) => t.showLabel).length + 1);
+      expect(fixture.nativeElement.querySelectorAll('.day-rule').length).toBe(ticks.length);
+    });
+
+    it("drops a midnight label that would run into 'now', keeping its rule", () => {
+      const fixture = TestBed.createComponent(JournalChartComponent);
+      // 1 AM local: today's midnight sits an hour from the right edge — under a pixel at 360px.
+      fixture.componentInstance.now.set(Math.floor(new Date(2023, 10, 15, 1, 0).getTime() / 1000));
+      const ticks = fixture.componentInstance.dayTicks();
+      expect(ticks[ticks.length - 1].showLabel).toBe(false);
+      expect(ticks.slice(0, -1).every((t) => t.showLabel)).toBe(true);
+    });
+
+    it('breaks the line across a gap over the threshold', () => {
+      // 20h → 16h before now is joined (4h); 16h → 2h is a 14h gap, over the 12h threshold.
+      expect(GAP_BREAK_SECONDS).toBe(12 * HOUR);
+      const fixture = renderAt(shaped);
+      expect(fixture.componentInstance.temperatureSegments()).toHaveLength(1);
+      expect(fixture.nativeElement.querySelectorAll('polyline.temp-line').length).toBe(1);
+      // Every reading still draws its point, joined or not.
+      expect(fixture.nativeElement.querySelectorAll('.temp-point').length).toBe(3);
+    });
+
+    it('joins readings inside the same episode however far apart', () => {
+      const episode = { id: 'ep', name: 'Fever', startedAt: NOW - 30 * HOUR, endedAt: null };
+      const comp = renderAt(shaped, { episodes: [episode] }).componentInstance;
+      expect(comp.temperatureSegments()).toHaveLength(1);
+      expect(comp.temperatureSegments()[0].split(' ')).toHaveLength(3);
+    });
+
+    it('still breaks a long gap that crosses an episode boundary', () => {
+      const ended = { id: 'ep', name: 'Fever', startedAt: NOW - 30 * HOUR, endedAt: NOW - 10 * HOUR };
+      const comp = renderAt(shaped, { episodes: [ended] }).componentInstance;
+      expect(comp.temperatureSegments()).toHaveLength(1);
+      expect(comp.temperatureSegments()[0].split(' ')).toHaveLength(2);
+    });
+
+    it('says so in a sentence when the window is empty, though older entries exist', () => {
+      const fixture = renderAt([temp('old', twoMonthsAgo, 39), dose('old-dose', twoMonthsAgo)], {
+        overlayTags: ['antipyretic'],
+      });
+      expect(fixture.nativeElement.querySelector('svg')).toBeNull();
+      expect(fixture.nativeElement.textContent).toContain('No temperature readings or doses in the last 5 days');
+      expect(fixture.nativeElement.querySelector('.chart-legend')).toBeNull();
+    });
+
+    it('still folds the band bounds into the windowed y-domain', () => {
+      const band = { id: 'r', kind: 'reference', label: 'Normal', low: 36.1, high: 37.2, refText: null, effectiveFrom: 0 };
+      const comp = renderAt(shaped, { ranges: [band] }).componentInstance;
+      expect(comp.scaleLow()).toBeLessThanOrEqual(36.1);
+      expect(comp.scaleHigh()).toBeGreaterThanOrEqual(38.9);
+      expect(comp.scaleHigh()).toBeLessThan(41);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, Output, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, ElementRef, EventEmitter, Input, Output, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../core/auth.service';
 import { convertTemp, unitsFor } from '../core/event-display';
@@ -28,6 +28,34 @@ interface EpisodeBand {
   width: number;
 }
 
+interface DayTick {
+  x: number;
+  /** Position as a percentage of the chart width, for the HTML label row beneath the SVG. */
+  pct: number;
+  label: string;
+  /** False when the label would collide with "now" at the right edge; the rule still draws. */
+  showLabel: boolean;
+}
+
+const HOUR = 3600;
+const DAY = 24 * HOUR;
+/** The fixed window the chart shows: a rolling 5 days ending now (frontend.md → Timeline). */
+export const WINDOW_SECONDS = 5 * DAY;
+/**
+ * Consecutive readings further apart than this are not joined — unless both sit inside the same
+ * episode's frame, where the curve is one story however sparse (frontend.md → Timeline).
+ */
+export const GAP_BREAK_SECONDS = 12 * HOUR;
+/**
+ * A midnight label closer than this to the right edge, in CSS pixels, would run into "now" (a
+ * "Mon 16" label plus "now" at the axis font size, with a little air). Pixels, not a percentage: the
+ * chart is a narrow column beside the feed on a desktop and nearly full width on a phone.
+ */
+const NOW_LABEL_CLEARANCE_PX = 70;
+/** The width assumed before the chart has been measured (and in jsdom, which never lays out). */
+const ASSUMED_WIDTH_PX = 360;
+const CLOCK_TICK_MS = 60_000;
+
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 260;
 const PLOT_TOP = 10;
@@ -55,11 +83,8 @@ const MIN_SPAN_C = 1.5;
   standalone: true,
   imports: [CommonModule],
   template: `
-    <svg
-      *ngIf="temperaturePoints().length || allDoseMarkersCount(); else empty"
-      [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight"
-      class="chart"
-    >
+    <ng-container *ngIf="temperaturePoints().length || allDoseMarkersCount(); else empty">
+    <svg [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight" class="chart">
       <!-- Episode frames -->
       <g>
         <rect
@@ -90,12 +115,18 @@ const MIN_SPAN_C = 1.5;
         <text [attr.x]="6" [attr.y]="band.y + 12" class="band-label">{{ bandTitle(band) }}</text>
       </g>
 
+      <!-- Local midnights, so a reader can count days without reading every label. -->
+      <line *ngFor="let t of dayTicks()" [attr.x1]="t.x" [attr.x2]="t.x" [attr.y1]="0"
+        [attr.y2]="chartHeight" class="day-rule" />
+
       <!-- Scale. A curve with no axis answers "how high is it" with a shape. -->
       <text [attr.x]="chartWidth - 4" [attr.y]="plotTop + 10" class="axis-label">{{ scaleHigh() }}°{{ tempUnit() }}</text>
       <text [attr.x]="chartWidth - 4" [attr.y]="plotBottom" class="axis-label">{{ scaleLow() }}°{{ tempUnit() }}</text>
 
       <!-- Temperature curve -->
-      <polyline *ngIf="temperaturePoints().length" [attr.points]="temperaturePolylinePoints()" class="temp-line" />
+      <!-- One polyline per run of joined readings: a long gap outside an episode breaks the line
+           rather than drawing readings nobody took. -->
+      <polyline *ngFor="let seg of temperatureSegments()" [attr.points]="seg" class="temp-line" />
       <g *ngFor="let p of temperaturePlotted()">
         <circle [attr.cx]="p.x" [attr.cy]="p.y" r="3" class="temp-point">
           <title>{{ p.value | number: '1.1-1' }}°{{ tempUnit() }} at {{ p.timestamp * 1000 | date: 'short' }}</title>
@@ -116,8 +147,17 @@ const MIN_SPAN_C = 1.5;
         </line>
       </g>
     </svg>
+    <!-- HTML, not SVG text: the SVG scales down to roughly half size on a phone and its text with
+         it, while these stay at the page's own small size. -->
+    <div class="time-axis" aria-hidden="true">
+      <ng-container *ngFor="let t of dayTicks()">
+        <span *ngIf="t.showLabel" class="time-axis-label" [style.left.%]="t.pct">{{ t.label }}</span>
+      </ng-container>
+      <span class="time-axis-label time-axis-now">now</span>
+    </div>
     <!-- Names which doses are drawn, in display terms. It says what is on the chart, never that
-         the doses did anything to the readings (P6). -->
+         the doses did anything to the readings (P6). Only beside a plot: with an empty window there
+         is nothing for it to name. -->
     <p class="chart-legend small muted" *ngIf="overlayLegend()">
       <span class="legend-mark" aria-hidden="true"></span>
       Showing {{ overlayLegend() }} by default.
@@ -125,8 +165,11 @@ const MIN_SPAN_C = 1.5;
         Show all doses
       </button>
     </p>
+    </ng-container>
     <ng-template #empty>
-      <p class="muted small">No temperature readings or doses in range yet.</p>
+      <p class="muted small">
+        No temperature readings or doses in the last 5 days — earlier entries are in the journal below.
+      </p>
     </ng-template>
   `,
   styles: [
@@ -199,6 +242,27 @@ const MIN_SPAN_C = 1.5;
         font-size: 11px;
         text-anchor: end;
       }
+      .day-rule {
+        stroke: rgba(148, 163, 184, 0.15);
+        stroke-width: 1;
+      }
+      .time-axis {
+        position: relative;
+        height: 1.1rem;
+        margin-top: 0.15rem;
+      }
+      .time-axis-label {
+        position: absolute;
+        top: 0;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+        padding-left: 3px;
+      }
+      .time-axis-now {
+        right: 0;
+        padding-left: 0;
+      }
       .dose-marker.atypical {
         stroke: #f87171;
       }
@@ -207,6 +271,34 @@ const MIN_SPAN_C = 1.5;
 })
 export class JournalChartComponent {
   private readonly auth = inject(AuthService);
+
+  /**
+   * The window's right edge, epoch seconds. Advances once a minute, so a journal left open overnight
+   * doesn't freeze its "now". Public so a spec can pin it.
+   */
+  readonly now = signal(Math.floor(Date.now() / 1000));
+  readonly windowStart = computed(() => this.now() - WINDOW_SECONDS);
+
+  /** The rendered width in CSS pixels, for deciding which axis labels fit. */
+  private readonly widthPx = signal(ASSUMED_WIDTH_PX);
+
+  constructor() {
+    const destroyRef = inject(DestroyRef);
+    const timer = setInterval(() => this.now.set(Math.floor(Date.now() / 1000)), CLOCK_TICK_MS);
+    destroyRef.onDestroy(() => clearInterval(timer));
+    if (typeof ResizeObserver !== 'undefined') {
+      const host = inject(ElementRef).nativeElement as HTMLElement;
+      const observer = new ResizeObserver(([entry]) => {
+        if (entry.contentRect.width > 0) this.widthPx.set(entry.contentRect.width);
+      });
+      observer.observe(host);
+      destroyRef.onDestroy(() => observer.disconnect());
+    }
+  }
+
+  private inWindow(ts: number): boolean {
+    return ts >= this.windowStart() && ts <= this.now();
+  }
 
   chartWidth = CHART_WIDTH;
   chartHeight = CHART_HEIGHT;
@@ -282,6 +374,8 @@ export class JournalChartComponent {
     for (const entry of this.entriesSignal()) {
       if (entry.kind !== 'observation') continue;
       const obs = entry.display as any;
+      // Outside the window means off both axes, not just off-screen (frontend.md → Timeline).
+      if (!this.inWindow(obs.observedAt)) continue;
       for (const e of obs.entries ?? []) {
         if (e.type !== 'temperature' || !e.metadata) continue;
         const value = convertTemp(e.metadata.value, e.metadata.unit === 'F' ? 'F' : 'C', displayUnit);
@@ -291,10 +385,13 @@ export class JournalChartComponent {
     return points.sort((a, b) => a.timestamp - b.timestamp);
   });
 
-  /** Every dose in range. What the chart *draws* is `doseMarkers` below, which may be a subset. */
+  /**
+   * Every dose in the window. What the chart *draws* is `doseMarkers` below, which may be a subset.
+   */
   private readonly allDoseMarkers = computed<DoseMarker[]>(() =>
     this.entriesSignal()
       .filter((e) => e.kind === 'intervention' && e.type === 'medication_dose')
+      .filter((e) => this.inWindow((e.display as any).performedAt))
       .map((e) => {
         const int = e.display as any;
         return {
@@ -350,18 +447,28 @@ export class JournalChartComponent {
     return `${names} doses`;
   });
 
-  private timeRange = computed<{ min: number; max: number }>(() => {
-    const timestamps = [
-      ...this.temperaturePoints().map((p) => p.timestamp),
-      ...this.doseMarkers().map((d) => d.timestamp),
-    ];
-    if (!timestamps.length) {
-      const now = Math.floor(Date.now() / 1000);
-      return { min: now - 7 * 86400, max: now };
+  /**
+   * Always the full window, however sparse the readings: the same width means the same span of time
+   * every time the chart is opened.
+   */
+  timeRange = computed<{ min: number; max: number }>(() => ({ min: this.windowStart(), max: this.now() }));
+
+  /** A rule and a "Thu 12" label at every local midnight inside the window. */
+  dayTicks = computed<DayTick[]>(() => {
+    const { min, max } = this.timeRange();
+    const ticks: DayTick[] = [];
+    // Walk back from today's midnight a local day at a time; stepping by an hour before midnight
+    // rather than a flat 86400 keeps the two DST days a year on their real midnights.
+    for (let d = startOfLocalDay(max); d > min; d = startOfLocalDay(d - HOUR)) {
+      const pct = ((d - min) / (max - min)) * 100;
+      ticks.unshift({
+        x: this.xScale(d),
+        pct,
+        label: new Date(d * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }),
+        showLabel: ((100 - pct) / 100) * this.widthPx() >= NOW_LABEL_CLEARANCE_PX,
+      });
     }
-    const min = Math.min(...timestamps);
-    const max = Math.max(...timestamps);
-    return min === max ? { min: min - 3600, max: max + 3600 } : { min, max };
+    return ticks;
   });
 
   private xScale(ts: number): number {
@@ -410,11 +517,32 @@ export class JournalChartComponent {
     this.temperaturePoints().map((p) => ({ ...p, x: this.xScale(p.timestamp), y: this.yScale(p.value) })),
   );
 
-  temperaturePolylinePoints = computed(() =>
-    this.temperaturePlotted()
-      .map((p) => `${p.x},${p.y}`)
-      .join(' '),
-  );
+  /**
+   * The curve as runs of joined readings, each a polyline `points` string. Only runs of two or more
+   * readings draw a line; a lone reading is still drawn as its point.
+   */
+  temperatureSegments = computed<string[]>(() => {
+    const runs: Array<Array<{ timestamp: number; x: number; y: number }>> = [];
+    for (const p of this.temperaturePlotted()) {
+      const run = runs[runs.length - 1];
+      const prev = run?.[run.length - 1];
+      if (prev && this.joined(prev.timestamp, p.timestamp)) run.push(p);
+      else runs.push([p]);
+    }
+    return runs.filter((r) => r.length > 1).map((r) => r.map((p) => `${p.x},${p.y}`).join(' '));
+  });
+
+  /**
+   * Whether two consecutive readings are connected: close enough in time, or both inside one
+   * episode's frame — the same start/end span the bands and the feed's dividers use.
+   */
+  private joined(a: number, b: number): boolean {
+    if (b - a <= GAP_BREAK_SECONDS) return true;
+    return this.episodesSignal().some((ep) => {
+      if (ep.startedAt == null || a < ep.startedAt) return false;
+      return ep.endedAt == null || b <= ep.endedAt;
+    });
+  }
 
   dosePlotted = computed(() => this.doseMarkers().map((d) => ({ ...d, x: this.xScale(d.timestamp) })));
 
@@ -433,6 +561,13 @@ export class JournalChartComponent {
       })
       .filter((b): b is EpisodeBand => b !== null);
   });
+}
+
+/** Midnight local time for an epoch-seconds instant. */
+function startOfLocalDay(epochSeconds: number): number {
+  const d = new Date(epochSeconds * 1000);
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
 }
 
 // One decimal — the precision a thermometer reports, and what the rest of the app shows.
