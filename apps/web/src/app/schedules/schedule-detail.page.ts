@@ -4,7 +4,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest, ScheduleDeleteResponse } from '@salud/shared/types';
-import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseAdvice } from './missed-dose-text';
+import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseActionHelp, missedDoseAdvice } from './missed-dose-text';
 import { localDaysBetween } from '../episodes/episode-course';
 
 interface DayTile {
@@ -46,6 +46,7 @@ interface DayTile {
       <div class="timing muted" *ngIf="!s.nextDueAt && s.status !== 'active'">No upcoming due date ({{ s.status }})</div>
       <div class="timing small instruction" *ngIf="summary(s) as text">
         <strong>If a dose is missed:</strong> {{ text }}<ng-container *ngIf="s.missedDoseNote"> — “{{ s.missedDoseNote }}”</ng-container>
+        <br /><span class="muted" data-testid="missed-dose-help">{{ actionHelp(s) }}</span>
         <ng-container *ngIf="s.missedDoseCourseEffect"><br />{{ effectLabels[s.missedDoseCourseEffect] }}</ng-container>
       </div>
 
@@ -476,6 +477,16 @@ export class ScheduleDetailPage implements OnInit {
 
   summary(s: InterventionSchedule): string | null {
     return instructionSummary(s.missedDoseAction, s.missedDoseCutoffHours);
+  }
+
+  /** What the instruction does to the later doses — the form's own help sentence. */
+  actionHelp(s: InterventionSchedule): string {
+    return missedDoseActionHelp(s.missedDoseAction, {
+      frequencyHours: s.frequencyHours ?? null,
+      daily: !s.frequencyHours && !!s.explicitTimes?.length,
+      endAfterOccurrences: s.endAfterOccurrences ?? null,
+      hasEndDate: s.endAt != null,
+    });
   }
 
   advice(m: MissedDoseState): string | null {

@@ -10,7 +10,7 @@ import { DoseGuidanceComponent } from '../interventions/dose-guidance.component'
 import { InfoTipComponent } from '../core/info-tip.component';
 import { PillCountInputComponent } from '../interventions/pill-count-input.component';
 import { defaultDailyTimes, scheduleName } from './schedule-name';
-import { MISSED_DOSE_ACTION_LABELS, MISSED_DOSE_COURSE_EFFECT_LABELS } from './missed-dose-text';
+import { MISSED_DOSE_ACTION_LABELS, MISSED_DOSE_COURSE_EFFECT_LABELS, MissedDoseHelpContext, courseEffectHelp, missedDoseActionHelp } from './missed-dose-text';
 import { debounceTime } from 'rxjs';
 import { toSignal } from '@angular/core/rxjs-interop';
 import {
@@ -231,6 +231,7 @@ import {
               <option *ngFor="let a of missedDoseActions" [value]="a">{{ actionLabels[a] }}</option>
             </select>
           </label>
+          <p class="muted small help" data-testid="missed-dose-help">{{ actionHelp() }}</p>
           <label class="inline-check" *ngIf="isTakeLate()">
             <span>Skip it instead if the next dose is within</span>
             <input class="short" type="number" step="0.5" min="0.25" formControlName="missedDoseCutoffHours" aria-label="Cutoff in hours" />
@@ -247,6 +248,7 @@ import {
               <option *ngFor="let e of courseEffects" [value]="e">{{ effectLabels[e] }}</option>
             </select>
           </label>
+          <p class="muted small help" *ngIf="hasEnd()" data-testid="course-effect-help">{{ effectHelp() }}</p>
           <label class="field" *ngIf="missedDoseActionValue()">
             <span>What the label or prescriber said (optional)</span>
             <input type="text" formControlName="missedDoseNote" placeholder="e.g. per the pharmacist, 11/16" />
@@ -370,6 +372,9 @@ import {
       }
       .how-often .inline-check {
         flex-wrap: wrap;
+      }
+      .how-often .help {
+        margin: -0.2rem 0 0;
       }
       .how-often input.short {
         width: 4.5rem;
@@ -496,6 +501,26 @@ export class NewSchedulePage implements OnInit, OnDestroy {
   private readonly actionSignal = toSignal(this.form.controls.missedDoseAction.valueChanges, { initialValue: this.form.controls.missedDoseAction.value });
   missedDoseActionValue = computed(() => this.actionSignal());
   isTakeLate = computed(() => this.actionSignal() === 'take_late_keep_times' || this.actionSignal() === 'take_late_restart');
+
+  /** The schedule as the form now describes it, for the missed-dose help text. */
+  private helpContext(): MissedDoseHelpContext {
+    const v = this.form.getRawValue();
+    return {
+      frequencyHours: v.frequencyMode === 'interval' ? v.frequencyHours : null,
+      daily: v.frequencyMode === 'daily',
+      endAfterOccurrences: v.endAfterOccurrences ?? null,
+      hasEndDate: !!v.endAt,
+    };
+  }
+
+  /** What the chosen instruction does — changes with the select (and with the timing above it). */
+  actionHelp(): string {
+    return missedDoseActionHelp(this.form.controls.missedDoseAction.value || null, this.helpContext());
+  }
+
+  effectHelp(): string {
+    return courseEffectHelp(this.form.controls.missedDoseCourseEffect.value || null, this.helpContext());
+  }
 
   /** A course effect only means something for a course that ends. */
   hasEnd(): boolean {
