@@ -388,28 +388,36 @@ export class PatientCareTeamPage {
 
   changeRole(member: CareTeamMember, role: CareTeamRole) {
     if (!this.currentUserId()) return;
+    // Every store write below is checked against the patient the request was sent for: a reply
+    // that lands after a switch to a sibling must not edit the sibling's care team.
+    const id = this.patientId;
     this.api
       .post<CareTeamMember, { userId: string; role: CareTeamRole }>(
-        `/patients/${this.patientId}/care-team`,
+        `/patients/${id}/care-team`,
         { userId: member.user.id, role },
       )
       .subscribe({
         next: (res) => {
+          if (!this.store.isCurrent(id)) return;
           this.store.careTeam.set(
             this.store.careTeam().map((m) => (m.user.id === member.user.id ? { ...m, role: res.role } : m)),
           );
         },
-        error: (err) => this.store.careTeamError.set(errorText(err, 'Could not update relationship.')),
+        error: (err) => {
+          if (this.store.isCurrent(id)) this.store.careTeamError.set(errorText(err, 'Could not update relationship.'));
+        },
       });
   }
 
   makeOwner(member: CareTeamMember) {
     if (!this.currentUserId()) return;
+    const id = this.patientId;
     this.api
-      .patch<Patient, UpdatePatientDto>(`/patients/${this.patientId}`, { ownedById: member.user.id })
+      .patch<Patient, UpdatePatientDto>(`/patients/${id}`, { ownedById: member.user.id })
       .subscribe({
-        next: (p) => this.store.patient.set(p),
+        next: (p) => this.store.acceptPatient(p),
         error: (err) => {
+          if (!this.store.isCurrent(id)) return;
           // The default USER_NOT_FOUND sentence is written for adding a caregiver by a stale search
           // result; transferring ownership needs its own wording (app-spec/frontend.md → "Errors &
           // failure messages").
@@ -425,9 +433,14 @@ export class PatientCareTeamPage {
   removeCaregiver(member: CareTeamMember) {
     if (!this.currentUserId()) return;
     if (member.user.id === this.store.patient()?.ownedById) return;
-    this.api.delete<{ deleted: boolean }>(`/patients/${this.patientId}/care-team/${member.user.id}`).subscribe({
-      next: () => this.store.careTeam.set(this.store.careTeam().filter((m) => m.user.id !== member.user.id)),
-      error: (err) => this.store.careTeamError.set(errorText(err, 'Could not remove caregiver.')),
+    const id = this.patientId;
+    this.api.delete<{ deleted: boolean }>(`/patients/${id}/care-team/${member.user.id}`).subscribe({
+      next: () => {
+        if (this.store.isCurrent(id)) this.store.careTeam.set(this.store.careTeam().filter((m) => m.user.id !== member.user.id));
+      },
+      error: (err) => {
+        if (this.store.isCurrent(id)) this.store.careTeamError.set(errorText(err, 'Could not remove caregiver.'));
+      },
     });
   }
 
@@ -463,19 +476,20 @@ export class PatientCareTeamPage {
   addCaregiver() {
     if (!this.currentUserId() || !this.selectedUserId) return;
     this.savingCaregiver.set(true);
+    const id = this.patientId;
     this.api
-      .post<CareTeamMember, { userId: string; role: CareTeamRole }>(`/patients/${this.patientId}/care-team`, {
+      .post<CareTeamMember, { userId: string; role: CareTeamRole }>(`/patients/${id}/care-team`, {
         userId: this.selectedUserId,
         role: this.newCaregiverRole,
       })
       .subscribe({
         next: (member) => {
-          this.store.careTeam.set([...this.store.careTeam(), member]);
+          if (this.store.isCurrent(id)) this.store.careTeam.set([...this.store.careTeam(), member]);
           this.savingCaregiver.set(false);
           this.closeAddModal();
         },
         error: (err) => {
-          this.store.careTeamError.set(errorText(err, 'Could not add caregiver.'));
+          if (this.store.isCurrent(id)) this.store.careTeamError.set(errorText(err, 'Could not add caregiver.'));
           this.savingCaregiver.set(false);
         },
       });
