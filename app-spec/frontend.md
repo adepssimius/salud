@@ -112,7 +112,8 @@ rules follow:
 
 - **Persistent header** on every tab: name, age, accent color, danger-severity reaction pills
   (mirroring the ER Brief's allergies-in-the-header priority), active-episode pill(s), the
-  stale-weight indicator, and an **ER Brief action**. The brief is a handoff artifact wanted in a
+  stale-weight indicator (the same age-scaled rule as the `stale_weight` advisory, judged now —
+  advisories.md → "Stale weight"), and an **ER Brief action**. The brief is a handoff artifact wanted in a
   hurry, not an access-control screen — it belongs one tap from every tab rather than inside one.
 - **Tabs: Now · Journal · Photos · Meds · History · Share**, plus a settings gear.
   - **Now** — the live state: the same content as this patient's Home sick card (below) with
@@ -522,7 +523,8 @@ derives from existing payloads:
   that prints `1 ½` / `⅓`, falling back to the decimal for anything that is not one of these.
 - **Stale-weight prompt (F-3.2)**: when the `stale_weight` advisory candidate comes back from
   `dose-checks`, show an inline prompt offering to log a fresh weight before leaning on
-  weight-based guidance, rather than silently trusting a >60-day-old number.
+  weight-based guidance, rather than silently trusting an old number (the age-scaled threshold
+  in advisories.md → "Stale weight").
 - **Advisory banners**: any advisory candidate from `dose-checks` (including `atypical_dose` once
   an amount is entered, and `reaction_warning`) renders as an inline banner via the shared
   advisory-banner component, styled by `severity`. Banners are informational — the Save button is

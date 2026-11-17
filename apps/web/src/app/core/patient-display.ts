@@ -1,3 +1,5 @@
+import { weightStaleness } from '@salud/shared/types';
+
 /**
  * Small patient-header derivations shared by the patient hub and anything else that shows a
  * patient's identity line.
@@ -6,13 +8,6 @@
  * (`ErBriefHeaderPatient.ageYears`/`ageMonths`), which is a clinical document with its own
  * response shape — nothing hands an age back with a plain `Patient`.
  */
-
-/**
- * Mirrors `STALE_WEIGHT_DAYS` in `apps/api/src/app/timeline/timeline.service.ts` and the
- * `stale_weight` advisory rule (advisories.md). Kept in sync by hand: the alternative is fetching
- * a whole timeline for its `weightPrompt` just to render one indicator in the hub header.
- */
-export const STALE_WEIGHT_DAYS = 60;
 
 /** Whole months between two dates, ignoring the time of day. */
 function monthsBetween(from: Date, to: Date): number {
@@ -46,13 +41,16 @@ export function formatAge(dateOfBirth: string | null | undefined, now: Date = ne
 }
 
 /**
- * The same rule the dosing engine applies before it leans on a weight: never recorded, or older
- * than the threshold. `latestWeightRecordedAt` is epoch seconds.
+ * The same rule the dosing engine and the timeline's `weightPrompt` apply — never recorded, or
+ * older than the patient's age-scaled threshold (`weightStaleness` in `@salud/shared/types`;
+ * advisories.md → stale_weight). `latestWeightRecordedAt` is epoch seconds.
  */
-export function isWeightStale(latestWeightRecordedAt: number | null | undefined, now: Date = new Date()): boolean {
-  if (latestWeightRecordedAt == null) return true;
-  const daysSince = Math.floor(now.getTime() / 1000 - latestWeightRecordedAt) / 86_400;
-  return daysSince > STALE_WEIGHT_DAYS;
+export function isWeightStale(
+  latestWeightRecordedAt: number | null | undefined,
+  dateOfBirth: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return weightStaleness(latestWeightRecordedAt, dateOfBirth, now).stale;
 }
 
 /** Days since the last recorded weight, or null when there has never been one. */

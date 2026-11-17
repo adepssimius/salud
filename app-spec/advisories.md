@@ -28,7 +28,7 @@ free-form `payload` for type-specific detail, and `acknowledgedByUserId`/`acknow
 | Type | Severity | Fires when | `source` | Milestone |
 | --- | --- | --- | --- | --- |
 | `atypical_dose` | `warning` | A logged dose's amount exceeds `maxMgPerDose`, the prospective daily total exceeds `maxMgPerDay`, it lands before the prior dose's `nextAllowedAt`, or it is more than 10% below the dose of a guideline set to `underDose: flagged` (`below_full_dose`). How the amount was entered (`doseSource`) is never a reason — data-model.md → "Data integrity rules" | `guideline` (the guideline evaluated against, if any) | M2 |
-| `stale_weight` | `warning` | No weight on file, or the latest weight is >60 days old, at the moment a dose is being logged (F-3.2) | — | M2 |
+| `stale_weight` | `warning` | No weight on file, or the latest weight is older than the patient's age-scaled threshold (1 week for a young infant up to 12 months for an adult — see "Stale weight" below), judged at the dose's own time, at the moment a dose is being logged (F-3.2) | — | M2 |
 | `expired_embodiment` | `warning` | The selected embodiment's `expiresAt` has passed (F-9.2) | `embodiment` | M2 |
 | `running_low` | `info` | Surfaced on the dashboard shopping list from embodiments flagged `runningLow` (F-9.3) | `embodiment` | M3 |
 | `reaction_warning` | `warning` | A logged/selected medication matches a caregiver-recorded `warning`-class adverse reaction | `reaction` | M4 |
@@ -38,6 +38,42 @@ free-form `payload` for type-specific detail, and `acknowledgedByUserId`/`acknow
 Severity is a ladder (`info` < `warning` < `danger`), never an authority level (P1) — a `danger`
 advisory still doesn't block the save; it earns a heavier confirmation UI (the full-screen
 interstitial, §4.9 of the requirements doc), not a rejection.
+
+## Stale weight
+
+A weight is stale when it is older than a threshold that scales with the patient's age **at the
+moment of the check**: a dose's `occurredAt`/`performedAt` for the advisory (so a backdated dose is
+judged against the patient's age then), and now for the timeline `weightPrompt` and the hub
+header's stale-weight pill. Age is whole calendar months since `dateOfBirth`. A patient with no
+readable birth date is treated as an adult. No weight on file is always stale. The comparison is
+`daysSince > threshold`, so a weight exactly at the threshold is still fresh.
+
+| Age at the check | Weight is stale after | Worst-case weight gain within that time |
+| --- | --- | --- |
+| under 3 months | 7 days | about 8% (boys 8.2%, girls 7.4%, weeks 2→3) |
+| 3 to 6 months | 14 days | 4.9% |
+| 6 to 12 months | 1 month (30 days) | 4.7% |
+| 1 to 2 years | 2 months (60 days) | 4.9% |
+| 2 to 5 years | 3 months (90 days) | 5.4% |
+| 5 to 18 years | 6 months (180 days) | 6.5% |
+| 18 and over, or no birth date | 12 months (365 days) | under 3% |
+
+**Why these numbers.** Pharmacy practice treats doses within about 10% of each other as
+equivalent. The threshold is therefore set at roughly half the time a patient of that age takes to
+gain 10% of their body weight, which holds worst-case drift to about 5% (about 6.5% after age 5).
+The under-3-months tier is the deliberate exception. Holding it to 5% would mean re-weighing every
+4 days, which is noise, and an infant that young is rarely dosed by weight at home without a
+clinician, so it stays at a week and accepts about 8%. For a growing child a stale weight errs
+toward under-dosing rather than over-dosing, so this is a nudge (`warning`), never a gate (P1).
+
+**Sources.** Medians (the LMS `M` column), boys and girls, from the WHO Child Growth Standards
+weight-for-age tables, weekly for 0–13 weeks and monthly for 0–5 years (`tab_wfa_{boys,girls}_p_0_13.xlsx`,
+`tab_wfa_{boys,girls}_p_0_5.xlsx`). Over 5, the CDC 2000 growth charts weight-for-age data file
+(`cdc.gov/growthcharts/data/zscore/wtage.csv`). Each worst case is the largest gain over one
+threshold interval starting anywhere in the tier. Before 2 years that uses WHO. From 2 to 5 years
+it uses WHO, which grows faster than CDC there (CDC gives 7.5% over 6 months from age 2). From 5
+years on it uses CDC. The rule lives in one function, `weightStaleness` in
+`libs/shared/types/src/lib/weight-staleness.ts`, shared by the API and the web.
 
 ## Two lifecycles: preview vs persisted
 

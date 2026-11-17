@@ -29,9 +29,15 @@ import {
 } from '../whats-new/whats-new-window';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
-import { DoseLimitedBy, DoseSource, PatientAccentColor, TemperatureMethod, TimelineRecordedBy } from '@salud/shared/types';
+import {
+  DoseLimitedBy,
+  DoseSource,
+  PatientAccentColor,
+  TemperatureMethod,
+  TimelineRecordedBy,
+  weightStaleness,
+} from '@salud/shared/types';
 
-const STALE_WEIGHT_DAYS = 60;
 // The "did I already give Tylenol?" window (product.md → origin story). A hard SQL cutoff, not a
 // client-side filter — interventions has no medication_id column (it lives in the metadata JSON
 // blob), so every last-dose lookup here is a full scan + JS reduce; bounding it to a day's doses
@@ -240,8 +246,9 @@ export class TimelineService {
     const namesById = await this.resolveRecordedBy(entries.map((e) => e.recordedByUserId));
 
     const weightRecordedAt = normalizeTs((patient as any).latestWeightRecordedAt);
-    const nowTs = Math.floor(Date.now() / 1000);
-    const daysSince = weightRecordedAt != null ? Math.floor((nowTs - weightRecordedAt) / 86400) : null;
+    const now = new Date();
+    const nowTs = Math.floor(now.getTime() / 1000);
+    const weightAge = weightStaleness(weightRecordedAt, (patient as any).dateOfBirth, now);
 
     return {
       patient,
@@ -250,9 +257,9 @@ export class TimelineService {
         recordedBy: recordedByUserId ? (namesById.get(recordedByUserId) ?? null) : null,
       })),
       weightPrompt: {
-        needsUpdate: weightRecordedAt === null || (daysSince ?? 0) > STALE_WEIGHT_DAYS,
+        needsUpdate: weightAge.stale,
         lastRecordedAt: weightRecordedAt,
-        daysSince,
+        daysSince: weightAge.daysSince,
       },
       // The bands the journal's temperature curve is read against. Carried here for the same reason
       // the dashboard carries them: the alternative is the page resolving the vital's analyte id

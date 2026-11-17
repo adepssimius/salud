@@ -437,7 +437,9 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       integrity rules" for the full rule set). Request is always accepted (N-3, P1) — the flag
       only indicates a warning was shown and the caregiver saved anyway.
     - Persists one `atypical_dose` Advisory when `isAtypical`, plus a `stale_weight` and/or
-      `expired_embodiment` Advisory when applicable (see `advisories.md`).
+      `expired_embodiment` Advisory when applicable (see `advisories.md`). `stale_weight` uses the
+      age-scaled threshold (advisories.md → "Stale weight"), with the patient's age at
+      `performedAt`, not today.
   - Dressing change body:
     ```json
     {
@@ -616,7 +618,10 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
     including one `reaction_warning`/`reaction_danger` candidate per `AdverseReaction` whose scope
     exactly matches the request (see "Adverse reactions" below) — the same list a `dose-checks`
     preview already returns for `stale_weight`/`expired_embodiment`, so the web layer's advisory
-    rendering needs no reaction-specific branch.
+    rendering needs no reaction-specific branch. `stale_weight` fires when there is no weight on
+    file or the latest weight is older than the age-scaled threshold for the patient's age at
+    `occurredAt` (advisories.md → "Stale weight"). `daysSince` is counted to `occurredAt` and is
+    `null` when no weight was ever recorded.
 - Guideline resolution rules (shared by preview and save):
   - **Embodiment-specific wins over medication-level**: among a medication's guidelines of a given
     type, one scoped to the requested `medicationEmbodimentId` is preferred over one with a null
@@ -821,6 +826,10 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       "temperatureOverlayTags": ["antipyretic"]
     }
     ```
+    `weightPrompt.needsUpdate` is true when no weight was ever recorded, or when `daysSince` (whole
+    days from the latest weight to now) exceeds the age-scaled threshold for the patient's age now:
+    from 7 days for an infant under 3 months to 365 days for an adult or a patient with no birth
+    date (advisories.md → "Stale weight", the same rule as the `stale_weight` advisory).
     `temperatureRanges` carries this patient's temperature bands (data-model.md → AnalyteRange, on
     the seeded `temperature` vital), one per lineage resolved to now, reference first, in canonical
     °C. It rides along for the same reason the dashboard's copy does: the journal's chart draws its
