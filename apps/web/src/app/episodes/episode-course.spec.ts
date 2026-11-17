@@ -101,6 +101,11 @@ describe('scheduleProgress', () => {
     expect(p.nextDueAt).toBe(at(4, 20));
   });
 
+  it('reports skipped slots apart from doses given', () => {
+    const s = schedule({ adherence: { expectedCount: 4, loggedCount: 3, skippedCount: 1, missed: 0, remainingOccurrences: null, overdue: false, courseEndsAt: null } });
+    expect(scheduleProgress(s, [dose(at(2, 8), { scheduleId: 's1' })], at(4, 7))).toMatchObject({ given: 1, skipped: 1 });
+  });
+
   it('reports day N of M for a course with an end date', () => {
     const s = schedule({ endAt: at(15, 20) });
     expect(scheduleProgress(s, [], at(10, 9)).days).toEqual({ day: 9, total: 14 });
@@ -144,6 +149,12 @@ describe('dayStrip', () => {
       ['03', 1, 2, true],
       ['04', 1, 2, false], // today, 20:00 still to come
     ]);
+  });
+
+  it('a skipped slot covers its day', () => {
+    const entries = [dose(at(2, 8), { scheduleId: 's1' })];
+    const cells = dayStrip(at(2, 7), null, [schedule()], entries, at(3, 12), new Map([['s1', [at(2, 20)]]]));
+    expect(cells[0]).toMatchObject({ count: 1, expected: 2, skipped: 1, short: false });
   });
 
   it('marks today short once no slot is left', () => {

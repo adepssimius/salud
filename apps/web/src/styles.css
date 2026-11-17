@@ -75,6 +75,12 @@ body {
   --danger-bg: rgba(248, 113, 113, 0.15);
   --danger-border: rgba(248, 113, 113, 0.4);
 
+  /* caution — worth knowing, nothing to do now (a day of a course that fell short). Danger is for
+     what can still be acted on. #fcd34d on --bg is ~12:1, so it reads as text, not just colour. */
+  --caution-text: #fcd34d;
+  --caution-bg: rgba(251, 191, 36, 0.14);
+  --caution-border: rgba(251, 191, 36, 0.45);
+
   /* neutral chip */
   --neutral-bg: rgba(148, 163, 184, 0.15);
   --neutral-border: rgba(148, 163, 184, 0.35);

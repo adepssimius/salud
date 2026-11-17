@@ -121,6 +121,8 @@ export interface ScheduleProgress {
   due: number;
   /** Due slots not covered — never negative; extra doses do not bank against future slots. */
   short: number;
+  /** Slots the caregiver deliberately skipped (`adherence.skippedCount`) — not missed. */
+  skipped: number;
   /** "17 of 28 doses" — only when `endAfterOccurrences` is set. */
   doses: { given: number; total: number } | null;
   /** "day 9 of 14" — only when `endAt` is set. */
@@ -131,7 +133,11 @@ export interface ScheduleProgress {
   lastGivenAt: number | null;
 }
 
-export function scheduleProgress(s: InterventionSchedule, entries: TimelineEntry[], now: number): ScheduleProgress {
+export function scheduleProgress(
+  s: InterventionSchedule,
+  entries: TimelineEntry[],
+  now: number,
+): ScheduleProgress {
   const counted = entries.filter((e) => countsToward(s, e)).sort((a, b) => a.timestamp - b.timestamp);
   const given = counted.length;
   const due = scheduleSlots(s, s.startAt, now).length;
@@ -155,6 +161,7 @@ export function scheduleProgress(s: InterventionSchedule, entries: TimelineEntry
     unlinked: entries.filter((e) => isLinkCandidate(s, e)).length,
     due,
     short: Math.max(0, due - given),
+    skipped: s.adherence?.skippedCount ?? 0,
     doses,
     days,
     state,
@@ -173,7 +180,12 @@ export interface DayCell {
   count: number;
   /** What the schedules expected that day; null when no schedule covers it (no judgement). */
   expected: number | null;
-  /** Fewer given than expected, on a day that is over (or today, once no slot is left). */
+  /** Slots deliberately skipped that day — they cover their slot, so they never make it short. */
+  skipped: number;
+  /**
+   * Fewer given (plus skipped) than expected, on a day that is over (or today, once no slot is
+   * left). A record of the day, which the page shows as a caution, never an alarm.
+   */
   short: boolean;
   isToday: boolean;
 }
@@ -190,6 +202,8 @@ export function dayStrip(
   schedules: InterventionSchedule[],
   entries: TimelineEntry[],
   now: number,
+  /** Skipped slot times per schedule id (only schedules that have any). */
+  skips: Map<string, number[]> = new Map(),
 ): DayCell[] {
   const last = endedAt ?? now;
   const interventionsOnly = entries.filter((e) => e.kind === 'intervention');
@@ -202,15 +216,17 @@ export function dayStrip(
     const key = localDayKey(day);
     const isToday = key === todayKey;
     if (!schedules.length) {
-      cells.push({ key, dayStart: day, dayNumber, count: onDay.length, expected: null, short: false, isToday });
+      cells.push({ key, dayStart: day, dayNumber, count: onDay.length, expected: null, skipped: 0, short: false, isToday });
       continue;
     }
     const count = onDay.filter((e) => schedules.some((s) => countsToward(s, e))).length;
     let expected = 0;
+    let skipped = 0;
     let slotsLeftToday = false;
     for (const s of schedules) {
       const slots = scheduleSlots(s, day, next - 1);
       expected += slots.length;
+      skipped += (skips.get(s.id) ?? []).filter((t) => t >= day && t < next).length;
       if (isToday && slots.some((t) => t > now)) slotsLeftToday = true;
     }
     const over = !isToday || !slotsLeftToday;
@@ -220,7 +236,8 @@ export function dayStrip(
       dayNumber,
       count,
       expected: expected || null,
-      short: expected > 0 && count < expected && over && day <= now,
+      skipped,
+      short: expected > 0 && count + skipped < expected && over && day <= now,
       isToday,
     });
   }
