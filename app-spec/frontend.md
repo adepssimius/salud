@@ -192,9 +192,15 @@ follows the household's state instead of rendering one fixed stack of sections:
   visually dominant element** (it answers the founding question; it is the hero of the card, not
   a muted suffix), a 48-hour temperature sparkline (from the dashboard payload's
   `recentTemperatures` — Home stays a single request, as in v1), atypical-dose flags, and inline
-  Temp/Dose quick actions scoped to that patient.
+  "Log temp" / "Log another dose" quick actions scoped to that patient.
 - **Repeat a dose straight from the card.** Every medication line on a sick card carries a repeat
-  button labeled with what it will prefill ("↻ 160 mg · Children's syrup"): one tap opens the
+  button labeled with what it will prefill — "Repeat 160 mg · 5 mL" on its first line, the bottle
+  ("Children's syrup") on a smaller second line beneath. With no amount recorded the first line
+  reads "Repeat last dose"; with no embodiment there is no second line. It is the card's main
+  action, so it is the card's filled (primary) button, sitting under its medication's countdown; with
+  two medications that is two filled buttons, each directly beneath the countdown it answers. Its
+  accessible name spells out medication, amount, bottle and patient, since the visible text leans
+  on the card around it. One tap opens the
   compact dose form with medication, embodiment and amount prefilled from **this patient's** most
   recent dose of that medication — the same handoff Quick Log's recents cards make, so it is a
   prefill and nothing more: dose-checks still run, guidance cards, advisory banners and the danger
@@ -213,7 +219,7 @@ follows the household's state instead of rendering one fixed stack of sections:
     `schedule`: a dose repeated from the card is not executing the standing schedule (it has no
     `interventionScheduleId`), so it prefills as `override`, which is what it is. This applies to
     Quick Log's recents cards on the same grounds — same prefill contract, same reasoning.
-- **Temp is one tap to the number, from beside the number.** The Temp action sits **next to the
+- **Temp is one tap to the number, from beside the number.** The **Log temp** action sits **next to the
   latest reading**, under the sparkline it belongs to — the value you just read and the button
   that updates it are the same glance, rather than the button living in a generic action row at
   the bottom of the card. It is present whether or not there are readings: a card saying "no
@@ -223,8 +229,9 @@ follows the household's state instead of rendering one fixed stack of sections:
   habit (tympanic for one child, rectal for the baby), not an episode property. The method select
   stays on the form and editable; a history of `unknown` methods prefills nothing and the form
   defaults to `unknown` as before. Backed by `lastMethod` on the payload's `recentTemperatures`
-  rows. The card's bottom action row keeps the search-first **Dose** action for a medication not
-  already listed above it.
+  rows. The card's bottom action row keeps the search-first **Log another dose** action for a
+  medication not already listed above it. Both are secondary (outlined) buttons, named with the
+  patient for screen readers ("Log temp for Ana").
 - **The sparkline is readable as a measurement, not just a shape.** A bare curve on an
   auto-scaled axis answers neither "how high is it" nor "is that high" — the same drawing serves a
   0.2° wobble and a 3° spike. So it carries two things beyond the line:
