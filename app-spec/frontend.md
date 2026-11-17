@@ -979,6 +979,15 @@ app. They therefore need somewhere to be entered.
   - for a course that ends only, "Effect on the course": "Give every dose — skipped doses are
     added to the end" or "End when planned — skipped doses are not made up";
   - once an instruction is chosen, "What the label or prescriber said (optional)".
+  - **What each choice does**, as page text (muted, small) under each select, changing with the
+    selection and with the timing above it. It follows the API exactly (api.md → "Missed doses"):
+    no instruction and "count the next dose from then" restart from the last dose — on an interval,
+    "every later dose moves back by however late it was"; on set times, the times don't move and a
+    passed time is not made up — while every other choice keeps the usual times. The course-effect
+    sentence says what happens to skipped doses for this course's kind of end (and for "Not
+    specified"), and that only skipped doses count — a late dose is not one. The sentences live in
+    `schedules/missed-dose-text.ts`; the schedule page repeats the instruction's sentence under
+    "If a dose is missed:".
   Nothing is sent that has nothing to act on (a cutoff without give-it-late, an effect without an
   end), matching the API's `MISSED_DOSE_INSTRUCTION_INVALID`.
 - **The name comes last, and writes itself.** At the bottom of the form, prefilled with what a
