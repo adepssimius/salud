@@ -309,6 +309,54 @@ describe('NewObservationPage', () => {
 
   // frontend.md → "Information architecture (v2)" → Quick Log: a visible default, never a silent
   // inference.
+  // The button once read "Save for ⟨name⟩" from a value that did not follow the select, so it could
+  // name one patient while the form saved to another (frontend.md → "Patient identity").
+  describe('patient select', () => {
+    function renderFromPatientPage() {
+      routeMock.snapshot.queryParamMap = new Map([['patientId', 'p1']]);
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/episodes')) return of([]);
+        return of([
+          { id: 'p1', fullName: 'Isla', dateOfBirth: '2020-01-01' },
+          { id: 'p2', fullName: 'Sierra', dateOfBirth: '2021-01-01' },
+        ]);
+      });
+      const fixture = TestBed.createComponent(NewObservationPage);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    function choosePatient(fixture: ReturnType<typeof renderFromPatientPage>, id: string) {
+      const select = (fixture.nativeElement as HTMLElement).querySelector(
+        'select[formControlName="patientId"]',
+      ) as HTMLSelectElement;
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+    }
+
+    it('labels the save button plainly, before and after the patient is changed', () => {
+      const fixture = renderFromPatientPage();
+      const save = () =>
+        (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]')?.textContent?.trim();
+      expect(save()).toBe('Save');
+      choosePatient(fixture, 'p2');
+      expect(save()).toBe('Save');
+      expect((fixture.nativeElement as HTMLElement).querySelector('.actions')?.textContent).not.toMatch(
+        /Isla|Sierra/,
+      );
+    });
+
+    it('saves to the patient chosen in the select, not the one the form was opened for', () => {
+      apiMock.post.mockReturnValue(of({}));
+      const fixture = renderFromPatientPage();
+      choosePatient(fixture, 'p2');
+      fixture.componentInstance.addEntry({ type: 'note', metadata: { text: 'hi' } });
+      fixture.componentInstance.submit();
+      expect(apiMock.post.mock.calls[0][0]).toBe('/patients/p2/observations');
+    });
+  });
+
   describe('episode attachment', () => {
     function renderWithEpisodes(episodes: Array<{ id: string; name: string }>) {
       routeMock.snapshot.queryParamMap = new Map([['patientId', 'p1']]);
@@ -379,10 +427,11 @@ describe('NewObservationPage', () => {
       expect(el.querySelector('select[name="entryType"]')).toBeNull();
     });
 
-    it('names the patient on the save button, never a bare "Save"', () => {
+    // The pinned "For Kiddo" line names the patient; the button does not repeat it.
+    it('labels the save button plainly, with no patient name', () => {
       const fixture = renderCompact('pain_score');
       const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
-      expect(save?.textContent?.trim()).toBe('Save for Kiddo');
+      expect(save?.textContent?.trim()).toBe('Save');
     });
 
     it('ignores an entryType it does not offer as a verb', () => {
