@@ -801,6 +801,20 @@ the snapshot's contents do.
     and stay as logged — they are what the caregiver was shown at the time, which is the
     reconstructability N-2 asks for. Only the corrected dose itself is re-evaluated (api.md →
     `PATCH /api/interventions/:interventionId`).
+- **Episodes drawn afterward** (api.md → Episodes → `POST /api/patients/:patientId/episodes`). A
+  directly created episode must name at least one existing entry of the same patient. Its start is
+  the earliest selected entry by clinical time (ties: observation before intervention, then id);
+  `startedAtType`/`startedAtId` and the pivot's `startsEpisode` are set exactly as if that entry had
+  started it while logging, so every reader of the start anchor works unchanged. A resolving entry,
+  when named, must be one of the selected entries; since the start is the earliest of them, a
+  direct create can never end before it starts.
+- **Membership edits from the episode side** (api.md → `POST /api/episodes/:episodeId/events`) are
+  corrections of each affected entry: they run through the same plan as an entry `PATCH` that
+  changes `episodeIds`, with the same rules (`CANNOT_UNLINK_STARTED_EPISODE`,
+  `EPISODE_ALREADY_RESOLVED`, `resolvesEpisodeIds ⊆ episodeIds`) and the same `Revision` per entry
+  whose links change. Removing the entry that resolved an episode drops both its links and reopens
+  the episode. Adding an entry earlier than the start does not move the start — membership has
+  never required an event to sit inside the frame.
 - `episodeId` on `InterventionSchedule` optional; when provided, schedule should tag interventions to same episode.
 - Enforce canonical units at persistence boundary; convert in API/UI.
 - `MedicationGuideline.source` is required — never persist a guideline without provenance (N-4).

@@ -1,0 +1,40 @@
+meta {
+  name: Create Episode From Entries
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/episodes
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Drawn from History",
+    "notes": "Framed after the fact",
+    "events": [
+      { "type": "observation", "id": "{{observationId}}" }
+    ]
+  }
+}
+
+script:pre-request {
+  // The earliest entry in `events` becomes the start; add "resolvedBy" (one of `events`) to create
+  // the episode already resolved. Needs patientId and observationId — run observations/create first.
+  if (!bru.getVar('patientId') || !bru.getVar('observationId')) {
+    await bru.runRequest("observations/create");
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar('episodeId', res.body.id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

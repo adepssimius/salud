@@ -111,7 +111,12 @@ rules follow:
     **Reactions card + add-reaction flow**. Reactions warn at dose time; they belong beside meds,
     not on an edit form.
   - **History** — conditions, the episode list (active and resolved), the lab-import entry point,
-    and per-analyte history links.
+    and per-analyte history links. The Episodes card carries a **New episode** button (always
+    shown) that opens `/patients/:id/episodes/new`: name, optional condition, a multi-select list
+    of the patient's entries (newest first, with "Load earlier"), and a checkbox "This episode is
+    over — it ended with the last selected entry". Before saving, the form states which entry will
+    be the start (the earliest selected). A patient with no entries is told to log one first.
+    Episode rows show name, start–end dates and the status pill; empty reads "No episodes yet."
   - **Care team** — who is on this patient's care team and each person's relationship to them.
     Named for what it manages: it shipped as "Share", paired with the ER Brief on the theory that
     standing access and a one-off clinician handoff are the same question asked twice. That was a
@@ -475,8 +480,9 @@ derives from existing payloads:
   adherence — same summary shape as the dashboard's schedule rows) with a "New schedule" action
   that pre-fills `conditionId`; attached Protocols (name, trigger, instruction, source, active
   toggle) with inline add/edit; nested active Episodes (name, started date) as a read-only list —
-  Episodes are still only created as a side effect of logging (P5), so this page doesn't add a
-  "new episode" action, just shows which ones already nest under this Condition.
+  episodes are created while logging or from the patient's History tab (where a condition can be
+  chosen), so this page doesn't add its own "new episode" action, just shows which ones already
+  nest under this Condition.
 - **Deferred beyond M4**: rendering Condition frames on the timeline (F-5.3 mentions both Episode
   and Condition frames; only Episode frames are implemented — see "Timeline" below). A Condition
   has no direct link to observations/interventions the way an Episode does via
@@ -605,6 +611,11 @@ app. They therefore need somewhere to be entered.
 - Shows the episode name, status, and started/ended times; its events (`GET .../timeline?episodeId=`,
   rendered with the same `describeEvent`/photo-thumbnail treatment as every other event list —
   core/event-display.ts); and, when active, its medications' last-dose summary.
+- **Add entries** opens the same entry picker the new-episode form uses, over the patient's
+  entries not yet in this episode (`POST /api/episodes/:id/events` with `add`). Each event row
+  carries **Remove** (`remove`), except the entry that started the episode, which is labelled
+  "started this episode" instead. Removing the entry that resolved the episode asks for
+  confirmation first, because it reopens the episode.
 - **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation or
   intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve endpoint. The
   page's "Resolve this episode" action routes to `/observations/new` with this episode pre-selected

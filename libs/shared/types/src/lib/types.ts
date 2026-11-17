@@ -292,6 +292,31 @@ export interface Episode {
   updatedAt: number;
 }
 
+/** One observation or intervention, named from the episode side (api.md → Episodes). */
+export interface EpisodeEventRef {
+  type: 'observation' | 'intervention';
+  id: string;
+}
+
+/**
+ * `POST /api/patients/:patientId/episodes` — draw a frame around entries already logged. The
+ * earliest of `events` by clinical time becomes the start; `resolvedBy`, when set, must be one of
+ * `events` and creates the episode already resolved (data-model.md → Episodes drawn afterward).
+ */
+export interface CreateEpisodeRequest {
+  name: string;
+  conditionId?: string | null;
+  notes?: string | null;
+  events: EpisodeEventRef[];
+  resolvedBy?: EpisodeEventRef | null;
+}
+
+/** `POST /api/episodes/:episodeId/events` — add entries to, or remove them from, an episode. */
+export interface UpdateEpisodeEventsRequest {
+  add?: EpisodeEventRef[];
+  remove?: EpisodeEventRef[];
+}
+
 /**
  * `GET /api/episodes/active`. Adds the denormalized patient name the dashboard needs, and
  * deliberately does *not* resolve `startedAt`/`endedAt` — that route leaves them to the caller

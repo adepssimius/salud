@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
@@ -8,7 +8,8 @@ import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { describeEvent, photoFileIds, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
 import { relativeTime, timeAgo } from '../core/relative-time';
-import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
+import { Episode, EpisodeEventRef, TimelineEntry, TimelineResponse, UpdateEpisodeEventsRequest } from '@salud/shared/types';
+import { EpisodeEntryPickerComponent, PickedEntry, entryKey } from './episode-entry-picker.component';
 
 // "What happened during this episode" (frontend.md → Episode detail). Two requests: the episode
 // itself for its metadata, and the existing episode-filtered timeline for its hydrated events —
@@ -16,7 +17,7 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
 @Component({
   selector: 'app-episode-detail-page',
   standalone: true,
-  imports: [CommonModule, AdvisoryBannerComponent, PhotoThumbnailComponent],
+  imports: [CommonModule, AdvisoryBannerComponent, PhotoThumbnailComponent, EpisodeEntryPickerComponent],
   template: `
     <div class="card">
       <button type="button" class="link" (click)="backToPatient()">&larr; Patient</button>
@@ -55,13 +56,50 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
       </section>
 
       <section>
-        <h2>Events</h2>
+        <div class="section-header">
+          <h2>Events</h2>
+          <button type="button" class="secondary" *ngIf="episode() && !adding()" (click)="startAdding()">
+            Add entries
+          </button>
+        </div>
+
+        <!-- Membership is edited from here too (frontend.md -> Episode detail). Each change is a
+             correction of that entry, through the same rules as its own edit form. -->
+        <div class="adding" *ngIf="adding() && episode() as ep">
+          <p class="muted small">Choose entries to add to this episode.</p>
+          <app-episode-entry-picker
+            [patientId]="ep.patientId"
+            [exclude]="memberKeys()"
+            emptyText="Every entry for this patient is already in this episode."
+            (selectionChange)="toAdd.set($event)"
+          ></app-episode-entry-picker>
+          <div class="actions">
+            <button type="button" class="secondary" (click)="adding.set(false)">Cancel</button>
+            <button type="button" class="primary" [disabled]="!toAdd().length || busy()" (click)="addSelected()">
+              Add {{ toAdd().length || '' }} {{ toAdd().length === 1 ? 'entry' : 'entries' }}
+            </button>
+          </div>
+        </div>
+
         <ul class="events" *ngIf="events().length; else noEvents">
           <li *ngFor="let e of events()">
             <span class="ts">{{ ago(e.timestamp) }}</span>
             <span class="kind">{{ e.kind }}</span>
             <button type="button" class="feed-text-link" (click)="openEvent(e)">{{ describe(e) }}</button>
             <app-photo-thumbnail *ngFor="let fid of photos(e)" [fileId]="fid"></app-photo-thumbnail>
+            <span class="row-end">
+              <span class="pill pill-neutral role" *ngIf="isStart(e)">started this episode</span>
+              <span class="pill pill-neutral role" *ngIf="isEnd(e)">ended it</span>
+              <button
+                type="button"
+                class="link remove"
+                *ngIf="!isStart(e)"
+                [disabled]="busy()"
+                (click)="remove(e)"
+              >
+                Remove
+              </button>
+            </span>
           </li>
         </ul>
         <ng-template #noEvents>
@@ -101,6 +139,37 @@ import { Episode, TimelineEntry, TimelineResponse } from '@salud/shared/types';
         font-size: 0.9rem;
         flex-wrap: wrap;
       }
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .adding {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .row-end {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .remove {
+        color: var(--danger-text);
+      }
+      .pill.role {
+        text-transform: none;
+      }
     `,
   ],
 })
@@ -115,6 +184,10 @@ export class EpisodeDetailPage implements OnInit {
   events = signal<TimelineEntry[]>([]);
   advisories = signal<any[]>([]);
   error = signal<string | null>(null);
+  adding = signal(false);
+  toAdd = signal<PickedEntry[]>([]);
+  busy = signal(false);
+  memberKeys = computed(() => new Set(this.events().map((e) => entryKey(e))));
 
   ngOnInit(): void {
     this.episodeId = this.route.snapshot.paramMap.get('id') ?? '';
@@ -170,6 +243,58 @@ export class EpisodeDetailPage implements OnInit {
   openEvent(entry: TimelineEntry) {
     if (entry.kind === 'advisory') return;
     this.router.navigate([entry.kind === 'observation' ? '/observations' : '/interventions', entry.id]);
+  }
+
+  isStart(e: TimelineEntry): boolean {
+    const ep = this.episode();
+    return !!ep && ep.startedAtType === e.kind && ep.startedAtId === e.id;
+  }
+
+  isEnd(e: TimelineEntry): boolean {
+    const ep = this.episode();
+    return !!ep && ep.endedAtType === e.kind && ep.endedAtId === e.id;
+  }
+
+  startAdding() {
+    this.toAdd.set([]);
+    this.adding.set(true);
+  }
+
+  addSelected() {
+    const add = this.toAdd().map(({ type, id }) => ({ type, id }));
+    if (!add.length) return;
+    this.save({ add }, () => this.adding.set(false));
+  }
+
+  /**
+   * The start has no Remove at all (CANNOT_UNLINK_STARTED_EPISODE). Removing the entry that ended
+   * the episode reopens it, which is worth a confirm — it changes the episode's status, not just
+   * its contents.
+   */
+  remove(e: TimelineEntry) {
+    if (this.isStart(e)) return;
+    if (this.isEnd(e) && !window.confirm('This entry ended the episode. Removing it reopens the episode. Continue?')) {
+      return;
+    }
+    const ref: EpisodeEventRef = { type: e.kind as EpisodeEventRef['type'], id: e.id };
+    this.save({ remove: [ref] });
+  }
+
+  private save(body: UpdateEpisodeEventsRequest, done?: () => void) {
+    this.busy.set(true);
+    this.error.set(null);
+    this.api.post<Episode>(`/episodes/${this.episodeId}/events`, body).subscribe({
+      next: (ep) => {
+        this.busy.set(false);
+        this.episode.set(ep);
+        this.loadEvents(ep.patientId);
+        done?.();
+      },
+      error: (err) => {
+        this.busy.set(false);
+        this.error.set(errorText(err, 'Could not update this episode’s entries.'));
+      },
+    });
   }
 
   // No resolve endpoint exists by design — an episode closes as the side effect of a logged
