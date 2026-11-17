@@ -329,6 +329,8 @@ derives from existing payloads:
 - Use consistent labels: `Sign In` and `Sign Up`.
 - Dedicated pages for sign in, sign up, and logout (logout clears stored session and redirects to sign in).
 - JWT stored client-side (localStorage) and sent via auth interceptor as `Authorization: Bearer <token>`.
+- The bare domain `/` opens Home. A signed-in caregiver who opens `/login` or `/register` (a bookmark, a stale tab) goes to Home instead; a signed-out visitor to any guarded route, `/` included, goes to `/login`. Both are decided before the page renders, from the stored token alone, so neither sees the other's page flash.
+- A stored token whose `exp` has passed is cleared on the spot and treated as signed out. A token the server rejects for any other reason ends on the first 401 (interceptor → logout), landing on `/login` once.
 
 ## Profile experience
 > v2 moves the Patients tab to a top-level `/patients` list and the patient-detail content into
