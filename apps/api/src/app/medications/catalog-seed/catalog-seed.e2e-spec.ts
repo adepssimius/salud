@@ -261,6 +261,81 @@ describe('Repo catalog / catalog seed (e2e)', () => {
     expect((await apply({ sourceHash: 'a'.repeat(64), select: [] }).expect(503)).body.message).toBe('CATALOG_SEED_NOT_CONFIGURED');
   });
 
+  // The checked-in file itself, through the API and the dosing engine: what a caregiver's
+  // "Check repo catalog" adds is what the engine then resolves for a child.
+  it("adds the checked-in Children's Tylenol chart and gives a 7-year-old the 10 mL row", async () => {
+    const checkedIn = path.join(__dirname, '../../../../../../catalog/medication-catalog.json');
+    fs.writeFileSync(fixturePath, fs.readFileSync(checkedIn));
+    const pre = (await preview().expect(200)).body;
+    await apply({ sourceHash: pre.sourceHash, select: ['acetaminophen'] }).expect(200);
+    const [acetaminophen] = await byName('acetaminophen');
+    const forms = (await auth(http().get(`/api/medications/${acetaminophen.id}/embodiments`)).expect(200)).body;
+    const suspension = forms.find((f: any) => f.label === "160 mg/5 mL suspension (Children's Tylenol)");
+    const bands = (await auth(http().get(`/api/medications/${acetaminophen.id}/guidelines`)).expect(200)).body.filter(
+      (g: any) => g.type === 'age_band' && g.medicationEmbodimentId === suspension.id,
+    );
+    expect(bands).toHaveLength(5);
+
+    // Removing one band offers back exactly that band; the other four stay present.
+    const band = bands.find((g: any) => g.ageMinMonths === 48);
+    await auth(http().delete(`/api/guidelines/${band.id}`)).expect(200);
+    const again = (await preview().expect(200)).body;
+    expect(again.newGuidelines.map((g: any) => g.selectionId)).toEqual(['acetaminophen/suspension-160mg-5ml/label-age-band-48-71mo']);
+    await apply({ sourceHash: again.sourceHash, select: ['acetaminophen/suspension-160mg-5ml/label-age-band-48-71mo'] }).expect(200);
+    expect((await preview().expect(200)).body.newGuidelines).toEqual([]);
+
+    const dob = new Date();
+    dob.setFullYear(dob.getFullYear() - 7);
+    dob.setMonth(dob.getMonth() - 3); // 87 months: clear of any month-boundary edge
+    const patient = await auth(http().post('/api/patients'))
+      .send({ fullName: 'Seven', dateOfBirth: dob.toISOString().slice(0, 10), sexAtBirth: 'female', myRole: 'parent' })
+      .expect(201);
+    const check = await auth(http().post(`/api/patients/${patient.body.id}/dose-checks`))
+      .send({ medicationId: acetaminophen.id, medicationEmbodimentId: suspension.id })
+      .expect(201);
+    expect(check.body.guidance.ageBand).toMatchObject({
+      source: "Manufacturer label — Children's Tylenol dosing chart, 6–8 years (48–59 lb)",
+      doseMg: 320,
+      doseMl: 10,
+      doseMlSource: 'guideline',
+      frequencyPerDay: 5,
+      maxMgPerDay: 1600,
+    });
+  });
+
+  // The other two label charts, through the engine: 7, 13 and 4 years old.
+  it('resolves the checked-in diphenhydramine and dextromethorphan charts by age', async () => {
+    const checkedIn = path.join(__dirname, '../../../../../../catalog/medication-catalog.json');
+    fs.writeFileSync(fixturePath, fs.readFileSync(checkedIn));
+    const pre = (await preview().expect(200)).body;
+    await apply({ sourceHash: pre.sourceHash, select: ['diphenhydramine', 'dextromethorphan'] }).expect(200);
+
+    const patientAged = async (years: number) => {
+      const dob = new Date();
+      dob.setFullYear(dob.getFullYear() - years);
+      dob.setMonth(dob.getMonth() - 3); // clear of any month-boundary edge
+      const res = await auth(http().post('/api/patients'))
+        .send({ fullName: `Age ${years}`, dateOfBirth: dob.toISOString().slice(0, 10), sexAtBirth: 'male', myRole: 'parent' })
+        .expect(201);
+      return res.body.id as string;
+    };
+    const ageBand = async (patientId: string, medName: string) => {
+      const [med] = await byName(medName);
+      const [form] = (await auth(http().get(`/api/medications/${med.id}/embodiments`)).expect(200)).body;
+      const res = await auth(http().post(`/api/patients/${patientId}/dose-checks`))
+        .send({ medicationId: med.id, medicationEmbodimentId: form.id })
+        .expect(201);
+      return res.body.guidance.ageBand;
+    };
+    const [seven, thirteen, four] = [await patientAged(7), await patientAged(13), await patientAged(4)];
+
+    expect(await ageBand(seven, 'diphenhydramine')).toMatchObject({ doseMg: 25, doseMl: 10, frequencyPerDay: 6 });
+    expect(await ageBand(four, 'diphenhydramine')).toBeNull();
+    expect(await ageBand(seven, 'dextromethorphan')).toMatchObject({ doseMg: 10, pillCount: 1, maxMgPerDay: 60 });
+    expect(await ageBand(thirteen, 'dextromethorphan')).toMatchObject({ doseMg: 20, pillCount: 2, maxMgPerDay: 120 });
+    expect(await ageBand(four, 'dextromethorphan')).toBeNull();
+  });
+
   it('validates the apply body', async () => {
     await apply({ sourceHash: 'short', select: [] }).expect(400);
     await apply({ sourceHash: 'a'.repeat(64), select: 'miconazole' }).expect(400);
