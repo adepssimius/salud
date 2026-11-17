@@ -5,12 +5,7 @@ import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest, ScheduleDeleteResponse } from '@salud/shared/types';
 import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseAdvice } from './missed-dose-text';
-import { localDaysBetween } from '../episodes/episode-course';
-
-interface DayTile {
-  value: string;
-  label: string;
-}
+import { DayTile, sinceStart, untilDone } from './course-days';
 
 @Component({
   selector: 'app-schedule-detail-page',
@@ -508,27 +503,13 @@ export class ScheduleDetailPage implements OnInit {
     });
   }
 
-  /** "4 days since start", or "2 days until start" for a course not begun. */
+  /** Shared with the episode page's "Keeping up" card (course-days.ts), so the two agree. */
   sinceStart(s: InterventionSchedule): DayTile {
-    const days = localDaysBetween(s.startAt, this.nowSec());
-    if (days < 0) return { value: String(-days), label: -days === 1 ? 'day until start' : 'days until start' };
-    return { value: String(days), label: days === 1 ? 'day since start' : 'days since start' };
+    return sinceStart(s, this.nowSec());
   }
 
-  /**
-   * Days to the local day of the last planned dose (`adherence.courseEndsAt`). Done or paused say
-   * so instead of a count; an open-ended schedule has no tile. Never negative: an overdue last dose
-   * is due today.
-   */
   untilDone(s: InterventionSchedule): DayTile | null {
-    if (s.status === 'completed') return { value: 'Done', label: 'course complete' };
-    if (s.endAt == null && s.endAfterOccurrences == null) return null;
-    if (s.status === 'paused') return { value: 'Paused', label: 'resumes where it stopped' };
-    const end = s.adherence.courseEndsAt;
-    if (end == null) return null;
-    const days = Math.max(0, localDaysBetween(this.nowSec(), end));
-    if (days === 0) return { value: 'Today', label: 'last dose' };
-    return { value: String(days), label: days === 1 ? 'day until done' : 'days until done' };
+    return untilDone(s, this.nowSec());
   }
 
   goToEpisode(id: string) {

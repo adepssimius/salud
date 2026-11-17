@@ -1,5 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { forkJoin } from 'rxjs';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
@@ -12,6 +13,7 @@ import {
   Episode,
   EpisodeEventRef,
   InterventionSchedule,
+  ScheduleSkip,
   TimelineEntry,
   TimelineResponse,
   UpdateEpisodeEventsRequest,
@@ -27,6 +29,7 @@ import {
   localDaysBetween,
   scheduleProgress,
 } from './episode-course';
+import { DayTile, endShift, sinceStart, untilDone } from '../schedules/course-days';
 
 /**
  * A measurement older than this is flagged in the summary — the caregiver is comparing against a
@@ -175,9 +178,22 @@ interface ScheduleRow {
               <span class="pill pill-success" *ngIf="r.progress.state === 'complete'">course complete</span>
               <button type="button" class="secondary detach" (click)="detach(r.schedule)" [disabled]="scheduleBusy()">Detach</button>
             </div>
-            <p class="compliance">
-              <strong>{{ r.progress.given }}</strong> of {{ r.progress.due }} due {{ r.progress.due === 1 ? 'dose' : 'doses' }} given
-              <span class="error" *ngIf="r.progress.short"> · {{ r.progress.short }} missed</span>
+            <!-- A record, not a score (frontend.md → Episode detail → "Are we keeping up"): where we
+                 are in the course, in days, with the end as it now stands. The end is the API's
+                 courseEndsAt (shared with the schedule page, course-days.ts), so a course pushed by
+                 late or skipped doses says so instead of grading the doses against the old plan. -->
+            <div class="course-days">
+              <div class="day-stat" *ngIf="courseSince(r.schedule) as d">
+                <span class="day-value">{{ d.value }}</span>
+                <span class="day-label">{{ d.label }}</span>
+              </div>
+              <div class="day-stat" *ngIf="courseUntil(r.schedule) as d">
+                <span class="day-value">{{ d.value }}</span>
+                <span class="day-label">{{ d.label }}</span>
+              </div>
+            </div>
+            <p class="small ends" *ngIf="r.schedule.adherence?.courseEndsAt as end">
+              Last dose {{ fmtWhen(end) }}<ng-container *ngIf="shift(r.schedule) as m"> · planned {{ fmtDate(m.plannedAt) }}, moved {{ m.days }} {{ m.days === 1 ? 'day' : 'days' }} later by late or skipped doses</ng-container>
             </p>
             <!-- Only linked doses count (api.md → "Linking existing doses"); matching doses logged
                  without the schedule are named, with the way to link them, not quietly added. -->
@@ -190,13 +206,13 @@ interface ScheduleRow {
               </span>
               <button type="button" class="secondary" (click)="linkDoses(r.schedule)">Link them</button>
             </div>
-            <div class="progress" *ngIf="r.progress.doses || r.progress.days">
+            <div class="progress">
               <span class="small">
-                <ng-container *ngIf="r.progress.days">Day {{ r.progress.days.day }} of {{ r.progress.days.total }}</ng-container>
-                <ng-container *ngIf="r.progress.days && r.progress.doses"> · </ng-container>
-                <ng-container *ngIf="r.progress.doses">{{ r.progress.doses.given }} of {{ r.progress.doses.total }} doses</ng-container>
+                <ng-container *ngIf="r.progress.doses; else givenOnly">{{ r.progress.doses.given }} of {{ r.progress.doses.total }} doses given</ng-container>
+                <ng-template #givenOnly>{{ r.progress.given }} {{ r.progress.given === 1 ? 'dose' : 'doses' }} given</ng-template>
+                <span class="muted" *ngIf="r.progress.skipped"> · {{ r.progress.skipped }} skipped</span>
               </span>
-              <span class="bar" role="presentation"><span class="bar-fill" [style.width.%]="progressPct(r.progress)"></span></span>
+              <span class="bar" role="presentation" *ngIf="r.progress.doses || r.progress.days"><span class="bar-fill" [style.width.%]="progressPct(r)"></span></span>
             </div>
             <p class="small next" *ngIf="r.progress.nextDueAt as next">
               <ng-container *ngIf="next <= nowSec(); else upcoming">
@@ -466,6 +482,32 @@ interface ScheduleRow {
         background: var(--accent-bg);
         border: 1px solid var(--accent-border);
       }
+      .course-days {
+        display: flex;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+      }
+      .day-stat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0.4rem 0.6rem;
+        border-radius: var(--radius-input);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+      }
+      .day-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+      }
+      .day-label {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+      }
+      .ends {
+        margin: 0.25rem 0 0.5rem;
+        color: var(--text-muted);
+      }
       .progress {
         display: flex;
         flex-direction: column;
@@ -515,9 +557,14 @@ interface ScheduleRow {
         background: var(--success-bg);
         border-color: var(--success-border);
       }
+      /* A day that fell short is a record, not an alarm: caution, never danger. What can still be
+         acted on is the "overdue" line above. The "1/2" text carries it, not the colour alone. */
       .cell.short {
-        background: var(--danger-bg);
-        border-color: var(--danger-border);
+        background: var(--caution-bg);
+        border-color: var(--caution-border);
+      }
+      .cell.short .cell-count {
+        color: var(--caution-text);
       }
       .cell.today {
         outline: 2px solid var(--accent-focus);
@@ -652,6 +699,8 @@ export class EpisodeDetailPage implements OnInit {
   scheduleBusy = signal(false);
   scheduleError = signal<string | null>(null);
   openRuns = signal<Set<string>>(new Set());
+  /** Skipped slot times per schedule — fetched only for schedules that have skipped any. */
+  skips = signal<Map<string, number[]>>(new Map());
   /** Read once per load — the page is a snapshot, like the timeline it renders. */
   nowSec = signal(Math.floor(Date.now() / 1000));
   memberKeys = computed(() => new Set(this.events().map((e) => entryKey(e))));
@@ -710,7 +759,7 @@ export class EpisodeDetailPage implements OnInit {
   strip = computed<DayCell[]>(() => {
     const ep = this.episode();
     if (!ep?.startedAt) return [];
-    return dayStrip(ep.startedAt, ep.endedAt ?? null, ep.schedules ?? [], this.events(), this.nowSec());
+    return dayStrip(ep.startedAt, ep.endedAt ?? null, ep.schedules ?? [], this.events(), this.nowSec(), this.skips());
   });
 
   /** Observations carrying a photo or a size, oldest → newest: a progression is read forwards. */
@@ -746,8 +795,25 @@ export class EpisodeDetailPage implements OnInit {
       next: (ep) => {
         this.episode.set(ep);
         this.loadEvents(ep.patientId);
+        this.loadSkips(ep);
       },
       error: (err) => this.error.set(errorText(err, 'Unable to load this episode.')),
+    });
+  }
+
+  /**
+   * A skipped slot is not a missed one, so the day strip needs to know which slots were skipped. Only schedules that have skipped any are asked — most have none.
+   */
+  private loadSkips(ep: Episode) {
+    const withSkips = (ep.schedules ?? []).filter((s) => (s.adherence?.skippedCount ?? 0) > 0);
+    if (!withSkips.length) {
+      this.skips.set(new Map());
+      return;
+    }
+    forkJoin(withSkips.map((s) => this.api.get<ScheduleSkip[]>(`/schedules/${s.id}/skips`))).subscribe({
+      next: (lists) => this.skips.set(new Map(withSkips.map((s, i) => [s.id, lists[i].map((k) => k.slotAt)]))),
+      // Without them a skipped slot reads as missed — the pre-skip picture, not a broken page.
+      error: () => this.skips.set(new Map()),
     });
   }
 
@@ -816,16 +882,42 @@ export class EpisodeDetailPage implements OnInit {
     return `${this.fmtDate(ts)}, ${time}`;
   }
 
-  progressPct(p: ScheduleProgress): number {
-    const frac = p.doses ? p.doses.given / p.doses.total : p.days ? p.days.day / p.days.total : 0;
+  /**
+   * Doses given of the course's total; for a date course, days elapsed of the days to its last
+   * dose as it now stands (`courseEndsAt`), so a pushed end doesn't fill the bar early.
+   */
+  progressPct(r: ScheduleRow): number {
+    const p = r.progress;
+    let frac = 0;
+    if (p.doses) frac = p.doses.given / p.doses.total;
+    else if (p.state === 'complete') frac = 1;
+    else if (p.days) {
+      const end = r.schedule.adherence?.courseEndsAt ?? r.schedule.endAt!;
+      const total = localDaysBetween(r.schedule.startAt, end) + 1;
+      frac = total > 0 ? (localDaysBetween(r.schedule.startAt, this.nowSec()) + 1) / total : 0;
+    }
     return Math.max(0, Math.min(100, Math.round(frac * 100)));
+  }
+
+  courseSince(s: InterventionSchedule): DayTile {
+    return sinceStart(s, this.nowSec());
+  }
+
+  courseUntil(s: InterventionSchedule): DayTile | null {
+    return untilDone(s, this.nowSec());
+  }
+
+  shift(s: InterventionSchedule) {
+    return endShift(s);
   }
 
   cellTitle(c: DayCell): string {
     const doses = `${c.count} ${c.count === 1 ? 'dose' : 'doses'}`;
     const of = c.expected !== null ? ` of ${c.expected} expected` : '';
-    const flag = c.short ? ' — short' : c.isToday ? ' — today' : '';
-    return `Day ${c.dayNumber}, ${this.fmtDate(c.dayStart)}: ${doses}${of}${flag}`;
+    const skipped = c.skipped ? `, ${c.skipped} skipped` : '';
+    const notGiven = c.expected !== null ? c.expected - c.count - c.skipped : 0;
+    const flag = c.short ? ` — ${notGiven} not given` : c.isToday ? ' — today' : '';
+    return `Day ${c.dayNumber}, ${this.fmtDate(c.dayStart)}: ${doses}${of}${skipped}${flag}`;
   }
 
   describe(entry: TimelineEntry): string {
@@ -922,7 +1014,10 @@ export class EpisodeDetailPage implements OnInit {
         done?.();
         // The episode read carries its schedules with adherence; re-read rather than patch locally.
         this.api.get<Episode>(`/episodes/${this.episodeId}`).subscribe({
-          next: (ep) => this.episode.set(ep),
+          next: (ep) => {
+            this.episode.set(ep);
+            this.loadSkips(ep);
+          },
           error: (err) => this.scheduleError.set(errorText(err, 'Unable to reload this episode.')),
         });
       },

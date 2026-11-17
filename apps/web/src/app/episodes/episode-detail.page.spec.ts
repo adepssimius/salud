@@ -444,12 +444,52 @@ describe('EpisodeDetailPage course view', () => {
   it('with a schedule, counts linked doses only, names the unlinked ones with a way to link them, and marks short days', async () => {
     const fixture = await build({ schedules: [schedule] });
     const text = fixture.nativeElement.querySelector('.keeping-up').textContent.replace(/\s+/g, ' ');
-    expect(text).toContain('1 of 28 doses');
+    expect(text).toContain('1 of 28 doses given');
     expect(text).toContain("2 doses of this medicine in this episode aren't linked to the schedule");
     fixture.componentInstance.linkDoses(schedule as any);
     expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1'], { queryParams: { link: '1' } });
-    const short = fixture.nativeElement.querySelectorAll('.strip .cell.short');
-    expect(short.length).toBeGreaterThan(0);
+    // Days that fell short are a record in the caution style, never danger, never "missed".
+    const short = [...fixture.nativeElement.querySelectorAll('.strip .cell.short')] as HTMLElement[];
+    expect(short.map((c) => c.querySelector('.cell-day')!.textContent)).toEqual(['1', '2', '3']);
+    expect(text).not.toMatch(/missed/i);
+    expect(text).not.toContain('due doses given');
+  });
+
+  // frontend.md → Episode detail → "Are we keeping up": a record, led by days — the end as the API
+  // projects it (courseEndsAt), and how far it moved from the plan when it did.
+  it('leads with days since start and days until the projected end, saying when the end moved', async () => {
+    // Planned: 28 slots from 3 days ago 08:00 → the last is 10 days ahead at 20:00. Projected a day later.
+    const pushed = { ...schedule, adherence: { ...schedule.adherence, courseEndsAt: at(-11, 8) } };
+    const fixture = await build({ schedules: [pushed] });
+    const tiles = [...fixture.nativeElement.querySelectorAll('.course-days .day-stat')].map((t: any) => [...t.children].map((c: any) => c.textContent.trim()).join(' '));
+    expect(tiles).toEqual(['3 days since start', '11 days until done']);
+    const ends = fixture.nativeElement.querySelector('.ends').textContent.replace(/\s+/g, ' ');
+    expect(ends).toContain('moved 1 day later by late or skipped doses');
+  });
+
+  it('says nothing about a move when the end is where it was planned, and shows days since start alone when open-ended', async () => {
+    const onPlan = { ...schedule, adherence: { ...schedule.adherence, courseEndsAt: at(-10, 20) } };
+    let fixture = await build({ schedules: [onPlan] });
+    expect(fixture.nativeElement.querySelector('.ends').textContent).not.toContain('moved');
+    TestBed.resetTestingModule();
+    const open = { ...schedule, endAfterOccurrences: null, adherence: { ...schedule.adherence, courseEndsAt: null } };
+    fixture = await build({ schedules: [open] });
+    const tiles = [...fixture.nativeElement.querySelectorAll('.course-days .day-stat')].map((t: any) => [...t.children].map((c: any) => c.textContent.trim()).join(' '));
+    expect(tiles).toEqual(['3 days since start']);
+    expect(fixture.nativeElement.querySelector('.ends')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.progress').textContent).toContain('1 dose given');
+  });
+
+  it('reads a deliberately skipped dose as skipped, in the count and on its day', async () => {
+    const skipping = { ...schedule, startAt: at(1, 7), adherence: { ...schedule.adherence, skippedCount: 1 } };
+    const fixture = await build({ schedules: [skipping] });
+    api.get.mockImplementation((path: string) => (path === '/schedules/s1/skips' ? of([{ id: 'k1', scheduleId: 's1', slotAt: at(1, 20), reason: 'skipped' }]) : of(null)));
+    (fixture.componentInstance as any).loadSkips({ schedules: [skipping] });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.progress').textContent).toContain('1 skipped');
+    const yesterday = [...fixture.nativeElement.querySelectorAll('.strip .cell')].find((c: any) => c.querySelector('.cell-day').textContent === '3') as HTMLElement;
+    // 08:00 not given, 20:00 skipped.
+    expect(yesterday.getAttribute('title')).toContain('1 skipped — 1 not given');
   });
 
   // frontend.md → Episode detail → "Keeping up": attach an existing schedule (any of the patient's

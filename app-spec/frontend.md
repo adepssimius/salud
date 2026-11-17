@@ -851,8 +851,20 @@ app. They therefore need somewhere to be entered.
   **2. Are we keeping up** — the schedules attached to the episode (`InterventionSchedule.episodeIds`;
   one schedule can treat several episodes at once, data-model.md → `ScheduleEpisode`).
   - Each schedule shows its label (through to `/schedules/:id`), and:
-    - **Compliance**: "12 of 16 due doses given", with "· 4 missed" when short. Doses due are
-      the schedule's slots from `startAt` to now, capped at `endAt` / `endAfterOccurrences`.
+    - **A record, not a score.** The card leads with **where we are in the course, in days**:
+      "10 days since start" and "3 days until done", the same two tiles as the schedule page and
+      the same calculation (`schedules/course-days.ts`), so the two pages cannot disagree. "Until
+      done" runs to the local day of `adherence.courseEndsAt` — the course's end as it now stands,
+      already pushed by late doses under "restart the clock" (or no instruction) and by skips
+      under "give every dose" (data-model.md → ScheduleAdherence). Done, paused and not-yet-started
+      read as on the schedule page; an open-ended schedule shows days since start alone.
+    - **The end, and whether it moved**: "Last dose Fri, Nov 20, 8:00 AM", and when that falls on
+      a later local day than planned — the N-th planned slot of a count course, the last slot on or
+      before `endAt` of a date course — "· planned Thu, Nov 19, moved 1 day later by late or
+      skipped doses". Neutral: it records that the end moved, not whose fault it was.
+    - There is **no given-vs-due score** ("12 of 16 due doses given", "· 4 missed"): once a late or
+      skipped dose has shifted the doses after it, counting them against the original grid
+      misreads the course. The overdue line is the only thing here that asks for action.
     - **Which doses count: linked doses only**, as everywhere adherence is shown — a dose with
       this schedule's `scheduleId`, whether logged from the schedule or linked to it afterwards.
       Matching doses in the episode that are *not* linked (no `scheduleId`, the schedule's medicine
@@ -860,9 +872,10 @@ app. They therefore need somewhere to be entered.
       not counted: "16 doses of this medicine in this episode aren't linked to the schedule, so
       they don't count", with **Link them**, which opens the schedule page with its link checklist
       open (`/schedules/:id?link=1`; "Schedule detail" → "Linking existing doses").
-    - **Progress through the course**, when it has an end: "Day 9 of 14" for an `endAt`, "17 of
-      28 doses" for `endAfterOccurrences`, both when both are set, with a bar. An open-ended
-      schedule shows compliance only.
+    - **Progress**, as a neutral count: "17 of 28 doses given" for `endAfterOccurrences`, else "9
+      doses given", with "· 2 skipped" (muted) when any — skipped is not missed (data-model.md →
+      ScheduleSkip). A bar when the course has an end: doses given of the total, or for a date
+      course days elapsed of the days to `courseEndsAt`.
     - **Next due**: the schedule's own `nextDueAt` — "Next due today 8:00 PM · in 2h", or
       "overdue — was due …" — so this page and the schedule page never disagree. Paused schedules
       show "paused"; finished ones "course complete" and no next dose.
@@ -883,8 +896,12 @@ app. They therefore need somewhere to be entered.
     number and dose count. **With no schedule** the cells are plain counts of the episode's
     interventions — no target and no judgement (P6). **With schedules**, a cell counts the doses
     linked to the schedules and shows "given/expected" against the slots the schedules planned
-    that day; a day that met its slots is marked met, a day that fell short is marked short, and a
-    day with no slots gets no mark. **Today is never short while a slot is still to come.**
+    that day (a skipped slot counts as covered); a day that met its slots is marked met (green),
+    and a day with no slots gets no mark. A day that **fell short** is marked in the caution
+    (amber) style, never danger — it is the record of that day; the "given/expected" text carries
+    it, not the colour alone, and its tooltip says "1 not given" (and "1 skipped" when any). The
+    page reads `GET /api/schedules/:id/skips` only for a schedule whose `adherence.skippedCount` is
+    non-zero. **Today is never short while a slot is still to come.**
   - Days are the **browser's local days**, and the page computes the per-day slots itself, on the
     browser's clock: "did we keep up on Tuesday" is about the viewer's Tuesday. The server reads
     `explicitTimes` in the schedule's own `timeZone` (data-model.md → InterventionSchedule), so
