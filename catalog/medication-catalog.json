@@ -26,15 +26,64 @@
               "notes": "Standard weight-based dosing; caps at adult maximums."
             },
             {
-              "key": "label-age-band-12-23mo",
-              "source": "Manufacturer label — Children's Tylenol dosing chart",
+              "key": "label-age-band-24-47mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart, 2–3 years (24–35 lb)",
               "type": "age_band",
-              "ageMinMonths": 12,
-              "ageMaxMonths": 23,
+              "ageMinMonths": 24,
+              "ageMaxMonths": 47,
               "doseMg": 160,
               "doseMl": 5,
               "maxMgPerDay": 800,
-              "frequencyPerDay": 4
+              "frequencyPerDay": 5,
+              "notes": "Label: use weight if possible, otherwise age. Every 4 hours while symptoms last; not more than 5 times in 24 hours. Under 2 years (under 24 lb): ask a doctor."
+            },
+            {
+              "key": "label-age-band-48-71mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart, 4–5 years (36–47 lb)",
+              "type": "age_band",
+              "ageMinMonths": 48,
+              "ageMaxMonths": 71,
+              "doseMg": 240,
+              "doseMl": 7.5,
+              "maxMgPerDay": 1200,
+              "frequencyPerDay": 5,
+              "notes": "Label: use weight if possible, otherwise age. Every 4 hours while symptoms last; not more than 5 times in 24 hours. Under 2 years (under 24 lb): ask a doctor."
+            },
+            {
+              "key": "label-age-band-72-107mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart, 6–8 years (48–59 lb)",
+              "type": "age_band",
+              "ageMinMonths": 72,
+              "ageMaxMonths": 107,
+              "doseMg": 320,
+              "doseMl": 10,
+              "maxMgPerDay": 1600,
+              "frequencyPerDay": 5,
+              "notes": "Label: use weight if possible, otherwise age. Every 4 hours while symptoms last; not more than 5 times in 24 hours. Under 2 years (under 24 lb): ask a doctor."
+            },
+            {
+              "key": "label-age-band-108-131mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart, 9–10 years (60–71 lb)",
+              "type": "age_band",
+              "ageMinMonths": 108,
+              "ageMaxMonths": 131,
+              "doseMg": 400,
+              "doseMl": 12.5,
+              "maxMgPerDay": 2000,
+              "frequencyPerDay": 5,
+              "notes": "Label: use weight if possible, otherwise age. Every 4 hours while symptoms last; not more than 5 times in 24 hours. Under 2 years (under 24 lb): ask a doctor."
+            },
+            {
+              "key": "label-age-band-132-143mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart, 11 years (72–95 lb)",
+              "type": "age_band",
+              "ageMinMonths": 132,
+              "ageMaxMonths": 143,
+              "doseMg": 480,
+              "doseMl": 15,
+              "maxMgPerDay": 2400,
+              "frequencyPerDay": 5,
+              "notes": "Label: use weight if possible, otherwise age. Every 4 hours while symptoms last; not more than 5 times in 24 hours. Under 2 years (under 24 lb): ask a doctor."
             }
           ]
         },
@@ -114,6 +163,89 @@
           "label": "1% cream (28.4 g tube)",
           "unitType": "other",
           "notes": "Topical antifungal. Apply a thin layer twice daily. (CVS Health, NDC 59779-305-02)"
+        }
+      ]
+    },
+    {
+      "key": "diphenhydramine",
+      "name": "Diphenhydramine",
+      "brandNames": [
+        "Benadryl",
+        "Rite Aid Children's Allergy Relief"
+      ],
+      "description": "Antihistamine for allergy symptoms; causes drowsiness.",
+      "tags": [
+        "antihistamine"
+      ],
+      "embodiments": [
+        {
+          "key": "solution-12-5mg-5ml",
+          "label": "12.5 mg/5 mL oral solution (Children's)",
+          "unitType": "ml",
+          "concentrationMg": 12.5,
+          "concentrationVolumeMl": 5,
+          "notes": "Children 2 to 5 years: do not use unless directed by a doctor. Children under 2 years: do not use. Do not use with any other product containing diphenhydramine, even one used on the skin. Do not use to make a child sleepy; marked drowsiness may occur.",
+          "guidelines": [
+            {
+              "key": "label-age-band-72-143mo",
+              "source": "Manufacturer label — Children's Allergy Relief (diphenhydramine) dosing chart, 6–11 years",
+              "type": "age_band",
+              "ageMinMonths": 72,
+              "ageMaxMonths": 143,
+              "doseMg": 25,
+              "doseMl": 10,
+              "maxMgPerDay": 150,
+              "frequencyPerDay": 6,
+              "underDose": "allowed",
+              "notes": "Label: 5 mL to 10 mL (12.5–25 mg) every 4 to 6 hours, or as directed by a doctor; not more than 6 doses in 24 hours. The dose here is the top of that range; smaller doses are not flagged."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "dextromethorphan",
+      "name": "Dextromethorphan",
+      "brandNames": [
+        "Mucinex Children's Mighty Chews Cough"
+      ],
+      "description": "Cough suppressant.",
+      "tags": [
+        "antitussive"
+      ],
+      "embodiments": [
+        {
+          "key": "chewable-tablet-10mg",
+          "label": "10 mg chewable tablet (Children's)",
+          "unitType": "tablet",
+          "strengthMgPerUnit": 10,
+          "notes": "Chew thoroughly before swallowing. Children under 6 years: do not use. If you do not know whether a prescription drug contains an MAOI, ask a doctor or pharmacist before taking. Stop use and ask a doctor if cough lasts more than 7 days, comes back, or occurs with fever, rash or headache.",
+          "guidelines": [
+            {
+              "key": "label-age-band-72-143mo",
+              "source": "Manufacturer label — Mucinex Children's Mighty Chews Cough, 6 to under 12 years",
+              "type": "age_band",
+              "ageMinMonths": 72,
+              "ageMaxMonths": 143,
+              "doseMg": 10,
+              "pillCount": 1,
+              "maxMgPerDay": 60,
+              "frequencyPerDay": 6,
+              "notes": "Label: 1 chewable tablet every 4 hours or as directed by a doctor; not more than 6 chewable tablets in any 24-hour period."
+            },
+            {
+              "key": "label-age-band-144mo-up",
+              "source": "Manufacturer label — Mucinex Children's Mighty Chews Cough, 12 years and over",
+              "type": "age_band",
+              "ageMinMonths": 144,
+              "ageMaxMonths": 1500,
+              "doseMg": 20,
+              "pillCount": 2,
+              "maxMgPerDay": 120,
+              "frequencyPerDay": 6,
+              "notes": "Label: adults and children 12 years and over, 2 chewable tablets every 4 hours or as directed by a doctor; not more than 12 chewable tablets in any 24-hour period. No upper age on the label; 1500 months is the highest the guideline model accepts."
+            }
+          ]
         }
       ]
     }
