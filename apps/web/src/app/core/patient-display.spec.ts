@@ -1,4 +1,4 @@
-import { formatAge, isWeightStale, weightAgeDays, STALE_WEIGHT_DAYS } from './patient-display';
+import { formatAge, isWeightStale, weightAgeDays } from './patient-display';
 
 const now = new Date('2026-08-19T12:00:00');
 
@@ -31,22 +31,25 @@ describe('formatAge', () => {
 
 describe('weight staleness', () => {
   const epoch = (d: string) => Math.floor(new Date(`${d}T12:00:00`).getTime() / 1000);
+  const adult = '1985-03-02';
+  const infant = '2026-06-19'; // two months old on `now`
 
   it('treats a never-recorded weight as stale', () => {
     // No weight on file is exactly the case the dosing engine warns about.
-    expect(isWeightStale(null, now)).toBe(true);
+    expect(isWeightStale(null, adult, now)).toBe(true);
     expect(weightAgeDays(null, now)).toBeNull();
   });
 
-  it('is fresh inside the threshold and stale past it', () => {
-    expect(isWeightStale(epoch('2026-08-01'), now)).toBe(false);
-    expect(isWeightStale(epoch('2026-01-01'), now)).toBe(true);
+  it('scales the threshold to the patient\'s age, as the API does', () => {
+    // 90 days is fresh for an adult; 10 days is stale for a two-month-old.
+    expect(isWeightStale(epoch('2026-05-21'), adult, now)).toBe(false);
+    expect(isWeightStale(epoch('2026-08-09'), infant, now)).toBe(true);
+    expect(isWeightStale(epoch('2026-08-14'), infant, now)).toBe(false);
   });
 
-  it('matches the API threshold exactly at the boundary', () => {
-    const justInside = Math.floor(now.getTime() / 1000) - STALE_WEIGHT_DAYS * 86_400;
-    expect(isWeightStale(justInside, now)).toBe(false);
-    expect(isWeightStale(justInside - 86_400, now)).toBe(true);
+  it('treats a patient with no birth date as an adult', () => {
+    expect(isWeightStale(epoch('2026-05-21'), null, now)).toBe(false);
+    expect(isWeightStale(epoch('2025-01-01'), null, now)).toBe(true);
   });
 
   it('reports the age in days', () => {

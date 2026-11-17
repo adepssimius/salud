@@ -54,6 +54,6 @@ describe('Files', () => {
 
 describe('Timeline & Dashboard', () => {
   test.todo('timeline returns obs+interventions sorted; filters apply');
-  test.todo('timeline weight prompt fires when last weight > 60 days');
+  test.todo('timeline weight prompt fires when last weight is past the age-scaled threshold');
   test.todo('dashboard shows active episodes, last/next doses, atypical flag, upcoming schedules');
 });

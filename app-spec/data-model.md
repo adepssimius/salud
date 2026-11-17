@@ -758,7 +758,9 @@ the snapshot's contents do.
 ## Derived/computed data
 - `TimelineEntry` (query projection): merges observations + interventions sorted by timestamp.
 - `PatientActiveEpisodes`: query episodes where `status = 'active'`.
-- `LatestWeightPromptFlag`: computed when `now - latestWeightRecordedAt > 60 days`.
+- `LatestWeightPromptFlag`: computed when there is no `latestWeightRecordedAt`, or when
+  `now - latestWeightRecordedAt` exceeds the age-scaled threshold for the patient's age now
+  (advisories.md → "Stale weight").
 - `ScheduleAdherence` (per `InterventionSchedule`, computed on read — intended-vs-actual, F-4.3):
   - `expectedCount`: how many occurrences should have happened between `startAt` and now, derived
     from `frequencyHours` or `explicitTimes`.
