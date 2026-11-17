@@ -5,6 +5,7 @@ import {
 } from '@angular/core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import {
+  RouteReuseStrategy,
   TitleStrategy,
   provideRouter,
   withNavigationErrorHandler,
@@ -13,6 +14,7 @@ import {
 import { appRoutes } from './app.routes';
 import { authInterceptor } from './core/auth.interceptor';
 import { SaludTitleStrategy } from './core/page-title.strategy';
+import { SaludRouteReuseStrategy } from './core/route-reuse.strategy';
 import {
   provideStaleBuildRecovery,
   staleBuildNavigationErrorHandler,
@@ -42,5 +44,8 @@ export const appConfig: ApplicationConfig = {
     // `paramsInheritanceStrategy: 'always'` above is what lets the hub's children inherit the
     // parent's `patientTitle` data flag and `:id`, so each tab titles itself without repeating them.
     { provide: TitleStrategy, useExisting: SaludTitleStrategy },
+    // Rebuilds the entry forms, rather than reusing them, when Quick log re-enters one for another
+    // patient (core/route-reuse.strategy.ts).
+    { provide: RouteReuseStrategy, useExisting: SaludRouteReuseStrategy },
   ],
 };

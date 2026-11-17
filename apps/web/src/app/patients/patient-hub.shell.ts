@@ -1,7 +1,8 @@
-import { AfterViewInit, Component, ElementRef, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
+import { AfterViewInit, Component, DestroyRef, ElementRef, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { filter } from 'rxjs/operators';
+import { distinctUntilChanged, filter, map } from 'rxjs/operators';
 import { AuthService } from '../core/auth.service';
 import { formatAge, isWeightStale, weightAgeDays } from '../core/patient-display';
 import { PatientHubStore } from './patient-hub.store';
@@ -61,8 +62,19 @@ import { PatientHubStore } from './patient-hub.store';
       </nav>
 
       <!-- Held back until the signed-in user resolves. Tabs read preferences off the user for unit
-           display, and a child constructed before /users/me lands reads the wrong defaults. -->
-      <router-outlet *ngIf="ready()"></router-outlet>
+           display, and a child constructed before /users/me lands reads the wrong defaults.
+
+           Keyed on the patient id: a sidebar click from one patient's hub to another's only changes
+           the id, and Angular reuses the shell *and* the active tab for that, so a tab that loaded
+           in ngOnInit would go on showing the previous patient under the new one's URL. Rebuilding
+           the outlet per patient re-runs every tab's loads and drops anything a tab was holding —
+           a half-edited Settings form included — instead of each tab having to remember to
+           follow the id itself. -->
+      @if (ready()) {
+        @for (key of outletKey(); track key) {
+          <router-outlet></router-outlet>
+        }
+      }
     </div>
   `,
   styles: [
@@ -118,10 +130,13 @@ export class PatientHubShell implements OnInit, AfterViewInit {
   private readonly auth = inject(AuthService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
 
   @ViewChild('tabBar') private tabBar?: ElementRef<HTMLElement>;
 
   ready = signal(false);
+  /** One element, the current patient id — the `@for` key that rebuilds the tab outlet. */
+  protected outletKey = computed(() => [this.store.patientId()]);
 
   age = computed(() => formatAge(this.store.patient()?.dateOfBirth));
   // Empty until the patient lands, which matches no palette rule and leaves the neutral fallback
@@ -140,20 +155,35 @@ export class PatientHubShell implements OnInit, AfterViewInit {
   });
 
   ngOnInit(): void {
-    const patientId = this.route.snapshot.paramMap.get('id') ?? '';
-    if (!patientId) {
-      this.router.navigateByUrl('/patients');
-      return;
-    }
+    // The patient follows the route for the life of the shell, not just its first activation: the
+    // shell is reused when only `:id` changes, so reading a snapshot here once is what left the
+    // previous patient's header — and, through the store, every tab's data — on screen after a
+    // sidebar click to a sibling (frontend.md → "Patient identity"). Not gated on the user below:
+    // loading the store needs no preferences, and starting at once leaves no moment where an
+    // earlier visit's patient is still in the store when the header first renders.
+    this.route.paramMap
+      .pipe(
+        map((params) => params.get('id') ?? ''),
+        distinctUntilChanged(),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe((patientId) => {
+        if (!patientId) {
+          this.router.navigateByUrl('/patients');
+          return;
+        }
+        this.store.load(patientId);
+      });
+
     // Done once here for the whole subtree instead of once per tab, which is what the eight
     // hand-rolled copies of this block elsewhere in the app amount to.
     if (!this.auth.user() && this.auth.token) {
       this.auth.me().subscribe({
-        next: () => this.start(patientId),
+        next: () => this.ready.set(true),
         error: () => this.auth.logout(),
       });
     } else {
-      this.start(patientId);
+      this.ready.set(true);
     }
   }
 
@@ -171,7 +201,10 @@ export class PatientHubShell implements OnInit, AfterViewInit {
   ngAfterViewInit(): void {
     this.revealActiveTab();
     this.router.events
-      .pipe(filter((e) => e instanceof NavigationEnd))
+      .pipe(
+        filter((e) => e instanceof NavigationEnd),
+        takeUntilDestroyed(this.destroyRef)
+      )
       .subscribe(() => this.revealActiveTab());
   }
 
@@ -190,10 +223,5 @@ export class PatientHubShell implements OnInit, AfterViewInit {
 
   goToErBrief() {
     this.router.navigate(['/patients', this.store.patientId(), 'er-brief']);
-  }
-
-  private start(patientId: string) {
-    this.store.load(patientId);
-    this.ready.set(true);
   }
 }

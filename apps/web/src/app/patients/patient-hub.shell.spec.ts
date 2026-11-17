@@ -1,6 +1,8 @@
+import { Component, OnInit, inject } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Subject, of } from 'rxjs';
-import { ActivatedRoute, Router } from '@angular/router';
+import { BehaviorSubject, Subject, of } from 'rxjs';
+import { ActivatedRoute, ParamMap, Router, convertToParamMap, provideRouter, withRouterConfig } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { PatientHubShell } from './patient-hub.shell';
 import { PatientHubStore } from './patient-hub.store';
 import { AuthService } from '../core/auth.service';
@@ -35,6 +37,12 @@ const patient = {
   codeStatus: null,
   codeStatusSetByUserId: null,
   codeStatusSetAt: null,
+};
+
+/** An ActivatedRoute stand-in whose `:id` can change under a live shell, as a sidebar click does. */
+const routeFor = (id: string | null) => {
+  const paramMap = new BehaviorSubject<ParamMap>(convertToParamMap(id ? { id } : {}));
+  return { paramMap, snapshot: { paramMap: paramMap.value } };
 };
 
 describe('PatientHubShell', () => {
@@ -83,7 +91,7 @@ describe('PatientHubShell', () => {
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
         { provide: Router, useValue: routerMock },
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 'p1']]) } } },
+        { provide: ActivatedRoute, useValue: routeFor('p1') },
       ],
     }).compileComponents();
   });
@@ -164,7 +172,7 @@ describe('PatientHubShell', () => {
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
         { provide: Router, useValue: routerMock },
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 'p1']]) } } },
+        { provide: ActivatedRoute, useValue: routeFor('p1') },
       ],
     });
     const stale = TestBed.createComponent(PatientHubShell);
@@ -199,11 +207,165 @@ describe('PatientHubShell', () => {
         { provide: ApiClientService, useValue: apiMock },
         { provide: AuthService, useValue: authMock },
         { provide: Router, useValue: routerMock },
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map() } } },
+        { provide: ActivatedRoute, useValue: routeFor(null) },
       ],
     });
     const fixture = TestBed.createComponent(PatientHubShell);
     fixture.detectChanges();
     expect(routerMock.navigateByUrl).toHaveBeenCalledWith('/patients');
+  });
+
+  describe('switching patients in place', () => {
+    // frontend.md → "Patient identity". A sidebar click from one patient's hub to another's changes
+    // only `:id`, and Angular reuses the shell for it. The bug this covers: the shell read `:id`
+    // once, so the header — and every tab, through the store — went on showing the sibling.
+    const sibling = { ...patient, id: 'p2', fullName: 'Sam Doe', accentColor: 'teal', sexAtBirth: 'male' };
+    let route: ReturnType<typeof routeFor>;
+    let responses: Record<string, Subject<any>>;
+
+    beforeEach(() => {
+      TestBed.resetTestingModule();
+      route = routeFor('p1');
+      responses = {};
+      // Each GET answers only when the test says so, which is what lets it play responses out of order.
+      apiMock.get.mockImplementation((path: string) => (responses[path] ??= new Subject<any>()));
+      TestBed.configureTestingModule({
+        imports: [PatientHubShell],
+        providers: [
+          PatientHubStore,
+          { provide: ApiClientService, useValue: apiMock },
+          { provide: AuthService, useValue: authMock },
+          { provide: Router, useValue: routerMock },
+          { provide: ActivatedRoute, useValue: route },
+        ],
+      });
+    });
+
+    const answer = (path: string, body: any) => responses[path].next(body);
+    const header = (fixture: any) => fixture.nativeElement.querySelector('.hub-header').textContent;
+
+    it('follows the route to the new patient: requests, header, accent and ER Brief', () => {
+      const fixture = build();
+      answer('/patients/p1', patient);
+      answer('/patients/p1/episodes', [{ id: 'e1', name: 'Jamie flu' }]);
+      fixture.detectChanges();
+      expect(header(fixture)).toContain('Jamie flu');
+
+      route.paramMap.next(convertToParamMap({ id: 'p2' }));
+      expect(apiMock.get).toHaveBeenCalledWith('/patients/p2');
+      expect(apiMock.get).toHaveBeenCalledWith('/patients/p2/reactions');
+      expect(apiMock.get).toHaveBeenCalledWith('/patients/p2/episodes', { status: 'active' });
+      expect(apiMock.get).toHaveBeenCalledWith('/patients/p2/care-team');
+      answer('/patients/p2', sibling);
+      fixture.detectChanges();
+
+      expect(header(fixture)).toContain('Sam Doe');
+      expect(header(fixture)).toContain('male');
+      expect(header(fixture)).not.toContain('Jamie');
+      expect(fixture.componentInstance.accentClass()).toBe('accent-teal');
+      fixture.componentInstance.goToErBrief();
+      expect(routerMock.navigate).toHaveBeenLastCalledWith(['/patients', 'p2', 'er-brief']);
+    });
+
+    it("clears the previous patient's header the moment the id changes, before the new one loads", () => {
+      const fixture = build();
+      answer('/patients/p1', patient);
+      answer('/patients/p1/episodes', [{ id: 'e1', name: 'Jamie flu' }]);
+      fixture.detectChanges();
+
+      route.paramMap.next(convertToParamMap({ id: 'p2' }));
+      fixture.detectChanges();
+      // Nothing for p2 has answered yet: the header must be blank, not still Jamie's.
+      const text = header(fixture);
+      expect(text).not.toContain('Jamie');
+      expect(text).not.toContain('Jamie flu');
+      expect(text).not.toContain('6y');
+      expect(fixture.componentInstance.accentClass()).toBe('');
+      expect(fixture.componentInstance.weightStale()).toBe(false);
+    });
+
+    it('ignores a late response for the previous patient', () => {
+      // Click A, then B quickly; A's answers arrive last.
+      const fixture = build();
+      route.paramMap.next(convertToParamMap({ id: 'p2' }));
+      answer('/patients/p2', sibling);
+      answer('/patients/p2/episodes', []);
+      answer('/patients/p1', patient);
+      answer('/patients/p1/episodes', [{ id: 'e1', name: 'Jamie flu' }]);
+      answer('/patients/p1/reactions', [{ id: 'r1', severity: 'danger', description: 'throat swelling' }]);
+      fixture.detectChanges();
+
+      const store = fixture.componentInstance['store'] as PatientHubStore;
+      expect(store.patient()?.id).toBe('p2');
+      expect(store.activeEpisodes()).toEqual([]);
+      expect(store.reactions()).toEqual([]);
+      expect(header(fixture)).toContain('Sam Doe');
+      expect(header(fixture)).not.toContain('Jamie');
+      expect(header(fixture)).not.toContain('throat swelling');
+    });
+  });
+});
+
+/** A hub tab stand-in that records which patient it loaded for, the way the real tabs do in ngOnInit. */
+@Component({ standalone: true, template: `tab for {{ loadedFor }}` })
+class RecordingTab implements OnInit {
+  static loads: string[] = [];
+  private readonly store = inject(PatientHubStore);
+  loadedFor = '';
+  ngOnInit() {
+    this.loadedFor = this.store.patientId();
+    RecordingTab.loads.push(this.loadedFor);
+  }
+}
+
+describe('PatientHubShell under the real router', () => {
+  // The unit tests above stub the route; this one drives real navigation, because the failure was
+  // the router *reusing* the shell and its active tab when only `:id` changed.
+  const people: Record<string, any> = {
+    p1: { ...patient, id: 'p1', fullName: 'Jamie Doe' },
+    p2: { ...patient, id: 'p2', fullName: 'Sam Doe' },
+  };
+
+  beforeEach(() => {
+    RecordingTab.loads = [];
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter(
+          [
+            {
+              path: 'patients/:id',
+              component: PatientHubShell,
+              providers: [PatientHubStore],
+              children: [{ path: 'journal', component: RecordingTab }],
+            },
+          ],
+          withRouterConfig({ paramsInheritanceStrategy: 'always' })
+        ),
+        {
+          provide: ApiClientService,
+          useValue: { get: jest.fn((path: string) => of(people[path.split('/')[2]] && path.split('/').length === 3 ? people[path.split('/')[2]] : [])) },
+        },
+        {
+          provide: AuthService,
+          useValue: { token: 't', user: () => ({ id: 'u1' }), me: jest.fn(), logout: jest.fn() },
+        },
+      ],
+    });
+  });
+
+  it('rebuilds the active tab for the new patient on a sidebar-style switch', async () => {
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/patients/p1/journal');
+    expect(harness.routeNativeElement?.textContent).toContain('Jamie Doe');
+    expect(harness.routeNativeElement?.textContent).toContain('tab for p1');
+
+    await harness.navigateByUrl('/patients/p2/journal');
+    const text = harness.routeNativeElement?.textContent ?? '';
+    expect(text).toContain('Sam Doe');
+    expect(text).toContain('tab for p2');
+    expect(text).not.toContain('Jamie');
+    expect(text).not.toContain('tab for p1');
+    // The tab ran its loads again, for p2 — not reused with p1's.
+    expect(RecordingTab.loads).toEqual(['p1', 'p2']);
   });
 });

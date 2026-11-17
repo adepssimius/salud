@@ -245,6 +245,9 @@ export type InterventionType = 'medication_dose' | 'dressing_change';
  * set up earlier rather than a decision made in the moment; a client never sends this value.
  */
 export type DoseSource = 'weight_based' | 'age_based' | 'override' | 'schedule';
+
+/** Which check sets a live `canGiveAt` (api.md → "Dosing engine" → "Live availability"). */
+export type DoseLimitedBy = 'interval' | 'daily_max';
 export const DOSE_SOURCES: readonly DoseSource[] = ['weight_based', 'age_based', 'override', 'schedule'];
 
 export interface Intervention {
@@ -1058,6 +1061,14 @@ export interface DashboardMedicationSummary {
   medicationName: string;
   lastDoseAt: number; // epoch seconds
   nextAllowedAt: number | null;
+  /**
+   * The live answer to "can I give it now?": the earliest moment a repeat of the patient's latest
+   * dose of this medication clears both the interval and the daily maximum, computed at request
+   * time (api.md → "Dosing engine" → "Live availability"). Every "can give now" reads this, never
+   * `nextAllowedAt`. null = no interval and no daily max.
+   */
+  canGiveAt: number | null;
+  limitedBy: DoseLimitedBy | null;
   isAtypicalLastDose: boolean;
   /**
    * The sick card's one-tap repeat-dose prefill, mirroring RecentMedication's `last*` fields —
@@ -1083,6 +1094,14 @@ export interface DashboardLastDose {
   lastDoseAt: number; // epoch seconds
   /** Frozen at log time, not recomputed. null = no guideline supplied an interval. */
   nextAllowedAt: number | null;
+  /**
+   * The live answer to "can I give it now?": the earliest moment a repeat of the patient's latest
+   * dose of this medication clears both the interval and the daily maximum, computed at request
+   * time (api.md → "Dosing engine" → "Live availability"). Every "can give now" reads this, never
+   * `nextAllowedAt`. null = no interval and no daily max.
+   */
+  canGiveAt: number | null;
+  limitedBy: DoseLimitedBy | null;
   isAtypicalLastDose: boolean;
   /**
    * Repeat-dose prefill, exactly as on DashboardMedicationSummary — the sick card merges the two
@@ -1739,6 +1758,14 @@ export interface RecentMedication {
    * supplied an interval, which is correct rather than missing (api.md → Timeline & dashboard).
    */
   nextAllowedAt: number | null;
+  /**
+   * The live answer to "can I give it now?": the earliest moment a repeat of the patient's latest
+   * dose of this medication clears both the interval and the daily maximum, computed at request
+   * time (api.md → "Dosing engine" → "Live availability"). Every "can give now" reads this, never
+   * `nextAllowedAt`. null = no interval and no daily max.
+   */
+  canGiveAt: number | null;
+  limitedBy: DoseLimitedBy | null;
   isAtypicalLastDose: boolean;
   onActiveSchedule: boolean;
 }

@@ -85,4 +85,13 @@ describe('nextDoseLabel', () => {
   it('reads "can give now" at the exact instant, not "next dose now"', () => {
     expect(nextDoseLabel(NOW, NOW)).toBe('can give now');
   });
+
+  it('names the daily maximum when that is what holds the dose back', () => {
+    expect(nextDoseLabel(NOW + 6000, NOW, 'daily_max')).toBe('daily max — next dose in 1h 40m');
+    expect(nextDoseLabel(NOW + 6000, NOW, 'interval')).toBe('next dose in 1h 40m');
+  });
+
+  it('still reads "can give now" once a daily-max wait has passed', () => {
+    expect(nextDoseLabel(NOW - 1, NOW, 'daily_max')).toBe('can give now');
+  });
 });

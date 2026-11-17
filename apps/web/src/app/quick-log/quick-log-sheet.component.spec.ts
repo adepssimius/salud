@@ -17,7 +17,7 @@ const RECENT = {
   lastAmountMl: 5,
   lastEmbodimentId: 'emb-1',
   lastEmbodimentLabel: 'infant suspension 160mg/5mL',
-  nextAllowedAt: Math.floor(Date.now() / 1000) + 3600,
+  canGiveAt: Math.floor(Date.now() / 1000) + 3600,
   isAtypicalLastDose: false,
   onActiveSchedule: false,
 };
@@ -31,7 +31,7 @@ const SCHEDULED_ONLY = {
   lastAmountMl: null,
   lastEmbodimentId: null,
   lastEmbodimentLabel: null,
-  nextAllowedAt: null,
+  canGiveAt: null,
   onActiveSchedule: true,
 };
 
@@ -167,6 +167,18 @@ describe('QuickLogSheetComponent', () => {
       expect(text).toContain('infant suspension 160mg/5mL');
       expect(text).toContain('ago');
       expect(text).toContain('next dose in');
+    });
+
+    it('reads the live canGiveAt, so a patient at the daily max is not told "can give now"', () => {
+      const nowS = Math.floor(Date.now() / 1000);
+      const fixture = render([PATIENTS[0]], null, [
+        { ...RECENT, nextAllowedAt: nowS - 3600, canGiveAt: nowS + 5 * 3600, limitedBy: 'daily_max' },
+      ]);
+      fixture.componentInstance.chooseVerb('dose');
+      fixture.detectChanges();
+      const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+      expect(text).toContain('daily max — next dose in 5h');
+      expect(text).not.toContain('can give now');
     });
 
     it('prefills medication, embodiment and amount from the tapped card', () => {

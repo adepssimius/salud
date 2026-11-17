@@ -19,6 +19,7 @@ import { ObservationsService } from '../observations/observations.service';
 import { InterventionsService } from '../interventions/interventions.service';
 import { EpisodesService } from '../episodes/episodes.service';
 import { AnalytesService } from '../analytes/analytes.service';
+import { DosingService, availabilityKey } from '../dosing/dosing.service';
 import {
   advisoriesSince,
   interventionsSince,
@@ -29,6 +30,7 @@ import {
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
 import {
+  DoseLimitedBy,
   DoseSource,
   PatientAccentColor,
   TemperatureMethod,
@@ -82,6 +84,9 @@ function projectDoseSummary(medicationId: string, v: DoseSummarySource) {
     medicationName: '',
     lastDoseAt: v.performedAtTs,
     nextAllowedAt: v.nextAllowedAt,
+    // Filled in by getDashboard from one batched DosingService.availability call.
+    canGiveAt: null as number | null,
+    limitedBy: null as DoseLimitedBy | null,
     isAtypicalLastDose: v.isAtypical,
     lastEmbodimentId: v.embodimentId,
     lastEmbodimentLabel: null as string | null,
@@ -100,6 +105,7 @@ export class TimelineService {
     private readonly interventionsService: InterventionsService,
     private readonly episodesService: EpisodesService,
     private readonly analytesService: AnalytesService,
+    private readonly dosingService: DosingService,
   ) {}
 
   private async resolveMedicationIdsForTag(tag: string): Promise<Set<string>> {
@@ -693,6 +699,25 @@ export class TimelineService {
       for (const d of p.doses) {
         d.lastEmbodimentLabel = d.lastEmbodimentId ? (embodimentLabelById.get(d.lastEmbodimentId) ?? null) : null;
       }
+    }
+
+    // The live "can give now" for every row both arrays carry, in one batched engine call — interval
+    // AND daily maximum, from the patient's latest dose of each medication (api.md → "Dosing
+    // engine" → "Live availability"). An episode row asks about the patient, not the episode: the
+    // daily window does not stop at an episode boundary.
+    const availabilityRows: any[] = [
+      ...activeEpisodes.flatMap((ep: any) => ep.medications.map((m: any) => ({ patientId: ep.patientId, m }))),
+      ...lastDoses.flatMap((p: any) => p.doses.map((d: any) => ({ patientId: p.patientId, m: d }))),
+    ];
+    const availability = await this.dosingService.availability(
+      userId,
+      availabilityRows.map((r) => ({ patientId: r.patientId, medicationId: r.m.medicationId, knownLastDoseAt: r.m.lastDoseAt })),
+      nowTs,
+    );
+    for (const r of availabilityRows) {
+      const a = availability.get(availabilityKey(r.patientId, r.m.medicationId));
+      r.m.canGiveAt = a?.canGiveAt ?? null;
+      r.m.limitedBy = a?.limitedBy ?? null;
     }
 
     // Sick patients only, and derived from activeEpisodes rather than re-queried: whatever counts as

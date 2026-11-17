@@ -558,6 +558,47 @@ describe('NewObservationPage', () => {
       expect(fixture.componentInstance.selectedEpisodeIds()).toEqual([]);
       expect(fixture.componentInstance.form.getRawValue().episodeSelection).toEqual([]);
     });
+
+    // frontend.md → Quick Log → "Episode attachment": on the full form the start control is on
+    // screen without opening anything, whatever the patient's episode state.
+    const hasMore = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll('button')).some((b) => ['More', 'Less'].includes(b.textContent!.trim()));
+
+    for (const [label, episodes] of [
+      ['no active episode', []],
+      ['one active episode', [{ id: 'ep1', name: 'Fever' }]],
+      ['two active episodes', [{ id: 'ep1', name: 'Fever' }, { id: 'ep2', name: 'Rash' }]],
+    ] as const) {
+      it(`shows "Start a new episode" with no More to open — ${label}`, () => {
+        const el = renderWithEpisodes([...episodes]).nativeElement as HTMLElement;
+        expect(el.textContent).toContain('Start a new episode');
+        expect(hasMore(el)).toBe(false);
+      });
+    }
+
+    it('starts a new episode from the visible control, unchanged on the wire', () => {
+      const fixture = renderWithEpisodes([{ id: 'ep1', name: 'Fever' }]);
+      const el = fixture.nativeElement as HTMLElement;
+      const start = Array.from(el.querySelectorAll('app-episode-attachment label.inline-check')).find((l) =>
+        l.textContent!.includes('Start a new episode'),
+      )!.querySelector('input') as HTMLInputElement;
+      start.click();
+      fixture.detectChanges();
+      const name = el.querySelector('app-episode-attachment input[type="text"]') as HTMLInputElement;
+      name.value = 'Croup';
+      name.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      apiMock.post.mockReturnValue(of({ id: 'o1' }));
+      const comp = fixture.componentInstance;
+      comp.form.patchValue({ observedAt: '2026-11-16T03:00' });
+      comp.entries.set([{ type: 'note', metadata: { text: 'coughing' } } as any]);
+      comp.submit();
+      const body = apiMock.post.mock.calls[0][1];
+      expect(body.startEpisodeName).toBe('Croup');
+      expect(body.episodeIds).toEqual(['ep1']);
+      expect(body.resolvesEpisodeIds).toBeUndefined();
+    });
   });
 
   // frontend.md → Quick Log: each verb lands in this same form with the type pre-selected.
@@ -592,6 +633,17 @@ describe('NewObservationPage', () => {
     });
 
     // The pinned "For Kiddo" line names the patient; the button does not repeat it.
+    // The quick tiles stay minimal: the episode options stay behind More there.
+    it('keeps "Start a new episode" behind More', () => {
+      const fixture = renderCompact('temperature');
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.textContent).not.toContain('Start a new episode');
+      const more = Array.from(el.querySelectorAll('button')).find((b) => b.textContent!.trim() === 'More');
+      more!.click();
+      fixture.detectChanges();
+      expect(el.textContent).toContain('Start a new episode');
+    });
+
     it('labels the save button plainly, with no patient name', () => {
       const fixture = renderCompact('pain_score');
       const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
