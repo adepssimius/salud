@@ -58,7 +58,10 @@ describe('Schedule edit and delete (e2e)', () => {
   describe('PATCH /api/schedules/:id', () => {
     it('rewrites the plan as if it had always been so: adherence and next due recount, linked doses stay', async () => {
       const s = await makeSchedule();
-      const logged = await auth(http().post(`/api/schedules/${s.id}/log`)).send({ performedAt: hoursAgo(47) }).expect(201);
+      // One clock reading for the dose, reused for the expectation below: reading it again there
+      // lands a second later whenever a second boundary falls in between.
+      const doseAt = hoursAgo(47);
+      const logged = await auth(http().post(`/api/schedules/${s.id}/log`)).send({ performedAt: doseAt }).expect(201);
       expect(logged.body.schedule.adherence).toMatchObject({ expectedCount: 5, loggedCount: 1 });
 
       const startAt = hoursAgo(24);
@@ -70,7 +73,7 @@ describe('Schedule edit and delete (e2e)', () => {
       const doses = await auth(http().get(`/api/schedules/${s.id}/doses`)).expect(200);
       expect(doses.body.linked.map((d: any) => d.interventionId)).toEqual([logged.body.intervention.id]);
       // Restart reading: one interval after the last dose.
-      expect(res.body.nextDueAt).toBe(Math.floor(new Date(hoursAgo(47)).getTime() / 1000) + 6 * HOUR);
+      expect(res.body.nextDueAt).toBe(Math.floor(new Date(doseAt).getTime() / 1000) + 6 * HOUR);
     });
 
     it('switches between an interval and fixed times, clearing the other', async () => {

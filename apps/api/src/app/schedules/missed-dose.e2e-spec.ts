@@ -8,10 +8,11 @@ import { createTestApp } from '../../testing/create-test-app';
 const HOUR = 3600;
 const nowSec = () => Math.floor(Date.now() / 1000);
 const iso = (sec: number) => new Date(sec * 1000).toISOString();
-const near = (actual: number | null, expected: number) => {
-  expect(actual).not.toBeNull();
-  expect(Math.abs((actual as number) - expected)).toBeLessThanOrEqual(2);
-};
+// Read the clock once per moment and derive every expectation from that one reading. Reading it
+// again for the expectation lands a second later whenever a second boundary falls in between, which
+// is how both of these specs once failed on CI (a course's end a second before its own slot, a
+// next due a second off).
+const hoursAgo = (h: number) => nowSec() - h * HOUR;
 
 async function registerAndLogin(app: INestApplication) {
   const email = `missed-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
@@ -46,8 +47,8 @@ describe('Missed-dose instruction (e2e)', () => {
     return pid;
   }
 
-  // Every 8 h from `startHoursAgo` hours ago, with an optional instruction.
-  async function schedule(pid: string, startHoursAgo: number, extra: Record<string, unknown> = {}) {
+  // Every 8 h from `start` (epoch seconds), with an optional instruction.
+  async function schedule(pid: string, start: number, extra: Record<string, unknown> = {}) {
     return (
       await request(server())
         .post(`/api/patients/${pid}/schedules`)
@@ -59,7 +60,7 @@ describe('Missed-dose instruction (e2e)', () => {
           medicationEmbodimentId: embodimentId,
           doseMg: 100,
           frequencyHours: 8,
-          startAt: iso(nowSec() - startHoursAgo * HOUR),
+          startAt: iso(start),
           ...extra,
         })
         .expect(201)
@@ -110,7 +111,7 @@ describe('Missed-dose instruction (e2e)', () => {
 
   it('stores the instruction and refuses one that has nothing to act on', async () => {
     const pid = await patient();
-    const s = await schedule(pid, 1, {
+    const s = await schedule(pid, hoursAgo(1), {
       missedDoseAction: 'take_late_keep_times',
       missedDoseCutoffHours: 2,
       missedDoseCourseEffect: 'finish_every_dose',
@@ -129,7 +130,7 @@ describe('Missed-dose instruction (e2e)', () => {
     expect((await post({ missedDoseCourseEffect: 'end_on_date' }).expect(400)).body.message).toBe('MISSED_DOSE_INSTRUCTION_INVALID');
     await post({ missedDoseAction: 'whenever' }).expect(400);
     // Checked against the merged result: clearing the end under a course effect is refused too.
-    const withEnd = await schedule(pid, 1, { missedDoseCourseEffect: 'end_on_date', endAfterOccurrences: 3 });
+    const withEnd = await schedule(pid, hoursAgo(1), { missedDoseCourseEffect: 'end_on_date', endAfterOccurrences: 3 });
     expect((await request(server()).patch(`/api/schedules/${withEnd.id}`).set(auth()).send({ missedDoseCourseEffect: 'end_on_date', endAfterOccurrences: null }).expect(400)).body.message).toBe(
       'MISSED_DOSE_INSTRUCTION_INVALID',
     );
@@ -140,28 +141,29 @@ describe('Missed-dose instruction (e2e)', () => {
 
   it('keeps the times on a late dose, where restarting the clock follows the dose', async () => {
     const pid = await patient();
-    const start = nowSec() - 9 * HOUR; // slots at -9h and -1h
-    const keep = await schedule(pid, 9, { missedDoseAction: 'take_late_keep_times' });
-    const restart = await schedule(pid, 9, { missedDoseAction: 'take_late_restart' });
-    const none = await schedule(pid, 9);
+    const start = hoursAgo(9); // slots at -9h and -1h
+    const keep = await schedule(pid, start, { missedDoseAction: 'take_late_keep_times' });
+    const restart = await schedule(pid, start, { missedDoseAction: 'take_late_restart' });
+    const none = await schedule(pid, start);
     for (const s of [keep, restart, none]) await giveDose(pid, s.id, start + 2 * HOUR); // 2 h late
 
-    near((await getSchedule(keep.id)).nextDueAt, start + 8 * HOUR); // the planned -1h slot
-    near((await getSchedule(restart.id)).nextDueAt, start + 10 * HOUR); // dose + 8 h
+    expect((await getSchedule(keep.id)).nextDueAt).toBe(start + 8 * HOUR); // the planned -1h slot
+    expect((await getSchedule(restart.id)).nextDueAt).toBe(start + 10 * HOUR); // dose + 8 h
     // No instruction behaves exactly as before instructions existed: the clock restarts.
-    near((await getSchedule(none.id)).nextDueAt, start + 10 * HOUR);
+    expect((await getSchedule(none.id)).nextDueAt).toBe(start + 10 * HOUR);
     expect((await getSchedule(keep.id)).adherence.overdue).toBe(true);
     expect((await getSchedule(restart.id)).adherence.overdue).toBe(false);
   });
 
   it('a dose filed from the dose form moves the schedule, and another patient\'s schedule is not found', async () => {
     const pid = await patient();
-    const s = await schedule(pid, 1);
+    const s = await schedule(pid, hoursAgo(1));
     expect((await getSchedule(s.id)).adherence.overdue).toBe(true);
-    await giveDose(pid, s.id, nowSec() - 60);
+    const doseAt = nowSec() - 60;
+    await giveDose(pid, s.id, doseAt);
     const after = await getSchedule(s.id);
     expect(after.adherence).toMatchObject({ loggedCount: 1, overdue: false });
-    near(after.nextDueAt, nowSec() - 60 + 8 * HOUR);
+    expect(after.nextDueAt).toBe(doseAt + 8 * HOUR);
 
     const other = await patient();
     const res = await request(server())
@@ -174,21 +176,21 @@ describe('Missed-dose instruction (e2e)', () => {
 
   it('records a tapped skip as skipped, not missed, and can undo it', async () => {
     const pid = await patient();
-    const start = nowSec() - 9 * HOUR;
-    const s = await schedule(pid, 9, { missedDoseAction: 'skip' });
+    const start = hoursAgo(9);
+    const s = await schedule(pid, start, { missedDoseAction: 'skip' });
     let cur = await getSchedule(s.id);
     expect(cur.missedDose).toMatchObject({ action: 'skip', pastCutoff: false, doubleNextDue: false });
-    near(cur.missedDose.slotAt, start);
+    expect(cur.missedDose.slotAt).toBe(start);
 
     // Only the current missed slot can be skipped.
     expect((await request(server()).post(`/api/schedules/${s.id}/skips`).set(auth()).send({ slotAt: start + 8 * HOUR }).expect(400)).body.message).toBe(
       'SCHEDULE_SLOT_NOT_SKIPPABLE',
     );
     cur = (await request(server()).post(`/api/schedules/${s.id}/skips`).set(auth()).send({}).expect(201)).body;
-    near(cur.missedDose.slotAt, start + 8 * HOUR); // the -1h slot is now the missed one
+    expect(cur.missedDose.slotAt).toBe(start + 8 * HOUR); // the -1h slot is now the missed one
     cur = (await request(server()).post(`/api/schedules/${s.id}/skips`).set(auth()).send({}).expect(201)).body;
     expect(cur.missedDose).toBeNull();
-    near(cur.nextDueAt, start + 16 * HOUR);
+    expect(cur.nextDueAt).toBe(start + 16 * HOUR);
     expect(cur.adherence).toMatchObject({ expectedCount: 2, loggedCount: 0, skippedCount: 2, missed: 0, overdue: false });
 
     // Nothing missed now: nothing to skip.
@@ -203,26 +205,27 @@ describe('Missed-dose instruction (e2e)', () => {
   it('says when a take-late dose is past its cutoff', async () => {
     const pid = await patient();
     // Slots at -7h and +1h: the next dose is an hour away.
-    const within = await schedule(pid, 7, { missedDoseAction: 'take_late_keep_times', missedDoseCutoffHours: 2 });
-    const outside = await schedule(pid, 7, { missedDoseAction: 'take_late_keep_times', missedDoseCutoffHours: 0.5 });
+    const start = hoursAgo(7);
+    const within = await schedule(pid, start, { missedDoseAction: 'take_late_keep_times', missedDoseCutoffHours: 2 });
+    const outside = await schedule(pid, start, { missedDoseAction: 'take_late_keep_times', missedDoseCutoffHours: 0.5 });
     expect((await getSchedule(within.id)).missedDose).toMatchObject({ pastCutoff: true });
     expect((await getSchedule(outside.id)).missedDose).toMatchObject({ pastCutoff: false });
   });
 
   it('logs the prescribed double: twice the amount, the missed slot made up, and every warning still raised with its reason', async () => {
     const pid = await patient(10);
-    const start = nowSec() - 9 * HOUR;
-    const plain = await schedule(pid, 9);
+    const start = hoursAgo(9);
+    const plain = await schedule(pid, start);
     expect((await request(server()).post(`/api/schedules/${plain.id}/log`).set(auth()).send({ double: true }).expect(400)).body.message).toBe('DOUBLE_DOSE_NOT_DUE');
 
-    const s = await schedule(pid, 9, { missedDoseAction: 'double_next' });
+    const s = await schedule(pid, start, { missedDoseAction: 'double_next' });
     expect((await getSchedule(s.id)).missedDose).toMatchObject({ doubleNextDue: true });
     const res = (await request(server()).post(`/api/schedules/${s.id}/log`).set(auth()).send({ double: true }).expect(201)).body;
     expect(res.intervention.metadata).toMatchObject({ amountMg: 200, prescribedDouble: true, isAtypical: true });
     expect(res.intervention.metadata.atypicalReason).toContain('exceeds_max_per_dose');
     // The -9h slot made up, the -1h slot covered by this dose: next is the +7h slot.
     expect(res.schedule.adherence).toMatchObject({ loggedCount: 1, skippedCount: 1, missed: 0 });
-    near(res.schedule.nextDueAt, start + 16 * HOUR);
+    expect(res.schedule.nextDueAt).toBe(start + 16 * HOUR);
     const skips = (await request(server()).get(`/api/schedules/${s.id}/skips`).set(auth()).expect(200)).body;
     expect(skips.map((k: any) => k.reason)).toEqual(['made_up_by_double']);
     // A slot made up by a dose goes only with that dose.
@@ -251,26 +254,28 @@ describe('Missed-dose instruction (e2e)', () => {
       await request(server()).post(`/api/schedules/${id}/skips`).set(auth()).send({}).expect(201);
       return (await request(server()).post(`/api/schedules/${id}/skips`).set(auth()).send({}).expect(201)).body;
     };
+    const start = hoursAgo(9);
     // A count course of 3 (slots -9h, -1h, +7h) with two skips.
-    const finish = await skipBoth((await schedule(pid, 9, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'finish_every_dose' })).id);
+    const finish = await skipBoth((await schedule(pid, start, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'finish_every_dose' })).id);
     expect(finish).toMatchObject({ status: 'active' });
     expect(finish.adherence.remainingOccurrences).toBe(3); // every dose still to give
-    const onDate = await skipBoth((await schedule(pid, 9, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'end_on_date' })).id);
+    const onDate = await skipBoth((await schedule(pid, start, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'end_on_date' })).id);
     expect(onDate.adherence.remainingOccurrences).toBe(1); // ends at its third planned slot
 
-    // A date course ending at the -1h slot.
-    const endAt = iso(nowSec() - 1 * HOUR);
-    const dateFinish = await skipBoth((await schedule(pid, 9, { missedDoseAction: 'skip', endAt, missedDoseCourseEffect: 'finish_every_dose' })).id);
+    // A date course ending exactly at the -1h slot. Taken from the same `start`: an end read from the
+    // clock separately can fall a second before that slot, and then the course is over after one skip.
+    const endAt = iso(start + 8 * HOUR);
+    const dateFinish = await skipBoth((await schedule(pid, start, { missedDoseAction: 'skip', endAt, missedDoseCourseEffect: 'finish_every_dose' })).id);
     expect(dateFinish.status).toBe('active'); // runs two slots longer
     expect(dateFinish.nextDueAt).not.toBeNull();
-    const dateEnd = await skipBoth((await schedule(pid, 9, { missedDoseAction: 'skip', endAt, missedDoseCourseEffect: 'end_on_date' })).id);
+    const dateEnd = await skipBoth((await schedule(pid, start, { missedDoseAction: 'skip', endAt, missedDoseCourseEffect: 'end_on_date' })).id);
     expect(dateEnd.status).toBe('completed');
     expect(dateEnd.nextDueAt).toBeNull();
   });
 
   it('keeps every route behind the care team', async () => {
     const pid = await patient();
-    const s = await schedule(pid, 9, { missedDoseAction: 'skip' });
+    const s = await schedule(pid, hoursAgo(9), { missedDoseAction: 'skip' });
     const outsider = await registerAndLogin(app);
     const as = { Authorization: `Bearer ${outsider.token}` };
     await request(server()).post(`/api/schedules/${s.id}/skips`).set(as).send({}).expect(404);
