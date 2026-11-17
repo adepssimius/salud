@@ -59,17 +59,21 @@ import {
               <option value="dressing_change">Dressing change</option>
             </select>
           </label>
-          <label class="field" *ngIf="!prefillConditionId">
-            <span>Episode (optional)</span>
-            <select formControlName="episodeId">
-              <option value="">None</option>
-              <option *ngFor="let ep of episodeOptions()" [value]="ep.id">{{ ep.name }}</option>
-            </select>
-          </label>
           <p class="muted condition-note" *ngIf="prefillConditionId">
             Linked to this Condition's standing regimen.
           </p>
         </div>
+
+        <!-- Any number of episodes, condition or not: one course can treat two episodes that
+             happen to overlap (frontend.md → New schedule form → "Episodes"). -->
+        <fieldset class="episodes">
+          <legend>Episodes (optional)</legend>
+          <label class="inline-check" *ngFor="let ep of episodeOptions()">
+            <input type="checkbox" [checked]="episodeChecked(ep.id)" (change)="toggleEpisode(ep.id, $event)" />
+            <span>{{ ep.name }}<span class="muted small" *ngIf="ep.status === 'resolved'"> · resolved</span></span>
+          </label>
+          <p class="muted small" *ngIf="!episodeOptions().length">No active episode for this patient.</p>
+        </fieldset>
 
         <!-- A dose of one medicine must not count toward a schedule for another (api.md →
              "Editing a schedule"), so these two stay put once doses are logged. -->
@@ -342,7 +346,8 @@ import {
       .link {
         font-size: 0.85rem;
       }
-      .how-often {
+      .how-often,
+      .episodes {
         /* A fieldset's default min-inline-size is min-content, so a select with long option text
            pushed the whole page wider than a phone. */
         min-width: 0;
@@ -358,7 +363,8 @@ import {
         width: 100%;
         max-width: 100%;
       }
-      .how-often legend {
+      .how-often legend,
+      .episodes legend {
         padding: 0 0.25rem;
         color: var(--text-muted);
       }
@@ -404,19 +410,24 @@ export class NewSchedulePage implements OnInit, OnDestroy {
   /** Doses linked to the schedule being edited; type and medicine are fixed once there are any. */
   linkedCount = signal(0);
   locked = computed(() => !!this.editId && this.linkedCount() > 0);
-  /** The schedule's own episode, when it is no longer active and so missing from the list. */
-  private currentEpisode = signal<{ id: string; name: string } | null>(null);
+  /**
+   * The episodes offered: every active one, plus any the schedule was attached to when the form
+   * opened (an edit of a schedule on a resolved episode keeps it ticked rather than silently
+   * dropping it, and unticking it by mistake can be undone).
+   */
   episodeOptions = computed(() => {
-    const list = this.activeEpisodes();
-    const cur = this.currentEpisode();
-    return cur && !list.some((e) => e.id === cur.id) ? [cur, ...list] : list;
+    const attached = new Set([...this.episodeIdsAtLoad(), ...this.episodeIds()]);
+    return this.patientEpisodes().filter((e) => e.status === 'active' || attached.has(e.id));
   });
+  private episodeIdsAtLoad = signal<string[]>([]);
+  /** The ticked episodes — the form's `episodeIds`. */
+  episodeIds = signal<string[]>([]);
   /** The timing as loaded, to tell when an edit would recount a course that already has doses. */
   private timingBaseline: string | null = null;
   rewritesPast = signal(false);
 
   patients = signal<Patient[]>([]);
-  activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
+  patientEpisodes = signal<Array<{ id: string; name: string; status: string }>>([]);
   saving = signal(false);
   error = signal<string | null>(null);
 
@@ -429,7 +440,6 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     patientId: ['', Validators.required],
     label: ['', Validators.required],
     type: this.fb.control<ScheduleType>('medication_dose', { nonNullable: true }),
-    episodeId: [''],
     conditionId: [''],
     medicationId: [''],
     medicationEmbodimentId: [''],
@@ -513,11 +523,8 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     this.prefillPatientId = this.route.snapshot.queryParamMap.get('patientId');
     this.prefillEpisodeId = this.route.snapshot.queryParamMap.get('episodeId');
     this.editId = this.route.snapshot.paramMap?.get('id') ?? null;
-    if (this.prefillConditionId) {
-      this.form.patchValue({ conditionId: this.prefillConditionId });
-    } else if (this.prefillEpisodeId) {
-      this.form.patchValue({ episodeId: this.prefillEpisodeId });
-    }
+    if (this.prefillConditionId) this.form.patchValue({ conditionId: this.prefillConditionId });
+    if (this.prefillEpisodeId) this.episodeIds.set([this.prefillEpisodeId]);
 
     // A change to the name box itself is the caregiver's — the generated name is written with
     // emitEvent: false, so it never arrives here. It fires before the form-level change below,
@@ -595,7 +602,6 @@ export class NewSchedulePage implements OnInit, OnDestroy {
       patientId: s.patientId,
       label: s.label,
       type: s.type,
-      episodeId: s.episodeId ?? '',
       conditionId: s.conditionId ?? '',
       medicationId: s.medicationId ?? '',
       medicationEmbodimentId: s.medicationEmbodimentId ?? '',
@@ -628,13 +634,9 @@ export class NewSchedulePage implements OnInit, OnDestroy {
 
     this.form.controls.patientId.disable({ emitEvent: false });
     if (this.locked()) this.form.controls.type.disable({ emitEvent: false });
-    if (!s.conditionId) this.loadEpisodes(s.patientId);
-    if (s.episodeId) {
-      this.api.get<{ id: string; name: string }>(`/episodes/${s.episodeId}`).subscribe({
-        next: (ep) => this.currentEpisode.set({ id: ep.id, name: ep.name }),
-        error: () => this.currentEpisode.set(null),
-      });
-    }
+    this.episodeIds.set([...s.episodeIds]);
+    this.episodeIdsAtLoad.set([...s.episodeIds]);
+    this.loadEpisodes(s.patientId);
 
     if (!s.medicationId) {
       this.prefillFinished(s);
@@ -676,24 +678,36 @@ export class NewSchedulePage implements OnInit, OnDestroy {
         const pid = this.prefillPatientId || current || (res.length ? res[0].id : '');
         if (pid) {
           this.form.patchValue({ patientId: pid });
-          if (!this.prefillConditionId) this.loadEpisodes(pid);
+          this.loadEpisodes(pid);
         }
       },
       error: (err) => this.error.set(errorText(err, 'Unable to load patients.')),
     });
   }
 
+  /** All the patient's episodes, so a resolved one the schedule is attached to can still be named. */
   private loadEpisodes(patientId: string) {
-    this.api.get<Array<{ id: string; name: string }>>(`/patients/${patientId}/episodes`, { status: 'active' }).subscribe({
-      next: (eps) => this.activeEpisodes.set(eps),
-      error: () => this.activeEpisodes.set([]),
+    this.api.get<Array<{ id: string; name: string; status: string }>>(`/patients/${patientId}/episodes`).subscribe({
+      next: (eps) => this.patientEpisodes.set(eps),
+      error: () => this.patientEpisodes.set([]),
     });
+  }
+
+  episodeChecked(id: string): boolean {
+    return this.episodeIds().includes(id);
+  }
+
+  toggleEpisode(id: string, event: Event) {
+    const on = (event.target as HTMLInputElement).checked;
+    this.episodeIds.update((ids) => (on ? [...ids.filter((x) => x !== id), id] : ids.filter((x) => x !== id)));
   }
 
   onPatientChange(event: Event) {
     const pid = (event.target as HTMLSelectElement).value;
     if (pid) {
       this.form.patchValue({ patientId: pid });
+      // Another patient's episodes are not this one's to tick.
+      this.episodeIds.set([]);
       this.loadEpisodes(pid);
     }
   }
@@ -847,7 +861,7 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     const body: CreateScheduleDto = {
       type: val.type,
       label: val.label,
-      episodeId: val.conditionId ? undefined : val.episodeId || undefined,
+      episodeIds: this.episodeIds().length ? this.episodeIds() : undefined,
       conditionId: val.conditionId || undefined,
       startAt: new Date(val.startAt).toISOString(),
       frequencyHours: val.frequencyMode === 'interval' ? (val.frequencyHours ?? undefined) : undefined,
@@ -925,7 +939,7 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     const body: UpdateScheduleDto = {
       type: val.type,
       label: val.label,
-      episodeId: val.conditionId ? null : val.episodeId || null,
+      episodeIds: this.episodeIds(),
       conditionId: val.conditionId || null,
       startAt: new Date(val.startAt).toISOString(),
       frequencyHours: val.frequencyMode === 'interval' ? val.frequencyHours : null,

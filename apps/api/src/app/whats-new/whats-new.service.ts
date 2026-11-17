@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import { advisories, careTeamMemberships, interventionSchedules } from '../../db/schema';
+import { episodeIdsBySchedule } from '../schedules/schedule-view';
 import { TimelineService } from '../timeline/timeline.service';
 import { advisoriesSince, isNewToViewer, isNowDue, whatsNewSince } from './whats-new-window';
 import { AckWhatsNewResponse, TimelineEntry, WhatsNewResponse } from '@salud/shared/types';
@@ -70,6 +71,7 @@ export class WhatsNewService {
       .select()
       .from(interventionSchedules)
       .where(and(eq(interventionSchedules.patientId, patientId), eq(interventionSchedules.status, 'active')));
+    const episodeIds = await episodeIdsBySchedule(db, scheduleRows.map((r: any) => r.id));
     const nowDue = scheduleRows
       .map((r: any) => {
         const nextDueAt = normalizeTs(r.nextDueAt);
@@ -78,7 +80,7 @@ export class WhatsNewService {
           patientId: r.patientId,
           label: r.label,
           type: r.type,
-          episodeId: r.episodeId ?? null,
+          episodeIds: episodeIds.get(r.id)!,
           nextDueAt,
           overdue: nextDueAt != null && nextDueAt < nowTs,
         };

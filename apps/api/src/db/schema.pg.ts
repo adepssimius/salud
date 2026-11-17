@@ -365,7 +365,6 @@ export const interventionSchedules = pgTable('intervention_schedules', {
   medicationEmbodimentId: text('medication_embodiment_id').references(
     () => medicationEmbodiments.id,
   ),
-  episodeId: text('episode_id').references(() => episodes.id),
   conditionId: text('condition_id').references(() => conditions.id),
   label: text('label').notNull(),
   doseMg: doublePrecision('dose_mg'),
@@ -413,6 +412,20 @@ export const scheduleSkips = pgTable('schedule_skips', {
   recordedByUserId: text('recorded_by_user_id')
     .notNull()
     .references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+});
+
+// The episodes a schedule treats (data-model.md → ScheduleEpisode): many to many, since one course
+// can treat two episodes that happen to overlap. Replaced intervention_schedules.episode_id. One
+// row per (schedule, episode) — the service dedups before inserting.
+export const scheduleEpisodes = pgTable('schedule_episodes', {
+  id: text('id').primaryKey(),
+  scheduleId: text('schedule_id')
+    .notNull()
+    .references(() => interventionSchedules.id),
+  episodeId: text('episode_id')
+    .notNull()
+    .references(() => episodes.id),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
 });
 

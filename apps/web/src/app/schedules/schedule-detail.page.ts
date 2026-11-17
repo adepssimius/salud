@@ -19,6 +19,11 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
         <span class="pill pill-neutral" [class.pill-active]="s.status === 'active'">{{ s.status }}</span>
         <span class="pill pill-danger" *ngIf="s.adherence.overdue">overdue</span>
       </div>
+      <!-- The episodes this schedule treats — any number (frontend.md → Schedule detail). -->
+      <div class="episode-links" *ngIf="episodeLinks().length">
+        <span class="muted small">For</span>
+        <button type="button" class="pill episode-link" *ngFor="let ep of episodeLinks()" (click)="goToEpisode(ep.id)">{{ ep.name }}</button>
+      </div>
 
       <div class="timing muted" *ngIf="s.frequencyHours">Every {{ s.frequencyHours }} hours</div>
       <div class="timing muted" *ngIf="s.explicitTimes?.length">
@@ -193,6 +198,19 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
       .pill {
         text-transform: capitalize;
       }
+      .episode-links {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      /* An episode is named as the caregiver wrote it, not title-cased like the status pills. */
+      .episode-link {
+        text-transform: none;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.8rem;
+      }
       /* Puts an accent-coloured pill back over the neutral base for the active state. */
       .pill-active {
         background: var(--accent-bg);
@@ -333,6 +351,7 @@ export class ScheduleDetailPage implements OnInit {
 
   scheduleId = this.route.snapshot.paramMap.get('id')!;
   schedule = signal<InterventionSchedule | null>(null);
+  episodeLinks = signal<Array<{ id: string; name: string }>>([]);
   logging = signal(false);
   settingZone = signal(false);
   error = signal<string | null>(null);
@@ -365,6 +384,7 @@ export class ScheduleDetailPage implements OnInit {
 
   private apply(res: ScheduleDosesResponse) {
     this.schedule.set(res.schedule);
+    this.loadEpisodeNames(res.schedule);
     this.loadSkips();
     this.loadContact(res.schedule);
     this.linked.set(res.linked);
@@ -445,6 +465,25 @@ export class ScheduleDetailPage implements OnInit {
       next: (rows) => this.skips.set(rows),
       error: () => this.skips.set([]),
     });
+  }
+
+  /** Names for the episode chips: one request for the patient's episodes, only when there are any. */
+  private loadEpisodeNames(s: InterventionSchedule) {
+    if (!s.episodeIds?.length) {
+      this.episodeLinks.set([]);
+      return;
+    }
+    this.api.get<Array<{ id: string; name: string }>>(`/patients/${s.patientId}/episodes`).subscribe({
+      next: (eps) => {
+        const byId = new Map(eps.map((e) => [e.id, e.name]));
+        this.episodeLinks.set(s.episodeIds.filter((id) => byId.has(id)).map((id) => ({ id, name: byId.get(id)! })));
+      },
+      error: () => this.episodeLinks.set([]),
+    });
+  }
+
+  goToEpisode(id: string) {
+    this.router.navigate(['/episodes', id]);
   }
 
   private loadContact(s: InterventionSchedule) {
@@ -591,8 +630,8 @@ export class ScheduleDetailPage implements OnInit {
     this.api.delete<ScheduleDeleteResponse>(`/schedules/${this.scheduleId}`).subscribe({
       next: () => {
         this.deleting.set(false);
-        // Back to where the schedule lived: its episode or condition, else Home.
-        if (s.episodeId) this.router.navigate(['/episodes', s.episodeId]);
+        // Back to where the schedule lived: its first episode or its condition, else Home.
+        if (s.episodeIds?.length) this.router.navigate(['/episodes', s.episodeIds[0]]);
         else if (s.conditionId) this.router.navigate(['/conditions', s.conditionId]);
         else this.router.navigate(['/dashboard']);
       },

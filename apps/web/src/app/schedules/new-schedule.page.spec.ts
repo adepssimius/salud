@@ -154,7 +154,7 @@ describe('NewSchedulePage', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/dashboard']);
   });
 
-  it('prefills patient and conditionId from query params and omits episodeId', () => {
+  it('prefills patient and conditionId from query params, with no episode ticked', () => {
     queryParams = { conditionId: 'cond-1', patientId: 'p1' };
     apiMock.post.mockReturnValue(of({ id: 'sched-3' }));
     const fixture = TestBed.createComponent(NewSchedulePage);
@@ -176,7 +176,7 @@ describe('NewSchedulePage', () => {
 
     const body = apiMock.post.mock.calls[0][1];
     expect(body.conditionId).toBe('cond-1');
-    expect(body.episodeId).toBeUndefined();
+    expect(body.episodeIds).toBeUndefined();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/conditions', 'cond-1']);
   });
 
@@ -206,11 +206,11 @@ describe('NewSchedulePage', () => {
     const fixture = TestBed.createComponent(NewSchedulePage);
     fixture.detectChanges();
     const comp = fixture.componentInstance;
-    expect(comp.form.getRawValue().episodeId).toBe('ep1');
+    expect(comp.episodeIds()).toEqual(['ep1']);
 
     comp.form.patchValue({ label: 'Clotrimazole twice daily', medicationId: 'med-1', timesPerDay: 2 });
     comp.submit();
-    expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/schedules', expect.objectContaining({ episodeId: 'ep1' }));
+    expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/schedules', expect.objectContaining({ episodeIds: ['ep1'] }));
     expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
   });
 
@@ -413,7 +413,7 @@ describe('NewSchedulePage', () => {
       type: 'medication_dose',
       medicationId: 'med-1',
       medicationEmbodimentId: null,
-      episodeId: null,
+      episodeIds: [],
       conditionId: null,
       label: 'Amoxicillin for the ear',
       doseMg: 400,
@@ -437,14 +437,14 @@ describe('NewSchedulePage', () => {
       ...over,
     });
 
-    function open(schedule: any, linked: any[] = []) {
+    function open(schedule: any, linked: any[] = [], episodes: any[] = []) {
       params = { id: 's1' };
       apiMock.patch = jest.fn().mockReturnValue(of(schedule));
       apiMock.get.mockImplementation((path: string) => {
         if (path === '/schedules/s1/doses') return of({ schedule, linked, candidates: [] });
         if (path === '/medications/med-1') return of({ id: 'med-1', name: 'Amoxicillin', brandNames: [] });
         if (path === '/medications/med-1/embodiments') return of([]);
-        if (path.endsWith('/episodes')) return of([]);
+        if (path.endsWith('/episodes')) return of(episodes);
         return of([{ id: 'p1', fullName: 'Patient 1' }]);
       });
       const fixture = TestBed.createComponent(NewSchedulePage);
@@ -479,6 +479,35 @@ describe('NewSchedulePage', () => {
       const { comp } = open(stored({ label: '400 mg Amoxicillin q8h' }));
       comp.form.patchValue({ doseMg: 500 });
       expect(comp.form.getRawValue().label).toBe('500 mg Amoxicillin q8h');
+    });
+
+    // frontend.md → New schedule form → "Episodes": any number, ticked or unticked, condition or
+    // not; a resolved episode the schedule is on stays offered (and ticked) rather than dropped.
+    it('ticks and unticks episodes, keeps a resolved one it is on, and sends the list whole', () => {
+      const episodes = [
+        { id: 'knee', name: 'Swollen knee', status: 'active' },
+        { id: 'fever', name: 'Fever', status: 'active' },
+        { id: 'old', name: 'Last spring', status: 'resolved' },
+        { id: 'other-old', name: 'Long ago', status: 'resolved' },
+      ];
+      const { fixture, comp } = open(stored({ episodeIds: ['old'], conditionId: 'cond-1' }), [], episodes);
+      fixture.detectChanges();
+      const boxes = () => [...fixture.nativeElement.querySelectorAll('.episodes .inline-check')] as HTMLElement[];
+      expect(boxes().map((b) => b.textContent!.trim())).toEqual(['Swollen knee', 'Fever', 'Last spring · resolved']);
+      expect(boxes().map((b) => (b.querySelector('input') as HTMLInputElement).checked)).toEqual([false, false, true]);
+
+      const tick = (label: string) => {
+        const input = boxes().find((b) => b.textContent!.includes(label))!.querySelector('input') as HTMLInputElement;
+        input.click();
+        fixture.detectChanges();
+      };
+      tick('Swollen knee');
+      tick('Fever');
+      tick('Last spring'); // detach
+      // Still offered, so a mis-tap can be undone.
+      expect(boxes().map((b) => b.textContent!.trim())).toContain('Last spring · resolved');
+      comp.submit();
+      expect(apiMock.patch.mock.calls[0][1]).toMatchObject({ episodeIds: ['knee', 'fever'], conditionId: 'cond-1' });
     });
 
     it('prefills fixed times as times of day', () => {

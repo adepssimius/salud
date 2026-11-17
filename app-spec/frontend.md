@@ -603,7 +603,8 @@ derives from existing payloads:
     document handed to triage staff, who need the actual time of the last dose, not its age.
 
 ## Schedule detail
-- `schedule-detail.page.ts` at `/schedules/:id`: label, type, status, timing and next due, the
+- `schedule-detail.page.ts` at `/schedules/:id`: label, type, status, the episodes it is attached to
+  (chips through to `/episodes/:id`), timing and next due, the
   intended-vs-actual stats (logged, expected by now, missed, remaining), Log now / Pause / Resume /
   Mark complete, notes. One request, `GET /api/schedules/:id/doses`, which carries the schedule
   with its adherence alongside its doses.
@@ -652,7 +653,7 @@ derives from existing payloads:
   doses stay in the journal and the care record, no longer linked to a schedule. M skipped doses
   are removed with it. This cannot be undone. If the course really happened, Mark complete keeps
   it instead." (or "No doses are logged on this schedule."). Then `DELETE /api/schedules/:id`
-  (api.md → "Deleting a schedule") and back to where the schedule lived — its episode, its
+  (api.md → "Deleting a schedule") and back to where the schedule lived — its first episode, its
   condition, or Home.
 
 ## Conditions
@@ -840,7 +841,8 @@ app. They therefore need somewhere to be entered.
     number that may no longer describe the patient. A display nudge about the record's age, not a
     clinical threshold.
 
-  **2. Are we keeping up** — the episode's schedules (`InterventionSchedule.episodeId`).
+  **2. Are we keeping up** — the schedules attached to the episode (`InterventionSchedule.episodeIds`;
+  one schedule can treat several episodes at once, data-model.md → `ScheduleEpisode`).
   - Each schedule shows its label (through to `/schedules/:id`), and:
     - **Compliance**: "12 of 16 due doses given", with "· 4 missed" when short. Doses due are
       the schedule's slots from `startAt` to now, capped at `endAt` / `endAfterOccurrences`.
@@ -860,6 +862,16 @@ app. They therefore need somewhere to be entered.
   - **Add a schedule** (while active) opens the existing new-schedule form with the patient and
     this episode pre-filled (`/schedules/new?patientId=&episodeId=`); saving returns here. With no
     schedule the section says so in a sentence.
+  - **Attach a schedule** (on any episode, active or resolved — a past course can be filed after
+    the fact) opens a list of the patient's schedules not yet attached here: any status, with or
+    without a condition or other episodes, each with its label, status, and what else it is
+    attached to ("also on Fever"). **Attach** on a row adds this episode to that schedule's
+    `episodeIds` (`PATCH /api/schedules/:id`) and the section re-renders. With none to offer, the
+    list says so.
+  - **Detach** on each schedule row removes this episode from its `episodeIds`, after a confirm:
+    "Detach "⟨name⟩" from this episode? The schedule keeps running and its logged doses stay where
+    they are; it just won't show here." The schedule is never deleted from here (that is the
+    schedule page's **Delete schedule**).
   - **One cell per day of the episode**, start day to today (or the end), each with its day
     number and dose count. **With no schedule** the cells are plain counts of the episode's
     interventions — no target and no judgement (P6). **With schedules**, a cell counts the doses
@@ -898,10 +910,13 @@ app. They therefore need somewhere to be entered.
 - Advisories fired during the episode render as banners between the summary and "Keeping up".
 
 ### New schedule form
-- `new-schedule.page.ts` at `/schedules/new`. Query params pre-fill it: `patientId`, and either
-  `conditionId` (from a condition — a standing regimen) or `episodeId` (from an episode's "Add a
-  schedule" — an acute course). It returns to where it came from: the episode, the condition, or
+- `new-schedule.page.ts` at `/schedules/new`. Query params pre-fill it: `patientId`, and
+  `conditionId` (from a condition — a standing regimen) and/or `episodeId` (from an episode's "Add
+  a schedule" — an acute course). It returns to where it came from: the episode, the condition, or
   the dashboard (or to the new schedule's link checklist, see "Schedule detail").
+- **Episodes** is a checklist of the patient's active episodes, plus any episode the schedule is
+  already attached to (an edit of a schedule on a resolved episode keeps it ticked): tick none, one
+  or several. It shows whether or not a condition is set.
 - **The amount is chosen the way a dose's is** (see "Dose entry"), with the dose form's own code,
   not a copy:
   - **Which boxes show** is the embodiment's kind: mg, plus mL for a liquid or a count for tablets,

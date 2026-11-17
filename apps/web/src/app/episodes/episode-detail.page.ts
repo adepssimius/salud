@@ -15,6 +15,7 @@ import {
   TimelineEntry,
   TimelineResponse,
   UpdateEpisodeEventsRequest,
+  UpdateScheduleDto,
 } from '@salud/shared/types';
 import { EpisodeEntryPickerComponent, PickedEntry, entryKey } from './episode-entry-picker.component';
 import {
@@ -134,10 +135,37 @@ interface ScheduleRow {
       <section *ngIf="episode() as ep" class="keeping-up">
         <div class="section-header">
           <h2>Keeping up</h2>
-          <button type="button" class="secondary" *ngIf="ep.status === 'active'" (click)="addSchedule()">
-            Add a schedule
-          </button>
+          <div class="section-actions">
+            <button type="button" class="secondary" *ngIf="ep.status === 'active'" (click)="addSchedule()">
+              Add a schedule
+            </button>
+            <!-- An existing schedule, on any episode: one course can treat two overlapping
+                 episodes, and a past course can be filed afterwards (frontend.md → "Keeping up"). -->
+            <button type="button" class="secondary" (click)="startAttaching()" [attr.aria-expanded]="attaching()">
+              Attach a schedule
+            </button>
+          </div>
         </div>
+
+        <div class="attach" *ngIf="attaching()">
+          <p class="small muted" *ngIf="attachLoading()">Loading schedules…</p>
+          <ng-container *ngIf="!attachLoading()">
+            <p class="small" *ngIf="attachCandidates().length">Choose a schedule this episode is being treated with.</p>
+            <p class="small muted" *ngIf="!attachCandidates().length">Every schedule for this patient is already attached here.</p>
+            <ul class="row-list attach-list" *ngIf="attachCandidates().length">
+              <li *ngFor="let c of attachCandidates()" class="attach-row">
+                <span class="attach-text">
+                  <span class="attach-label">{{ c.label }}</span>
+                  <span class="pill pill-neutral" *ngIf="c.status !== 'active'">{{ c.status }}</span>
+                  <span class="muted small" *ngIf="alsoOn(c) as others"> · also on {{ others }}</span>
+                </span>
+                <button type="button" class="secondary" (click)="attach(c)" [disabled]="scheduleBusy()">Attach</button>
+              </li>
+            </ul>
+          </ng-container>
+          <button type="button" class="link" (click)="attaching.set(false)">Close</button>
+        </div>
+        <p class="error" *ngIf="scheduleError()">{{ scheduleError() }}</p>
 
         <ul class="row-list schedules" *ngIf="scheduleRows().length">
           <li *ngFor="let r of scheduleRows()" class="schedule">
@@ -145,6 +173,7 @@ interface ScheduleRow {
               <button type="button" class="link schedule-label" (click)="openSchedule(r.schedule)">{{ r.schedule.label }}</button>
               <span class="pill pill-neutral" *ngIf="r.progress.state === 'paused'">paused</span>
               <span class="pill pill-success" *ngIf="r.progress.state === 'complete'">course complete</span>
+              <button type="button" class="secondary detach" (click)="detach(r.schedule)" [disabled]="scheduleBusy()">Detach</button>
             </div>
             <p class="compliance">
               <strong>{{ r.progress.given }}</strong> of {{ r.progress.due }} due {{ r.progress.due === 1 ? 'dose' : 'doses' }} given
@@ -178,7 +207,7 @@ interface ScheduleRow {
           </li>
         </ul>
         <p class="muted small" *ngIf="!scheduleRows().length">
-          No schedule for this episode<ng-container *ngIf="ep.status === 'active'"> — add one to track a course of treatment</ng-container>.
+          No schedule for this episode<ng-container *ngIf="ep.status === 'active'"> — add one, or attach one already running, to track a course of treatment</ng-container>.
         </p>
 
         <div class="strip-wrap" *ngIf="strip().length">
@@ -391,6 +420,42 @@ interface ScheduleRow {
         font-weight: 600;
         text-align: left;
       }
+      .section-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      /* Pushed to the row's end, away from the label a thumb is reaching for; behind a confirm. */
+      .detach {
+        margin-left: auto;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.85rem;
+      }
+      .attach {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        margin-bottom: 0.85rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+      }
+      .attach p {
+        margin: 0;
+      }
+      .attach-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+      .attach-text {
+        min-width: 0;
+      }
+      .attach-label {
+        font-weight: 600;
+        margin-right: 0.35rem;
+      }
       .unlinked {
         display: flex;
         flex-wrap: wrap;
@@ -579,6 +644,13 @@ export class EpisodeDetailPage implements OnInit {
   adding = signal(false);
   toAdd = signal<PickedEntry[]>([]);
   busy = signal(false);
+  /** "Attach a schedule": the patient's schedules not yet on this episode, and the other episodes' names. */
+  attaching = signal(false);
+  attachLoading = signal(false);
+  attachCandidates = signal<InterventionSchedule[]>([]);
+  private episodeNames = signal<Map<string, string>>(new Map());
+  scheduleBusy = signal(false);
+  scheduleError = signal<string | null>(null);
   openRuns = signal<Set<string>>(new Set());
   /** Read once per load — the page is a snapshot, like the timeline it renders. */
   nowSec = signal(Math.floor(Date.now() / 1000));
@@ -792,6 +864,73 @@ export class EpisodeDetailPage implements OnInit {
 
   openSchedule(s: InterventionSchedule) {
     this.router.navigate(['/schedules', s.id]);
+  }
+
+  startAttaching() {
+    const ep = this.episode();
+    if (!ep) return;
+    this.attaching.set(true);
+    this.attachLoading.set(true);
+    this.scheduleError.set(null);
+    this.api.get<Array<{ id: string; name: string }>>(`/patients/${ep.patientId}/episodes`).subscribe({
+      next: (eps) => this.episodeNames.set(new Map(eps.map((e) => [e.id, e.name]))),
+      error: () => this.episodeNames.set(new Map()),
+    });
+    this.api.get<InterventionSchedule[]>(`/patients/${ep.patientId}/schedules`).subscribe({
+      next: (list) => {
+        // Active first, then by name: the course being given now is the likely one.
+        const rank = (s: InterventionSchedule) => (s.status === 'active' ? 0 : s.status === 'paused' ? 1 : 2);
+        this.attachCandidates.set(
+          list.filter((s) => !s.episodeIds.includes(ep.id)).sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label)),
+        );
+        this.attachLoading.set(false);
+      },
+      error: (err) => {
+        this.attachLoading.set(false);
+        this.attaching.set(false);
+        this.scheduleError.set(errorText(err, 'Could not load this patient’s schedules.'));
+      },
+    });
+  }
+
+  /** The other episodes a candidate is on — "also on Fever" — so attaching a shared course is a choice made knowingly. */
+  alsoOn(s: InterventionSchedule): string {
+    const names = this.episodeNames();
+    return s.episodeIds.map((id) => names.get(id)).filter(Boolean).join(', ');
+  }
+
+  /** PATCH the schedule's list with this episode added (api.md → "Editing a schedule"). No dose moves. */
+  attach(s: InterventionSchedule) {
+    this.updateScheduleEpisodes(s, [...s.episodeIds, this.episodeId], () => this.attaching.set(false));
+  }
+
+  /** The list with this episode removed. The schedule keeps running and every dose stays where it is. */
+  detach(s: InterventionSchedule) {
+    const ok = window.confirm(
+      `Detach "${s.label}" from this episode? The schedule keeps running and its logged doses stay where they are; it just won't show here.`,
+    );
+    if (!ok) return;
+    this.updateScheduleEpisodes(s, s.episodeIds.filter((id) => id !== this.episodeId));
+  }
+
+  private updateScheduleEpisodes(s: InterventionSchedule, episodeIds: string[], done?: () => void) {
+    this.scheduleBusy.set(true);
+    this.scheduleError.set(null);
+    this.api.patch<InterventionSchedule, UpdateScheduleDto>(`/schedules/${s.id}`, { episodeIds }).subscribe({
+      next: () => {
+        this.scheduleBusy.set(false);
+        done?.();
+        // The episode read carries its schedules with adherence; re-read rather than patch locally.
+        this.api.get<Episode>(`/episodes/${this.episodeId}`).subscribe({
+          next: (ep) => this.episode.set(ep),
+          error: (err) => this.scheduleError.set(errorText(err, 'Unable to reload this episode.')),
+        });
+      },
+      error: (err) => {
+        this.scheduleBusy.set(false);
+        this.scheduleError.set(errorText(err, 'Could not change this schedule’s episodes.'));
+      },
+    });
   }
 
   /** The existing new-schedule form, with this episode and its patient filled in. */

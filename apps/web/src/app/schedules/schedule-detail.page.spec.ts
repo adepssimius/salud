@@ -10,7 +10,7 @@ const baseSchedule = {
   type: 'medication_dose',
   medicationId: 'm1',
   medicationEmbodimentId: null,
-  episodeId: null,
+  episodeIds: [],
   label: 'Amoxicillin q8h',
   doseMg: 400,
   doseMl: null,
@@ -269,8 +269,22 @@ describe('ScheduleDetailPage', () => {
   describe('edit and delete', () => {
     const respond = (schedule: any, linked: any[], skips: any[] = []) =>
       apiMock.get.mockImplementation((path: string) =>
-        path.endsWith('/skips') ? of(skips) : of({ schedule, linked, candidates: [] }),
+        path.endsWith('/skips')
+          ? of(skips)
+          : path.endsWith('/episodes')
+            ? of([{ id: 'e1', name: 'Ear infection' }, { id: 'e2', name: 'Fever' }])
+            : of({ schedule, linked, candidates: [] }),
       );
+
+    it('names the episodes it treats, each through to its page', () => {
+      respond({ ...baseSchedule, episodeIds: ['e1', 'e2'] }, []);
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      const chips = [...fixture.nativeElement.querySelectorAll('.episode-link')] as HTMLButtonElement[];
+      expect(chips.map((c) => c.textContent!.trim())).toEqual(['Ear infection', 'Fever']);
+      chips[1].click();
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'e2']);
+    });
 
     it('Edit opens the form at /schedules/:id/edit', () => {
       const fixture = TestBed.createComponent(ScheduleDetailPage);
@@ -280,7 +294,7 @@ describe('ScheduleDetailPage', () => {
     });
 
     it('the confirmation says the logged doses stay and the skips go, then deletes and returns to the episode', () => {
-      respond({ ...baseSchedule, episodeId: 'e1' }, [dose('d1', false), dose('d2', true)], [{ id: 'k1', slotAt: 1700000000, reason: 'skipped' }]);
+      respond({ ...baseSchedule, episodeIds: ['e1'] }, [dose('d1', false), dose('d2', true)], [{ id: 'k1', slotAt: 1700000000, reason: 'skipped' }]);
       apiMock.delete = jest.fn().mockReturnValue(of({ deleted: true, unlinkedDoseCount: 2, removedSkipCount: 1 }));
       const confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
       const fixture = TestBed.createComponent(ScheduleDetailPage);

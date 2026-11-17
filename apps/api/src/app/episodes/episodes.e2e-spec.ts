@@ -524,7 +524,7 @@ describe('Episodes (e2e)', () => {
         .send({
           type: 'medication_dose',
           label: 'Clotrimazole twice daily',
-          episodeId,
+          episodeIds: [episodeId],
           medicationId: med.body.id,
           medicationEmbodimentId: emb.body.id,
           frequencyHours: 12,

@@ -129,7 +129,7 @@ describe('Schedule edit and delete (e2e)', () => {
           .send({ name: 'Ear infection', events: [{ type: 'intervention', id: first }] })
           .expect(201)
       ).body;
-      const s = await makeSchedule({ startAt: hoursAgo(30), missedDoseAction: 'skip', episodeId: episode.id });
+      const s = await makeSchedule({ startAt: hoursAgo(30), missedDoseAction: 'skip', episodeIds: [episode.id] });
       // The 30 h-ago slot is missed: skip it.
       await auth(http().post(`/api/schedules/${s.id}/skips`)).send({}).expect(201);
       const fromSchedule = (await auth(http().post(`/api/schedules/${s.id}/log`)).send({ performedAt: hoursAgo(17) }).expect(201)).body.intervention.id;

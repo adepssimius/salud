@@ -23,9 +23,11 @@ export class CreateScheduleDto {
   @IsNotEmpty()
   label!: string;
 
+  // The episodes the schedule treats (data-model.md → ScheduleEpisode).
   @IsOptional()
-  @IsString()
-  episodeId?: string;
+  @IsArray()
+  @IsString({ each: true })
+  episodeIds?: string[];
 
   @IsOptional()
   @IsString()

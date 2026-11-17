@@ -290,8 +290,8 @@ export interface Episode {
   observationIds?: string[];
   interventionIds?: string[];
   /**
-   * Only on GET /api/episodes/:episodeId. The schedules filed under this episode
-   * (`InterventionSchedule.episodeId`), each with its computed adherence — the course the episode
+   * Only on GET /api/episodes/:episodeId. The schedules attached to this episode (their
+   * `InterventionSchedule.episodeIds` name it), each with its computed adherence — the course the episode
    * is keeping up with (frontend.md → Episode detail → "Keeping up").
    */
   schedules?: InterventionSchedule[];
@@ -864,7 +864,11 @@ export interface InterventionSchedule {
   type: ScheduleType;
   medicationId: string | null;
   medicationEmbodimentId: string | null;
-  episodeId: string | null;
+  /**
+   * The episodes this schedule treats, sorted by id — a set (data-model.md → ScheduleEpisode).
+   * Any number, and independent of `conditionId`: one course can treat two overlapping episodes.
+   */
+  episodeIds: string[];
   conditionId: string | null;
   label: string;
   doseMg: number | null;
@@ -900,7 +904,8 @@ export interface InterventionSchedule {
 export interface CreateScheduleDto {
   type: ScheduleType;
   label: string;
-  episodeId?: string;
+  /** Each must be this patient's episode (404 EPISODE_NOT_FOUND). Duplicates are ignored. */
+  episodeIds?: string[];
   conditionId?: string;
   medicationId?: string;
   medicationEmbodimentId?: string;
@@ -932,7 +937,11 @@ export interface CreateScheduleDto {
 export interface UpdateScheduleDto {
   type?: ScheduleType;
   label?: string;
-  episodeId?: string | null;
+  /**
+   * Replaces the list whole: attach or detach an episode by sending the list with it added or
+   * removed; `[]` or `null` detaches all. Never moves a dose into or out of an episode.
+   */
+  episodeIds?: string[] | null;
   conditionId?: string | null;
   medicationId?: string | null;
   medicationEmbodimentId?: string | null;
@@ -1343,7 +1352,7 @@ export interface DashboardUpcomingSchedule {
   patientId: string;
   label: string;
   type: ScheduleType;
-  episodeId: string | null;
+  episodeIds: string[];
   nextDueAt: number | null;
   overdue: boolean;
   /** The current missed dose and what the schedule's instruction says about it; null when none. */

@@ -138,6 +138,60 @@ describe('Migrations against a populated database (e2e)', () => {
     ).toThrow(/FOREIGN KEY constraint failed/);
   });
 
+  // 0017 moved a schedule's single episode_id into schedule_episodes (data-model.md →
+  // ScheduleEpisode), rebuilding intervention_schedules — a table doses and skips reference.
+  it('carries every schedule → episode link into schedule_episodes, and keeps doses and skips on their schedule', async () => {
+    applyMigrationsExceptNewest(1);
+    const { userId, patientId } = seedReferencingRows();
+    const now = Math.floor(Date.now() / 1000);
+    const otherPatient = randomUUID();
+    raw
+      .prepare(`insert into patients (id,full_name,date_of_birth,sex_at_birth,owned_by_user_id) values (?,?,?,?,?)`)
+      .run(otherPatient, 'Sibling', '2017-01-01', 'male', userId);
+    const episode = (pid: string) => {
+      const id = randomUUID();
+      raw
+        .prepare(`insert into episodes (id,patient_id,name,started_at_type,started_at_id,status) values (?,?,?,?,?,?)`)
+        .run(id, pid, 'Ringworm', 'observation', randomUUID(), 'active');
+      return id;
+    };
+    const ownEpisode = episode(patientId);
+    const siblingsEpisode = episode(otherPatient);
+    const schedule = (episodeId: string | null) => {
+      const id = randomUUID();
+      raw
+        .prepare(
+          `insert into intervention_schedules (id,patient_id,type,episode_id,label,frequency_hours,start_at,status,created_by_user_id)
+           values (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(id, patientId, 'dressing_change', episodeId, 'q12h', 12, now - 86400, 'active', userId);
+      return id;
+    };
+    const linked = schedule(ownEpisode);
+    const unlinked = schedule(null);
+    const crossPatient = schedule(siblingsEpisode); // the rule the service now enforces drops it
+    const doseId = randomUUID();
+    raw
+      .prepare(`insert into interventions (id,patient_id,recorded_by_user_id,performed_at,type,schedule_id) values (?,?,?,?,?,?)`)
+      .run(doseId, patientId, userId, now - 3600, 'dressing_change', linked);
+    raw
+      .prepare(`insert into schedule_skips (id,schedule_id,slot_at,reason,recorded_by_user_id) values (?,?,?,?,?)`)
+      .run(randomUUID(), linked, now - 86400, 'skipped', userId);
+
+    await migrate();
+
+    expect(raw.prepare('select schedule_id, episode_id from schedule_episodes').all()).toEqual([{ schedule_id: linked, episode_id: ownEpisode }]);
+    expect((raw.prepare('select id from schedule_episodes').get() as { id: string }).id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    const columns = (raw.pragma('table_info(intervention_schedules)') as Array<{ name: string }>).map((c) => c.name);
+    expect(columns).not.toContain('episode_id');
+    expect(raw.prepare('select count(*) c from intervention_schedules where id in (?,?,?)').get(linked, unlinked, crossPatient)).toEqual({ c: 3 });
+    expect(raw.prepare('select schedule_id from interventions where id = ?').get(doseId)).toEqual({ schedule_id: linked });
+    expect(raw.prepare('select count(*) c from schedule_skips where schedule_id = ?').get(linked)).toEqual({ c: 1 });
+    expect(raw.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('still works from empty, the case every other suite covers', async () => {
     await migrate();
     expect(raw.pragma('foreign_key_check')).toEqual([]);
