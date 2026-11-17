@@ -180,9 +180,16 @@ dark room — and a repeat dose in at most four taps.** The `+` opens a sheet, n
   has exactly one active episode, the form shows it pre-attached as a removable chip ("Adding to
   *Fever – Aug 2026* ✕") — zero taps in the common case, and the attachment sits on screen for
   the caregiver to reject before saving, so the judgment stays theirs. Multiple active episodes →
-  a chip picker with nothing pre-selected. "Start new episode" and "this resolves…" move behind a
-  "More" disclosure — resolution remains only a side effect of a logged event (P5); it just stops
-  occupying prime space on every entry.
+  a chip picker with nothing pre-selected. On the **full** observation and dose forms, **"Start a
+  new episode" is always on screen** — under the attach chips, or on its own when the patient has
+  no active episode — because logging an entry is the only way an episode begins, and a caregiver
+  who cannot see the control concludes the app has no way to start one. Ticking it reveals the name
+  field. "This resolves the selected episode" sits beside it, rendered only while an attached
+  episode can be resolved; resolution remains only a side effect of a logged event (P5). There is
+  no "More" disclosure on the full forms. The **compact quick-log layouts** (Temp, Dose, Pain, Note)
+  stay minimal: there, "Start a new episode" and "this resolves…" stay behind a "More" disclosure,
+  which renders even with zero active episodes. A correction never offers "Start a new episode"
+  (→ "Correcting an entry").
 
 ### Home
 
@@ -379,7 +386,7 @@ derives from existing payloads:
     link into `condition-detail.page.ts`; an "Add condition" action routes to
     `new-condition.page.ts`.
 - Dashboard includes quick actions to create an observation and log an intervention.
-- Observation creation: patient select, observed time, notes/tags, multi-entry support, episodes dropdown (multi-select existing active episodes plus “create new episode” option), optional resolve toggle (resolves selected episodes), new-episode name shown only when “create new” is chosen, returns to dashboard on save.
+- Observation creation: patient select, observed time, notes/tags, multi-entry support, episode attachment (existing active episodes as chips, plus an always-visible “Start a new episode” option — see Quick Log → “Episode attachment”), optional resolve toggle (resolves selected episodes), new-episode name shown only when “start a new episode” is chosen, returns to dashboard on save.
 - **Entry builder (typed forms)**: choosing an entry type renders a mini-form with exactly that
   type's fields — there is no raw-JSON metadata input. The API validates entry metadata strictly
   (`whitelist` + `forbidNonWhitelisted`, error `OBSERVATION_SCHEMA_INVALID`), so the typed forms are
