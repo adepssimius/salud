@@ -18,6 +18,7 @@ const FIELD_WORDS: Record<string, string> = {
   tags: 'Tags',
   notes: 'Notes',
   unitType: 'Unit type',
+  dosageForm: 'Form',
   concentrationMgPerMl: 'Concentration (mg/mL)',
   concentrationMg: 'Concentration (mg, as printed)',
   concentrationVolumeMl: 'Concentration (mL, as printed)',

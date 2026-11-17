@@ -1,4 +1,4 @@
-import { LengthUnit, TempUnit, TimelineEntry, UserProfile, WeightUnit } from '@salud/shared/types';
+import { LengthUnit, TempUnit, TimelineEntry, UserProfile, WeightUnit, formatPillCount } from '@salud/shared/types';
 
 // Human-readable formatting for observation entries and timeline events.
 //
@@ -210,11 +210,15 @@ export function describeEvent(
     if (display.type === 'medication_dose') {
       const mg = display.metadata?.amountMg;
       const ml = display.metadata?.amountMl;
-      // A dose recorded before mg was derived from the volume reads as its volume, not "? mg".
-      const amount = mg != null ? `${mg} mg` : ml != null ? `${ml} mL` : '? mg';
+      const pills = display.metadata?.pillCount;
+      // The amount as it was given — mg, else the volume, else the count. A cream has none, and a
+      // dose with no amount reads as just the medication, never "? mg" (frontend.md → "Dose entry").
+      const amount =
+        mg != null ? `${mg} mg` : ml != null ? `${ml} mL` : pills != null ? `×${formatPillCount(pills)}` : null;
       const atypical = display.metadata?.isAtypical ? ' (atypical)' : '';
       const name = options.medicationNames?.get(display.metadata?.medicationId);
-      return name ? `${amount} ${name}${atypical}` : `medication dose — ${amount}${atypical}`;
+      if (name) return `${amount ? `${amount} ` : ''}${name}${atypical}`;
+      return `medication dose${amount ? ` — ${amount}` : ''}${atypical}`;
     }
     return `dressing change${display.metadata?.bodyLocation ? ` — ${display.metadata.bodyLocation}` : ''}`;
   }

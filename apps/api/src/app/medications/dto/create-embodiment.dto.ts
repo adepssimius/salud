@@ -8,8 +8,9 @@ import {
   IsString,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
-import { MedicationUnitType } from '@salud/shared/types';
+import { DOSAGE_FORMS, DosageForm, MedicationUnitType } from '@salud/shared/types';
 
 const UNIT_TYPES: MedicationUnitType[] = ['tablet', 'capsule', 'ml', 'drop', 'other'];
 
@@ -46,8 +47,16 @@ export class CreateEmbodimentDto {
   @Max(10000)
   strengthMgPerUnit?: number | null;
 
+  // One of the two is required. The form is what the caregiver picks and the service sets
+  // `unitType` from it; `unitType` alone still makes an untyped row (api.md -> Embodiments,
+  // "Dosage form").
+  @ValidateIf((o) => o.dosageForm === undefined || o.unitType !== undefined)
   @IsIn(UNIT_TYPES)
-  unitType!: MedicationUnitType;
+  unitType?: MedicationUnitType;
+
+  @IsOptional()
+  @IsIn(DOSAGE_FORMS)
+  dosageForm?: DosageForm;
 
   @IsOptional()
   @IsString()

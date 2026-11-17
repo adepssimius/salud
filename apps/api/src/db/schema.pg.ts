@@ -297,6 +297,10 @@ export const medicationEmbodiments = pgTable('medication_embodiments', {
   unitType: text('unit_type', {
     enum: ['tablet', 'capsule', 'ml', 'drop', 'other'],
   }).notNull(),
+  // What the embodiment is (cream, chewable, …); unit_type follows it. Null = not typed yet.
+  dosageForm: text('dosage_form', {
+    enum: ['liquid', 'tablet', 'chewable', 'capsule', 'drops', 'cream', 'ointment', 'gel', 'other'],
+  }),
   notes: text('notes'),
   atHome: boolean('at_home').default(false).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }),

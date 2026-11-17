@@ -1,7 +1,8 @@
 import { Component, EventEmitter, Input, OnInit, Output, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MedicationEmbodiment, MedicationUnitType } from '@salud/shared/types';
+import { DOSAGE_FORMS, DosageForm, MedicationEmbodiment, MedicationUnitType } from '@salud/shared/types';
+import { DOSAGE_FORM_LABELS, UNIT_TYPE_LABELS } from '../core/dosage-form';
 import { ApiClientService } from '../core/api-client.service';
 import { apiErrorCode, errorText } from '../core/error-display';
 import { dependentsFrom, dependentsText } from './catalog-dependents';
@@ -23,7 +24,8 @@ export function fromDateInput(value: string): string | null {
 
 export interface EmbodimentFormValue {
   label: string;
-  unitType: MedicationUnitType;
+  /** '' only on a row nobody has typed yet; the caregiver picks a form and the unit follows it. */
+  dosageForm: DosageForm | '';
   concentrationMg: number | null;
   concentrationVolumeMl: number | null;
   strengthMgPerUnit: number | null;
@@ -33,7 +35,7 @@ export interface EmbodimentFormValue {
 
 const EMPTY: EmbodimentFormValue = {
   label: '',
-  unitType: 'tablet',
+  dosageForm: 'tablet',
   concentrationMg: null,
   // Defaults to 1 so the field reads "__ mg per 1 mL" out of the box: the old single-box
   // behaviour, still one number to type, for a label already printed per mL.
@@ -51,7 +53,7 @@ function formValueOf(e: MedicationEmbodiment): EmbodimentFormValue {
   const hasPair = e.concentrationMg != null && e.concentrationVolumeMl != null;
   return {
     label: e.label,
-    unitType: e.unitType,
+    dosageForm: e.dosageForm ?? '',
     concentrationMg: hasPair ? e.concentrationMg : e.concentrationMgPerMl,
     concentrationVolumeMl: hasPair ? e.concentrationVolumeMl : 1,
     strengthMgPerUnit: e.strengthMgPerUnit,
@@ -85,14 +87,15 @@ function formValueOf(e: MedicationEmbodiment): EmbodimentFormValue {
         <span>Label</span>
         <input type="text" formControlName="label" placeholder="500 mg tablet" />
       </label>
+      <!-- What it is; what a dose of it is counted in follows (api.md → Embodiments → "Dosage
+           form"). A row from before the field existed shows its unit until a form is picked. -->
       <label class="field">
-        <span>Unit type</span>
-        <select formControlName="unitType">
-          <option value="tablet">Tablet</option>
-          <option value="capsule">Capsule</option>
-          <option value="ml">mL (liquid)</option>
-          <option value="drop">Drop</option>
-          <option value="other">Other</option>
+        <span>Form</span>
+        <select formControlName="dosageForm">
+          <option value="" *ngIf="editing() && !editing()!.dosageForm">
+            Not set ({{ unitTypeLabels[editing()!.unitType] }})
+          </option>
+          <option *ngFor="let f of dosageForms" [value]="f">{{ dosageFormLabels[f] }}</option>
         </select>
       </label>
       <!-- Two boxes, not one. The bottle says "160 mg per 5 mL"; asking for 32 mg/mL asks the
@@ -251,13 +254,17 @@ export class EmbodimentEditorComponent implements OnInit {
 
   form = this.fb.nonNullable.group({
     label: ['', Validators.required],
-    unitType: ['tablet' as MedicationUnitType, Validators.required],
+    dosageForm: ['tablet' as DosageForm | ''],
     concentrationMg: [null as number | null],
     concentrationVolumeMl: [1 as number | null],
     strengthMgPerUnit: [null as number | null],
     notes: [''],
     expiresAt: [''],
   });
+
+  readonly dosageForms = DOSAGE_FORMS;
+  readonly dosageFormLabels = DOSAGE_FORM_LABELS;
+  readonly unitTypeLabels: Record<MedicationUnitType, string> = UNIT_TYPE_LABELS;
 
   /** The row under edit, or null when adding. A signal so "Add as a new form" can switch modes in place. */
   editing = signal<MedicationEmbodiment | null>(null);
@@ -312,7 +319,8 @@ export class EmbodimentEditorComponent implements OnInit {
     const val = this.form.getRawValue();
     return {
       label: val.label,
-      unitType: val.unitType,
+      // The server sets unitType from it. A copy of an untyped row stays untyped, in its unit.
+      ...(val.dosageForm ? { dosageForm: val.dosageForm } : { unitType: this.embodiment?.unitType ?? 'other' }),
       // The pair goes up as typed; the server does the division and stores all three figures.
       // Omitted entirely for a solid form, where "1 mL" would be meaningless.
       concentrationMg: val.concentrationMg ?? undefined,
@@ -333,7 +341,9 @@ export class EmbodimentEditorComponent implements OnInit {
     const val = this.form.getRawValue();
     const body: Record<string, unknown> = {};
     if (val.label !== original.label) body['label'] = val.label;
-    if (val.unitType !== original.unitType) body['unitType'] = val.unitType;
+    // The form carries the unit with it; on a referenced row a form that moves the unit is refused
+    // like any other dosing change (409 EMBODIMENT_CONCENTRATION_IN_USE).
+    if (val.dosageForm !== original.dosageForm) body['dosageForm'] = val.dosageForm || null;
     if (val.strengthMgPerUnit !== original.strengthMgPerUnit) body['strengthMgPerUnit'] = val.strengthMgPerUnit;
     const notes = val.notes.trim();
     if (notes !== original.notes.trim()) body['notes'] = notes || null;

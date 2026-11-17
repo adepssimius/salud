@@ -402,6 +402,40 @@ export interface FieldNotCorrectableError {
 
 // Medication catalog — not patient-scoped (shared by the whole household, P4)
 export type MedicationUnitType = 'tablet' | 'capsule' | 'ml' | 'drop' | 'other';
+/**
+ * What an embodiment *is* (data-model.md → MedicationEmbodiment → `dosageForm`), as against
+ * `unitType`, what a dose of it is counted in. The caregiver picks the form; `unitType` follows it
+ * (`DOSAGE_FORM_UNIT_TYPE`). Null on a row nobody has typed yet.
+ */
+export type DosageForm = 'liquid' | 'tablet' | 'chewable' | 'capsule' | 'drops' | 'cream' | 'ointment' | 'gel' | 'other';
+export const DOSAGE_FORMS: readonly DosageForm[] = [
+  'liquid',
+  'tablet',
+  'chewable',
+  'capsule',
+  'drops',
+  'cream',
+  'ointment',
+  'gel',
+  'other',
+];
+/** The unit a dose of each form is counted in — the only `unitType` a form allows. */
+export const DOSAGE_FORM_UNIT_TYPE: Readonly<Record<DosageForm, MedicationUnitType>> = {
+  liquid: 'ml',
+  tablet: 'tablet',
+  chewable: 'tablet',
+  capsule: 'capsule',
+  drops: 'drop',
+  cream: 'other',
+  ointment: 'other',
+  gel: 'other',
+  other: 'other',
+};
+/**
+ * Applied to the skin, with no mg to measure a dose in: the dose form shows no amount boxes for
+ * these (frontend.md → "Dose entry" → "The embodiment decides which amount boxes show").
+ */
+export const TOPICAL_DOSAGE_FORMS: readonly DosageForm[] = ['cream', 'ointment', 'gel'];
 export type GuidelineType = 'weight_based' | 'age_band';
 /**
  * What a dose below a guideline's dose means (data-model.md → MedicationGuideline). `allowed`: the
@@ -461,6 +495,7 @@ export interface MedicationEmbodiment {
   concentrationVolumeMl: number | null;
   strengthMgPerUnit: number | null;
   unitType: MedicationUnitType;
+  dosageForm: DosageForm | null;
   notes: string | null;
   // Cabinet awareness (F-9.1–F-9.3) — deliberately no inventory counts (F-9.4)
   atHome: boolean;
@@ -479,7 +514,10 @@ export interface CreateEmbodimentDto {
   concentrationMg?: number | null;
   concentrationVolumeMl?: number | null;
   strengthMgPerUnit?: number | null;
-  unitType: MedicationUnitType;
+  // Give the form and the server sets unitType from it; give unitType alone for an untyped row.
+  // Both, disagreeing, is 400 DOSAGE_FORM_UNIT_TYPE_MISMATCH. One of the two is required.
+  unitType?: MedicationUnitType;
+  dosageForm?: DosageForm;
   notes?: string;
   // Cabinet fields, same as UpdateEmbodimentDto — a caregiver adding the bottle in their hand
   // records everything printed on it in one request (api.md → Cabinet awareness).
@@ -498,6 +536,8 @@ export interface UpdateEmbodimentDto {
   concentrationVolumeMl?: number | null;
   strengthMgPerUnit?: number | null;
   unitType?: MedicationUnitType;
+  // Sets unitType too; `null` clears the form and leaves unitType as it is.
+  dosageForm?: DosageForm | null;
   notes?: string;
   atHome?: boolean;
   expiresAt?: string | null; // ISO datetime on write

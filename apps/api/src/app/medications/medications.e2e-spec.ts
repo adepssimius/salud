@@ -265,6 +265,55 @@ describe('Medications (e2e)', () => {
     expect(halfPatch.body.message).toBe('CONCENTRATION_PAIR_INCOMPLETE');
   });
 
+  describe('dosage form (api.md → Embodiments → "Dosage form")', () => {
+    async function medFor(token: string) {
+      const med = await request(app.getHttpServer())
+        .post('/api/medications')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: `form-med-${Date.now()}-${Math.random().toString(36).slice(2)}` })
+        .expect(201);
+      return med.body.id as string;
+    }
+
+    it('sets unitType from the form, keeps an untyped row untyped, and refuses a contradiction', async () => {
+      const { token } = await registerAndLogin(app);
+      const medicationId = await medFor(token);
+      const post = (body: Record<string, unknown>) =>
+        request(app.getHttpServer())
+          .post(`/api/medications/${medicationId}/embodiments`)
+          .set('Authorization', `Bearer ${token}`)
+          .send(body);
+
+      const cream = await post({ label: '1% cream', dosageForm: 'cream' }).expect(201);
+      expect(cream.body).toMatchObject({ dosageForm: 'cream', unitType: 'other' });
+      const chewable = await post({ label: '80 mg chewable', dosageForm: 'chewable', unitType: 'tablet', strengthMgPerUnit: 80 }).expect(201);
+      expect(chewable.body).toMatchObject({ dosageForm: 'chewable', unitType: 'tablet' });
+      const drops = await post({ label: 'Eye drops', dosageForm: 'drops' }).expect(201);
+      expect(drops.body.unitType).toBe('drop');
+      const untyped = await post({ label: 'Mystery', unitType: 'other' }).expect(201);
+      expect(untyped.body.dosageForm).toBeNull();
+
+      const mismatch = await post({ label: 'x', dosageForm: 'cream', unitType: 'ml' }).expect(400);
+      expect(mismatch.body.message).toBe('DOSAGE_FORM_UNIT_TYPE_MISMATCH');
+      await post({ label: 'x' }).expect(400); // neither form nor unit
+      await post({ label: 'x', dosageForm: 'lotion' }).expect(400);
+
+      // PATCH: the form moves the unit with it; null clears the form only.
+      const patched = await request(app.getHttpServer())
+        .patch(`/api/embodiments/${untyped.body.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ dosageForm: 'liquid' })
+        .expect(200);
+      expect(patched.body).toMatchObject({ dosageForm: 'liquid', unitType: 'ml' });
+      const cleared = await request(app.getHttpServer())
+        .patch(`/api/embodiments/${untyped.body.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ dosageForm: null })
+        .expect(200);
+      expect(cleared.body).toMatchObject({ dosageForm: null, unitType: 'ml' });
+    });
+  });
+
   it('rejects an embodiment on a nonexistent medication', async () => {
     const { token } = await registerAndLogin(app);
     const nonexistent = '00000000-0000-4000-8000-000000000000';
@@ -627,6 +676,11 @@ describe('Medications (e2e)', () => {
       await patch(auth, embodimentId, { strengthMgPerUnit: 5 }).expect(409);
       await patch(auth, embodimentId, { concentrationMgPerMl: 32 }).expect(409);
       await patch(auth, embodimentId, { concentrationVolumeMl: null }).expect(409);
+      // A form that moves the unit is a unit change; one that keeps it is not.
+      const formRefused = await patch(auth, embodimentId, { dosageForm: 'tablet' }).expect(409);
+      expect(formRefused.body.message).toBe('EMBODIMENT_CONCENTRATION_IN_USE');
+      const typed = await patch(auth, embodimentId, { dosageForm: 'liquid' }).expect(200);
+      expect(typed.body).toMatchObject({ dosageForm: 'liquid', unitType: 'ml' });
 
       const list = await request(app.getHttpServer())
         .get(`/api/medications/${medicationId}/embodiments`)

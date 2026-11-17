@@ -1,0 +1,2 @@
+ALTER TABLE `medication_embodiments` ADD `dosage_form` text;--> statement-breakpoint
+UPDATE `medication_embodiments` SET `dosage_form` = CASE `unit_type` WHEN 'ml' THEN 'liquid' WHEN 'tablet' THEN 'tablet' WHEN 'capsule' THEN 'capsule' WHEN 'drop' THEN 'drops' ELSE NULL END;

@@ -57,6 +57,13 @@
       "when": 1794875306475,
       "tag": "0007_bright_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794878335119,
+      "tag": "0008_embodiment_dosage_form",
+      "breakpoints": true
     }
   ]
 }

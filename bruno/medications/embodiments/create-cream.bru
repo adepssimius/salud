@@ -1,0 +1,44 @@
+meta {
+  name: Create Embodiment (cream)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}medications/{{medicationId}}/embodiments
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  let mid = bru.getVar('medicationId');
+  if (!mid) {
+    const listReq = await bru.runRequest('medications/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) mid = list[0].id;
+  }
+  bru.setVar('medicationId', mid);
+}
+
+body:json {
+  {
+    "label": "1% cream (Bruno)",
+    "dosageForm": "cream"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.dosageForm: eq cream
+  res.body.unitType: eq other
+}
+
+docs {
+  A topical form: no concentration, no strength, and `unitType` set to `other` from the form.
+  The dose form shows no amount boxes for it (frontend.md → "Dose entry").
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

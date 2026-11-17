@@ -6,6 +6,7 @@ import { medicationEmbodiments, medications } from '../../db/schema';
 import { CreateEmbodimentDto } from './dto/create-embodiment.dto';
 import { UpdateEmbodimentDto } from './dto/update-embodiment.dto';
 import { normalizeTs } from '../persistence/time';
+import { DOSAGE_FORM_UNIT_TYPE, DosageForm, MedicationUnitType } from '@salud/shared/types';
 import { embodimentDependencies, embodimentDosingDependencies } from './catalog-dependencies';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class EmbodimentsService {
       concentrationVolumeMl: row.concentrationVolumeMl ?? null,
       strengthMgPerUnit: row.strengthMgPerUnit,
       unitType: row.unitType,
+      dosageForm: row.dosageForm ?? null,
       notes: row.notes ?? null,
       atHome: row.atHome,
       expiresAt: normalizeTs(row.expiresAt),
@@ -113,8 +115,26 @@ export class EmbodimentsService {
     return { concentrationMgPerMl: derived, concentrationMg: mergedMg, concentrationVolumeMl: mergedMl };
   }
 
+  /**
+   * The unit a request leaves the row counted in. A form decides it (`DOSAGE_FORM_UNIT_TYPE`); a
+   * `unitType` sent with the form must agree, or the row would say "cream" and count in mL
+   * (api.md -> Embodiments, "Dosage form").
+   */
+  private resolveUnitType(
+    unitType: MedicationUnitType | undefined,
+    dosageForm: DosageForm | null | undefined,
+  ): MedicationUnitType | undefined {
+    if (!dosageForm) return unitType;
+    const fromForm = DOSAGE_FORM_UNIT_TYPE[dosageForm];
+    if (unitType !== undefined && unitType !== fromForm) {
+      throw new BadRequestException('DOSAGE_FORM_UNIT_TYPE_MISMATCH');
+    }
+    return fromForm;
+  }
+
   async create(medicationId: string, userId: string, dto: CreateEmbodimentDto) {
     await this.ensureMedicationExists(medicationId);
+    const unitType = this.resolveUnitType(dto.unitType, dto.dosageForm);
     const db = this.db.db as any;
     const id = randomUUID();
     await db.insert(medicationEmbodiments).values({
@@ -126,7 +146,8 @@ export class EmbodimentsService {
       concentrationVolumeMl: null,
       ...this.resolveConcentration(dto, null),
       strengthMgPerUnit: dto.strengthMgPerUnit ?? null,
-      unitType: dto.unitType,
+      unitType,
+      dosageForm: dto.dosageForm ?? null,
       notes: dto.notes ?? null,
       atHome: dto.atHome ?? false,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
@@ -159,9 +180,11 @@ export class EmbodimentsService {
     if (dto.label !== undefined) updates.label = dto.label;
     const dosing: Record<string, any> = this.resolveConcentration(dto, existing);
     if (dto.strengthMgPerUnit !== undefined) dosing.strengthMgPerUnit = dto.strengthMgPerUnit;
-    if (dto.unitType !== undefined) dosing.unitType = dto.unitType;
+    const unitType = this.resolveUnitType(dto.unitType, dto.dosageForm);
+    if (unitType !== undefined) dosing.unitType = unitType;
     await this.ensureDosingEditable(id, existing, dosing);
     Object.assign(updates, dosing);
+    if (dto.dosageForm !== undefined) updates.dosageForm = dto.dosageForm;
     if (dto.notes !== undefined) updates.notes = dto.notes;
     if (dto.atHome !== undefined) updates.atHome = dto.atHome;
     if (dto.expiresAt !== undefined) {
