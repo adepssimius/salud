@@ -462,7 +462,8 @@ describe('Schedules (e2e)', () => {
       const before = await giveDose(hoursAgo(60)); // before startAt
       const a = await giveDose(hoursAgo(47));
       const b = await giveDose(hoursAgo(35));
-      const c = await giveDose(hoursAgo(23));
+      const cAt = hoursAgo(23); // read once: the next-due expectation below derives from it
+      const c = await giveDose(cAt);
       await giveDose(hoursAgo(22), { medicationEmbodimentId: otherEmbodimentId }); // other embodiment
       await giveDose(hoursAgo(21), { medicationId: otherMedId, medicationEmbodimentId: undefined }); // other medicine
       const sched = await makeSchedule();
@@ -482,8 +483,8 @@ describe('Schedules (e2e)', () => {
       ]);
       expect(res.body.schedule.adherence).toMatchObject({ loggedCount: 3, missed: 2 });
       // Next due follows the latest linked dose (23h ago) by one interval: 11h ago.
-      const latest = Math.floor(new Date(hoursAgo(23)).getTime() / 1000);
-      expect(Math.abs(res.body.schedule.nextDueAt - (latest + 12 * 3600))).toBeLessThanOrEqual(1);
+      const latest = Math.floor(new Date(cAt).getTime() / 1000);
+      expect(res.body.schedule.nextDueAt).toBe(latest + 12 * 3600);
 
       const dose = await auth(http().get(`/api/interventions/${a}`)).expect(200);
       expect(dose.body.scheduleId).toBe(sched.id);
