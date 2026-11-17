@@ -513,7 +513,16 @@ episodes.
     back for verification instead of a number no bottle carries. Null on an embodiment whose
     concentration was entered directly as mg/mL — that path stays supported and stays authoritative.
   - `strengthMgPerUnit: decimal | null`
-  - `unitType: enum('tablet','capsule','ml','drop','other')`
+  - `unitType: enum('tablet','capsule','ml','drop','other')` — what a dose is counted in.
+  - `dosageForm: enum('liquid','tablet','chewable','capsule','drops','cream','ointment','gel','other') | null`
+    — what the embodiment *is*, as against what it is counted in: a chewable counts like a tablet,
+    drops are a count of a liquid, and a cream has no unit at all. The caregiver picks the form and
+    `unitType` follows it (liquid → `ml`; tablet, chewable → `tablet`; capsule → `capsule`; drops →
+    `drop`; cream, ointment, gel, other → `other`; api.md → Embodiments → "Dosage form"). Cream,
+    ointment and gel are the **topical** forms: there is no mg to measure a dose of them in, and the
+    dose form shows no amount for them (frontend.md → "Dose entry"). Null on a row that predates the
+    field and was `other`; rows that were `ml`/`tablet`/`capsule`/`drop` were backfilled to
+    liquid/tablet/capsule/drops by the migration that added it.
   - `notes: text`
   - Cabinet awareness fields (F-9.1–F-9.3; kept deliberately light per F-9.4 — no inventory counts):
     - `atHome: boolean` — whether the household has marked this embodiment as physically present.

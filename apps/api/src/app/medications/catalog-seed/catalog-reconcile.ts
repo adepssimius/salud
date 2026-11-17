@@ -135,6 +135,9 @@ function medicationDifferences(row: any, m: CatalogFileMedication): CatalogSeedD
 function embodimentDifferences(row: any, e: CatalogFileEmbodiment): CatalogSeedDifference[] {
   const diffs: CatalogSeedDifference[] = [];
   if (row.unitType !== e.unitType) diffs.push({ field: 'unitType', database: row.unitType, file: e.unitType });
+  if ((row.dosageForm ?? null) !== (e.dosageForm ?? null)) {
+    diffs.push({ field: 'dosageForm', database: row.dosageForm ?? null, file: e.dosageForm ?? null });
+  }
   const numeric: Array<[string, unknown, unknown]> = [
     ['concentrationMgPerMl', row.concentrationMgPerMl, fileConcentrationMgPerMl(e)],
     ['concentrationMg', row.concentrationMg, e.concentrationMg],
@@ -305,6 +308,7 @@ function embodimentValues(medicationId: string, e: CatalogFileEmbodiment) {
     concentrationVolumeMl: hasPair ? e.concentrationVolumeMl : null,
     strengthMgPerUnit: e.strengthMgPerUnit ?? null,
     unitType: e.unitType,
+    dosageForm: e.dosageForm ?? null,
     notes: e.notes ?? null,
     // Cabinet fields are never written: they describe one household's bottle, not the catalog.
   };

@@ -48,12 +48,22 @@ describe('repo catalog file', () => {
     expect(forms.map((e) => e.label).sort()).toEqual(['1% cream (28.4 g tube)', '4% vaginal cream (25 g tube)']);
     for (const e of forms) {
       expect(e.unitType).toBe('other');
+      expect(e.dosageForm).toBe('cream');
       expect(e.concentrationMg ?? e.concentrationVolumeMl ?? e.concentrationMgPerMl ?? e.strengthMgPerUnit).toBeUndefined();
     }
   });
 
   it('accepts a minimal valid file', () => {
     expect(problemsOf({ version: 1, medications: [med()] })).toEqual([]);
+  });
+
+  it('takes a dosageForm that agrees with the unitType, and refuses one that does not', () => {
+    expect(problemsOf({ version: 2, medications: [med({ embodiments: [cream({ dosageForm: 'cream' })] })] })).toEqual([]);
+    const problems = problemsOf({ version: 2, medications: [med({ embodiments: [cream({ dosageForm: 'liquid' })] })] });
+    expect(problems.join()).toMatch(/dosageForm "liquid" is counted in "ml", not "other"/);
+    expect(problemsOf({ version: 2, medications: [med({ embodiments: [cream({ dosageForm: 'lotion' })] })] }).join()).toMatch(
+      /dosageForm/,
+    );
   });
 
   it('refuses a version newer than this build', () => {

@@ -1,4 +1,4 @@
-import { Component, forwardRef, signal } from '@angular/core';
+import { Component, forwardRef, input, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
 import { PILL_FRACTIONS, splitPillCount } from '@salud/shared/types';
@@ -10,6 +10,9 @@ import { PILL_FRACTIONS, splitPillCount } from '@salud/shared/types';
  *
  * A stored count that is not a whole plus an offered fraction (an old 0.4) is shown as typed in the
  * number box with no fraction, rather than snapped to one it isn't.
+ *
+ * `[fractions]="false"` is a count that doesn't split (drops): the fraction select is left out,
+ * unless the value already holds a fraction, which is then shown rather than hidden.
  */
 @Component({
   selector: 'app-pill-count-input',
@@ -23,15 +26,18 @@ import { PILL_FRACTIONS, splitPillCount } from '@salud/shared/types';
         min="0"
         step="1"
         inputmode="numeric"
-        aria-label="Whole pills"
+        [attr.aria-label]="wholeLabel()"
         [value]="whole() ?? ''"
         [disabled]="disabled()"
         (input)="onWhole($event)"
         (blur)="touched()"
       />
-      <select aria-label="Part of a pill" [disabled]="disabled()" (change)="onFraction($event)" (blur)="touched()">
+      <select
+        *ngIf="fractions() || fraction() !== 0"
+        aria-label="Part of a pill"
+        [disabled]="disabled()" (change)="onFraction($event)" (blur)="touched()">
         <option value="0" [selected]="fraction() === 0">+ none</option>
-        <option *ngFor="let f of fractions" [value]="f.value" [selected]="fraction() === f.value">+ {{ f.label }}</option>
+        <option *ngFor="let f of fractionOptions" [value]="f.value" [selected]="fraction() === f.value">+ {{ f.label }}</option>
       </select>
     </div>
   `,
@@ -53,7 +59,11 @@ import { PILL_FRACTIONS, splitPillCount } from '@salud/shared/types';
   ],
 })
 export class PillCountInputComponent implements ControlValueAccessor {
-  readonly fractions = PILL_FRACTIONS;
+  readonly fractionOptions = PILL_FRACTIONS;
+  /** Whether the count takes a fraction (pills split; drops don't). */
+  fractions = input(true);
+  /** The number box's accessible name — "Whole pills", or the count's own label for drops. */
+  wholeLabel = input('Whole pills');
   whole = signal<number | null>(null);
   fraction = signal(0);
   disabled = signal(false);

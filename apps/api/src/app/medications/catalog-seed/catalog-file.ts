@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync, ValidationError } from 'class-validator';
-import type { GuidelineType, GuidelineUnderDose, MedicationUnitType } from '@salud/shared/types';
+import { DOSAGE_FORM_UNIT_TYPE } from '@salud/shared/types';
+import type { DosageForm, GuidelineType, GuidelineUnderDose, MedicationUnitType } from '@salud/shared/types';
 import { CreateMedicationDto } from '../dto/create-medication.dto';
 import { CreateEmbodimentDto } from '../dto/create-embodiment.dto';
 import { CreateGuidelineDto } from '../dto/create-guideline.dto';
@@ -16,7 +17,7 @@ import { CreateGuidelineDto } from '../dto/create-guideline.dto';
  */
 
 /** The highest file `version` this build can read. An older image refuses a newer file. */
-export const CATALOG_FILE_VERSION = 1;
+export const CATALOG_FILE_VERSION = 2; // 2: embodiments may carry `dosageForm`
 
 export interface CatalogFileGuideline {
   key: string;
@@ -40,6 +41,7 @@ export interface CatalogFileEmbodiment {
   key: string;
   label: string;
   unitType: MedicationUnitType;
+  dosageForm?: DosageForm;
   concentrationMg?: number;
   concentrationVolumeMl?: number;
   concentrationMgPerMl?: number;
@@ -81,6 +83,7 @@ const EMBODIMENT_KEYS = [
   'key',
   'label',
   'unitType',
+  'dosageForm',
   'concentrationMg',
   'concentrationVolumeMl',
   'concentrationMgPerMl',
@@ -257,6 +260,11 @@ export function parseCatalogFile(text: string): CatalogFile {
         checkKey(e.key, eat, embKeys, problems);
         validateDto(CreateEmbodimentDto, pick(e, ['key', 'guidelines']), eat, problems);
         checkConcentration(e, eat, problems);
+        // The file states both, so it must not contradict itself (api.md → "Dosage form").
+        const form = e.dosageForm as DosageForm | undefined;
+        if (form && DOSAGE_FORM_UNIT_TYPE[form] && DOSAGE_FORM_UNIT_TYPE[form] !== e.unitType) {
+          problems.push(`${eat}: dosageForm "${form}" is counted in "${DOSAGE_FORM_UNIT_TYPE[form]}", not "${String(e.unitType)}"`);
+        }
         const label = normalizeName(e.label as string);
         if (label && labels.has(label)) problems.push(`${eat}.label: another form of this medication has the label "${e.label}"`);
         labels.add(label);

@@ -12,6 +12,7 @@ const SYRUP = {
   concentrationVolumeMl: 5,
   strengthMgPerUnit: null,
   unitType: 'ml' as const,
+  dosageForm: 'liquid' as const,
   notes: null,
   atHome: true,
   expiresAt: null,
@@ -48,12 +49,12 @@ describe('EmbodimentEditorComponent', () => {
       apiMock.post.mockReturnValue(of({ id: 'e2' }));
       const comp = build().componentInstance;
 
-      comp.form.patchValue({ label: '5mL syrup', unitType: 'ml', concentrationMg: 160, concentrationVolumeMl: 5 });
+      comp.form.patchValue({ label: '5mL syrup', dosageForm: 'liquid', concentrationMg: 160, concentrationVolumeMl: 5 });
       expect(comp.derivedConcentration()).toBe(32);
       comp.save();
       expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/embodiments', {
         label: '5mL syrup',
-        unitType: 'ml',
+        dosageForm: 'liquid',
         concentrationMg: 160,
         concentrationVolumeMl: 5,
         strengthMgPerUnit: undefined,
@@ -68,7 +69,7 @@ describe('EmbodimentEditorComponent', () => {
 
       // The volume box defaults to 1; a tablet leaves the mg box empty, and "per 1 mL" alone means
       // nothing -- sending it would 400 with CONCENTRATION_PAIR_INCOMPLETE.
-      comp.form.patchValue({ label: '500 mg tablet', unitType: 'tablet', strengthMgPerUnit: 500 });
+      comp.form.patchValue({ label: '500 mg tablet', dosageForm: 'tablet', strengthMgPerUnit: 500 });
       comp.save();
       expect(apiMock.post).toHaveBeenCalledWith(
         '/medications/m1/embodiments',
@@ -97,7 +98,7 @@ describe('EmbodimentEditorComponent', () => {
     it('flags a half-filled concentration pair before it can be submitted', () => {
       const comp = build().componentInstance;
 
-      comp.form.patchValue({ label: 'syrup', unitType: 'ml', concentrationMg: 160, concentrationVolumeMl: null });
+      comp.form.patchValue({ label: 'syrup', dosageForm: 'liquid', concentrationMg: 160, concentrationVolumeMl: null });
       expect(comp.concentrationPairIncomplete()).toBe(true);
       expect(comp.derivedConcentration()).toBeNull();
       comp.save();
@@ -108,7 +109,7 @@ describe('EmbodimentEditorComponent', () => {
       apiMock.post.mockReturnValue(throwError(() => ({ status: 400, error: { message: 'CONCENTRATION_OUT_OF_RANGE' } })));
       const comp = build().componentInstance;
 
-      comp.form.patchValue({ label: 'syrup', unitType: 'ml', concentrationMg: 160, concentrationVolumeMl: 0.001 });
+      comp.form.patchValue({ label: 'syrup', dosageForm: 'liquid', concentrationMg: 160, concentrationVolumeMl: 0.001 });
       comp.save();
       expect(comp.error()).toContain('no medicine comes in');
       expect(comp.form.getRawValue().label).toBe('syrup');
@@ -121,7 +122,7 @@ describe('EmbodimentEditorComponent', () => {
       const comp = build(SYRUP).componentInstance;
       expect(comp.form.getRawValue()).toEqual({
         label: '160 mg / 5 mL syrup',
-        unitType: 'ml',
+        dosageForm: 'liquid',
         concentrationMg: 160,
         concentrationVolumeMl: 5,
         strengthMgPerUnit: null,
@@ -129,6 +130,19 @@ describe('EmbodimentEditorComponent', () => {
         expiresAt: '',
       });
       expect(comp.derivedConcentration()).toBe(32);
+    });
+
+    it('asks for the form, and sends only the form when it changes — the unit follows it server-side', () => {
+      apiMock.patch.mockReturnValue(of({ ...SYRUP }));
+      const fixture = build({ ...SYRUP, unitType: 'other', dosageForm: null, concentrationMg: null, concentrationVolumeMl: null, concentrationMgPerMl: null });
+      const comp = fixture.componentInstance;
+      const select = fixture.nativeElement.querySelector('select[formControlName="dosageForm"]') as HTMLSelectElement;
+      // An untyped row says so, in its unit, until a form is picked.
+      expect(select.options[0].textContent).toContain('Not set');
+      expect([...select.options].map((o) => o.value)).toContain('cream');
+      expect(comp.changes()).toEqual({});
+      comp.form.patchValue({ dosageForm: 'cream' });
+      expect(comp.changes()).toEqual({ dosageForm: 'cream' });
     });
 
     it('edits a row stored only as a per-mL figure as "N mg per 1 mL"', () => {
