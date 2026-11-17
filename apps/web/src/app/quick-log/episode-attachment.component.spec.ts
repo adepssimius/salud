@@ -12,6 +12,7 @@ import { EpisodeAttachmentComponent } from './episode-attachment.component';
       [createNew]="createNew"
       [resolveSelected]="resolveSelected"
       [allowCreateNew]="allowCreateNew"
+      [behindMore]="behindMore"
       [lockedIds]="lockedIds"
       (selectedIdsChange)="selectedIds = $event"
       (createNewChange)="createNew = $event"
@@ -25,6 +26,7 @@ class HostComponent {
   createNew = false;
   resolveSelected = false;
   allowCreateNew = true;
+  behindMore = false;
   lockedIds: string[] = [];
 }
 
@@ -33,10 +35,15 @@ describe('EpisodeAttachmentComponent', () => {
     await TestBed.configureTestingModule({ imports: [HostComponent] }).compileComponents();
   });
 
-  function render(episodes: Array<{ id: string; name: string }>, selectedIds: string[] = []) {
+  function render(
+    episodes: Array<{ id: string; name: string }>,
+    selectedIds: string[] = [],
+    behindMore = false,
+  ) {
     const fixture = TestBed.createComponent(HostComponent);
     fixture.componentInstance.episodes = episodes;
     fixture.componentInstance.selectedIds = selectedIds;
+    fixture.componentInstance.behindMore = behindMore;
     fixture.detectChanges();
     return fixture;
   }
@@ -80,13 +87,52 @@ describe('EpisodeAttachmentComponent', () => {
     expect(fixture.componentInstance.selectedIds).toEqual(['ep2']);
   });
 
-  it('keeps "start new episode" and "this resolves…" behind the More disclosure', () => {
-    const fixture = render([{ id: 'ep1', name: 'Fever' }], ['ep1']);
+  const moreButton = (el: HTMLElement) =>
+    Array.from(el.querySelectorAll('button')).find((b) => ['More', 'Less'].includes(b.textContent!.trim()));
+
+  // frontend.md → Quick Log → "Episode attachment": on the full forms the start control is never
+  // tucked away — a caregiver who could not see it concluded episodes could not be started at all.
+  describe('on a full form', () => {
+    it('shows "Start a new episode" and "this resolves…" with no More to open', () => {
+      const el = render([{ id: 'ep1', name: 'Fever' }], ['ep1']).nativeElement as HTMLElement;
+      expect(moreButton(el)).toBeUndefined();
+      expect(el.textContent).toContain('Start a new episode');
+      expect(el.textContent).toContain('This resolves the selected episode');
+    });
+
+    it('shows "Start a new episode" beside a multi-episode picker', () => {
+      const el = render([
+        { id: 'ep1', name: 'Fever' },
+        { id: 'ep2', name: 'Rash' },
+      ]).nativeElement as HTMLElement;
+      expect(moreButton(el)).toBeUndefined();
+      expect(el.textContent).toContain('Start a new episode');
+      // Nothing selected, so nothing to resolve.
+      expect(el.textContent).not.toContain('This resolves');
+    });
+
+    it('shows "Start a new episode" on its own when the patient has no active episodes', () => {
+      const fixture = render([]);
+      const el = fixture.nativeElement as HTMLElement;
+      expect(moreButton(el)).toBeUndefined();
+      expect(el.querySelector('.chip')).toBeNull();
+      expect(el.textContent).toContain('Start a new episode');
+      expect(el.textContent).not.toContain('New episode name');
+
+      (el.querySelector('.more input[type="checkbox"]') as HTMLInputElement).click();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.createNew).toBe(true);
+      expect(el.textContent).toContain('New episode name');
+    });
+  });
+
+  // The compact quick-log layouts stay minimal.
+  it('keeps "start new episode" and "this resolves…" behind More when behindMore is set', () => {
+    const fixture = render([{ id: 'ep1', name: 'Fever' }], ['ep1'], true);
     const el = fixture.nativeElement as HTMLElement;
     expect(el.textContent).not.toContain('Start a new episode');
 
-    const more = Array.from(el.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'More');
-    more!.click();
+    moreButton(el)!.click();
     fixture.detectChanges();
     expect(el.textContent).toContain('Start a new episode');
     expect(el.textContent).toContain('This resolves the selected episode');
@@ -107,8 +153,8 @@ describe('EpisodeAttachmentComponent', () => {
   // A quiet patient is precisely the one whose first episode is about to start, and logging an
   // event with `startEpisodeName` is the only way an episode begins. This used to render nothing
   // at all, which left no way to start an episode from the UI.
-  it('still offers "Start a new episode" when the patient has no active episodes', () => {
-    const fixture = render([]);
+  it('still offers "Start a new episode" behind More when the patient has no active episodes', () => {
+    const fixture = render([], [], true);
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('.chip')).toBeNull();
     expect(el.textContent).not.toContain('Attach to an episode');

@@ -16,10 +16,13 @@ export interface EpisodeOption {
  * a chip picker with nothing pre-selected: the app does not guess which illness a 3 AM dose
  * belongs to.
  *
- * "Start new episode" and "this resolves…" live behind a "More" disclosure, which renders even
- * with zero active episodes — that is the state a first episode starts from. Resolution is still
- * only ever a side effect of a logged event — it just stops occupying prime space on every entry
- * (frontend.md → "Information architecture (v2)" → Quick Log).
+ * **Where "Start a new episode" sits** (frontend.md → "Information architecture (v2)" → Quick Log →
+ * "Episode attachment"). On the full forms it and "this resolves…" render inline, always — a
+ * caregiver who could not see the start control concluded the app had no way to begin an episode,
+ * and logging an entry is the only way one does. The compact quick-log layouts set `behindMore`:
+ * there both stay behind a "More" disclosure, which renders even with zero active episodes — that
+ * is the state a first episode starts from. Either way, resolution is only ever a side effect of a
+ * logged event.
  *
  * The pre-attach itself is applied by the parent when it loads the episode list, not here: the
  * parent owns the form state, and a component that patched its own inputs would fight the
@@ -44,8 +47,8 @@ export interface EpisodeOption {
   imports: [CommonModule, FormsModule],
   template: `
     <!-- Always rendered. With no active episode there is nothing to attach to, but "Start a new
-         episode" is the *only* way an episode ever begins (no create endpoint — CLAUDE.md →
-         Episode model), so the More disclosure has to stay reachable in exactly that state. -->
+         episode" is how a first episode begins from an entry, so the start control (inline, or the
+         compact layouts' More) has to stay reachable in exactly that state. -->
     <div class="episode-attachment">
       <ng-container *ngIf="isSingle(); else picker">
         <div class="attached" *ngIf="isSelected(episodes[0].id); else reattach">
@@ -99,27 +102,27 @@ export interface EpisodeOption {
       <span class="muted small locked-note" *ngIf="hasLockedEpisode()">This entry started this episode</span>
 
       <ng-container *ngIf="allowCreateNew; else resolveOnly">
-      <button type="button" class="link small" (click)="moreOpen.set(!moreOpen())">
-        {{ moreOpen() ? 'Less' : 'More' }}
-      </button>
-
-      <div class="more" *ngIf="moreOpen()">
-        <label class="inline-check">
-          <input type="checkbox" [checked]="createNew" (change)="onCreateNewToggle($event)" />
-          <span>Start a new episode</span>
-        </label>
-        <label class="field" *ngIf="createNew">
-          <span>New episode name</span>
-          <input
-            type="text"
-            [ngModel]="newEpisodeName"
-            (ngModelChange)="newEpisodeNameChange.emit($event)"
-            [ngModelOptions]="{ standalone: true }"
-            placeholder="e.g. Fever"
-          />
-        </label>
-        <ng-container *ngTemplateOutlet="resolveOption"></ng-container>
-      </div>
+        <!-- Only the compact quick-log layouts tuck these away; the full forms show them always. -->
+        <button *ngIf="behindMore" type="button" class="link small" (click)="moreOpen.set(!moreOpen())">
+          {{ moreOpen() ? 'Less' : 'More' }}
+        </button>
+        <div class="more" *ngIf="!behindMore || moreOpen()">
+          <label class="inline-check">
+            <input type="checkbox" [checked]="createNew" (change)="onCreateNewToggle($event)" />
+            <span>Start a new episode</span>
+          </label>
+          <label class="field" *ngIf="createNew">
+            <span>New episode name</span>
+            <input
+              type="text"
+              [ngModel]="newEpisodeName"
+              (ngModelChange)="newEpisodeNameChange.emit($event)"
+              [ngModelOptions]="{ standalone: true }"
+              placeholder="e.g. Fever"
+            />
+          </label>
+          <ng-container *ngTemplateOutlet="resolveOption"></ng-container>
+        </div>
       </ng-container>
 
       <!-- No "Start a new episode" to disclose: the resolve option stands on its own, and with no
@@ -185,6 +188,8 @@ export class EpisodeAttachmentComponent {
   @Input() resolveSelected = false;
   /** False on a correction: no "Start a new episode" (see the class comment). */
   @Input() allowCreateNew = true;
+  /** Compact quick-log layouts: keep "Start a new episode" and "this resolves…" behind "More". */
+  @Input() behindMore = false;
   /** Episodes that stay selected whatever the caregiver taps — on a correction, the one it started. */
   @Input() lockedIds: string[] = [];
   /** Selectable, but never counted by "this resolves…" — see the class comment. */
