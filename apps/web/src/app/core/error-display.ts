@@ -28,11 +28,6 @@ export const ERROR_SENTENCES = {
   ANALYTE_RANGE_NOT_FOUND: 'That range no longer exists. Reload this analyte.',
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
-  // An entry may not leave the episode it started (data-model.md → Corrections). The edit form
-  // locks that checkbox and the episode page offers no Remove on the start, so this reaches a
-  // caregiver only if two edits race.
-  CANNOT_UNLINK_STARTED_EPISODE:
-    'That entry started the episode, so it has to stay part of it. Keep it in the episode and save again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
@@ -62,8 +57,15 @@ export const ERROR_SENTENCES = {
   EMBODIMENT_CONCENTRATION_IN_USE:
     'Doses or schedules already use this form, so its concentration, strength and unit type can no longer change. If the bottle is different, add it as a new form instead.',
   EPISODE_ALREADY_RESOLVED: 'That episode has already been resolved. Refresh to see the current status.',
+  // An episode always keeps one entry to start from (data-model.md → "An episode always has at
+  // least one member"). The episode page hides Remove on a lone entry, so this mostly reaches a
+  // caregiver from the edit form, or when two edits race.
+  EPISODE_LAST_ENTRY:
+    'That is the only entry left in the episode, so it has to stay. Add another entry to the episode first.',
+  // The resolving entry may not be earlier than every other entry of its episode (data-model.md →
+  // "An episode may not end at its start…").
   EPISODE_TIME_ORDER_INVALID:
-    "That time would make an episode end before it began. Check the time against the episode's start and end.",
+    "That would put the entry that ended the episode before all of the episode's other entries. Check its time, or keep an earlier entry in the episode.",
   EPISODE_NOT_FOUND: 'That episode is no longer available. Refresh the page and try again.',
   // Episodes drawn from History (api.md → POST /patients/:id/episodes, POST /episodes/:id/events).
   EPISODE_EVENTS_REQUIRED: 'Choose at least one entry for this episode.',

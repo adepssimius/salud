@@ -152,7 +152,8 @@ Caregiver-entered standing instructions from the care team, attached to a Condit
 - `conditionId: uuid | null` — optional nesting under a standing Condition (§4.4).
 - `name: string` (e.g., "Fever Jan 2025")
 - `startedAtType: enum('observation','intervention')`
-- `startedAtId: uuid` (the observation/intervention that marks start)
+- `startedAtId: uuid` (the observation/intervention that marks start — always the episode's
+  **earliest member**, see "Data integrity rules" → "An episode starts at its earliest entry")
 - `endedAtType: enum('observation','intervention') | null`
 - `endedAtId: uuid | null` (the observation/intervention that marks resolution)
 - `status: enum('active','resolved')`
@@ -170,7 +171,7 @@ Caregiver-entered standing instructions from the care team, attached to a Condit
 - `startsEpisode: boolean`
 - `resolvesEpisode: boolean`
 - `createdAt`, `updatedAt`
-- Used to associate observations/interventions to episodes (including which event started or resolved an episode). A single event can start at most one episode but may be associated with multiple.
+- Used to associate observations/interventions to episodes (including which event started or resolved an episode). `startsEpisode` is true on exactly one membership row per episode — the row of the event `startedAtId` names — and is maintained with it. An event may belong to, and be the earliest entry of, several episodes.
 
 ### Observation (base)
 - `id: uuid`
@@ -780,10 +781,9 @@ the snapshot's contents do.
   observation or intervention, whoever recorded it, with no time limit — membership already grants
   full read/write on the patient, and the `Revision` records who corrected what. A correction keeps
   the episode frame consistent:
-  - **An event cannot be unlinked from an episode it started** (400
-    `CANNOT_UNLINK_STARTED_EPISODE`). `startedAtType`/`startedAtId` would otherwise point at an event
-    that is no longer a member, and the episode would have no start among its own events. A frame
-    started by the wrong event is voided with it (api.md → "Corrections" → Voiding).
+  - **Unlinking the starting event moves the start** to the next-earliest member ("An episode
+    starts at its earliest entry" below). What cannot be unlinked is an episode's **last** member
+    (400 `EPISODE_LAST_ENTRY`): an episode always has a start among its own events.
   - **Dropping a resolve link reopens the episode.** When a correction removes an episode from an
     event's `resolvesEpisodeIds` and that event is the episode's `endedAtId`, the episode returns
     to `status = 'active'` with `endedAtType`/`endedAtId` cleared. This is the one way an episode
@@ -791,30 +791,60 @@ the snapshot's contents do.
     action — there is still no direct resolve or reopen endpoint (CLAUDE.md → Episode model).
   - **Changing an event's clinical time moves the frames it anchors.** `startedAt` and `endedAt`
     are derived from the starting and resolving events at query time, so correcting that event's
-    `observedAt`/`performedAt` moves them with it; nothing is stored to update. The one
-    constraint: an episode may not end before it starts — a correction that would put a resolving
-    event's time before its episode's starting event's time, or a starting event's after the
-    resolving one's, is rejected (400 `EPISODE_TIME_ORDER_INVALID`). Ordinary member events are
-    unconstrained; membership has never required an event to sit inside the frame.
+    `observedAt`/`performedAt` moves them with it. Because the start is the earliest member, a
+    time correction can also change *which* event starts an episode — moving a member before the
+    start makes it the start; moving the start after another member hands the start to that
+    member — and the stored anchor follows in the same transaction.
   - **A corrected dose does not re-check later doses.** A later dose's `nextAllowedAt`,
     `isAtypical` and `atypicalReason` were computed from the doses on record when it was logged,
     and stay as logged — they are what the caregiver was shown at the time, which is the
     reconstructability N-2 asks for. Only the corrected dose itself is re-evaluated (api.md →
     `PATCH /api/interventions/:interventionId`).
+- **An episode starts at its earliest entry.** `startedAtType`/`startedAtId` always name the
+  episode's earliest member by clinical time (`observedAt`/`performedAt`), and the pivot's
+  `startsEpisode` is set on that member's row and no other. Ties on identical times: an entry that
+  resolves the episode sorts after any other entry at that time, then observation before
+  intervention, then by id — deterministic, and the same order the direct create always used.
+  The anchor is **stored, and recomputed** whenever an episode's membership changes or a member's
+  clinical time is corrected, through every route (an entry create with `episodeIds` or
+  `startEpisodeName`, an entry `PATCH`, `POST /api/patients/:id/episodes`,
+  `POST /api/episodes/:id/events`), in the same write. Logging with `startEpisodeName` creates the
+  episode with that entry as its only member, so it starts it as before; filing a back-dated entry
+  into an existing episode later makes it the start.
+  - **Self-healing on read.** An episode stored before this rule (or left inconsistent by any
+    earlier bug) is corrected the first time it is read: the episode reads recompute the anchor
+    from the current members and, where the stored `startedAt*` or `startsEpisode` flags disagree,
+    write the correction before answering. Idempotent, so concurrent reads on two pods write the
+    same thing. No migration or backfill.
+  - **The end does not follow.** The resolving event is an explicit act ("this resolves…"), not
+    a position, so it stays the end however the membership changes: an entry later than the
+    resolving one may be added to a resolved episode (a follow-up check) without moving the end,
+    and removing the resolving entry reopens the episode, as before.
+  - **An episode may not end at its start while it has other members.** After any change, a
+    resolved episode with two or more members whose earliest member would be its resolving entry —
+    i.e. the resolving entry is strictly earlier than every other member — is rejected (400
+    `EPISODE_TIME_ORDER_INVALID`). This replaces the old "end before start" check, which the
+    earliest-member rule now makes impossible. It applies to every route: correcting the
+    resolving entry's time back past the other members, correcting the other members' times past
+    it, removing every member earlier than it, or logging a new entry that resolves an episode
+    with a time before all its members. A single-member episode that starts and ends on the same
+    entry stays valid, as on a direct create.
+  - **An episode always has at least one member.** Removing an episode's last member, from either
+    side, is rejected (400 `EPISODE_LAST_ENTRY`); the start anchor is not nullable, and a directly
+    created episode already must name at least one entry.
 - **Episodes drawn afterward** (api.md → Episodes → `POST /api/patients/:patientId/episodes`). A
   directly created episode must name at least one existing entry of the same patient. Its start is
-  the earliest selected entry by clinical time (ties: observation before intervention, then id);
-  `startedAtType`/`startedAtId` and the pivot's `startsEpisode` are set exactly as if that entry had
-  started it while logging, so every reader of the start anchor works unchanged. A resolving entry,
-  when named, must be one of the selected entries; since the start is the earliest of them, a
-  direct create can never end before it starts.
+  the earliest selected entry ("An episode starts at its earliest entry" above). A resolving entry,
+  when named, must be one of the selected entries, and is subject to the same
+  `EPISODE_TIME_ORDER_INVALID` rule.
 - **Membership edits from the episode side** (api.md → `POST /api/episodes/:episodeId/events`) are
   corrections of each affected entry: they run through the same plan as an entry `PATCH` that
-  changes `episodeIds`, with the same rules (`CANNOT_UNLINK_STARTED_EPISODE`,
+  changes `episodeIds`, with the same rules (`EPISODE_LAST_ENTRY`, `EPISODE_TIME_ORDER_INVALID`,
   `EPISODE_ALREADY_RESOLVED`, `resolvesEpisodeIds ⊆ episodeIds`) and the same `Revision` per entry
-  whose links change. Removing the entry that resolved an episode drops both its links and reopens
-  the episode. Adding an entry earlier than the start does not move the start — membership has
-  never required an event to sit inside the frame.
+  whose links change. The start is recomputed once over the request's combined result, so adding
+  an earlier entry and removing the old start in one request is one move. Removing the entry that
+  resolved an episode drops both its links and reopens the episode. Adding an entry earlier than
+  the start makes it the start; removing the start promotes the next-earliest member.
 - `episodeId` on `InterventionSchedule` optional; when provided, schedule should tag interventions to same episode.
 - Enforce canonical units at persistence boundary; convert in API/UI.
 - `MedicationGuideline.source` is required — never persist a guideline without provenance (N-4).

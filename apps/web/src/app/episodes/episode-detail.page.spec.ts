@@ -242,21 +242,51 @@ describe('EpisodeDetailPage membership editing', () => {
   const removeButtons = (fixture: any) =>
     Array.from(fixture.nativeElement.querySelectorAll('button.remove')) as HTMLButtonElement[];
 
-  it('offers Remove on every entry except the one that started the episode', async () => {
+  const rowOf = (fixture: any, text: string) =>
+    (Array.from(fixture.nativeElement.querySelectorAll('ul.events li')) as HTMLElement[]).find((li) =>
+      li.textContent?.includes(text),
+    )!;
+  const removeIn = (fixture: any, pill: string) => rowOf(fixture, pill).querySelector('button.remove') as HTMLButtonElement;
+
+  it('offers Remove on every entry, the start included', async () => {
     const fixture = await build(resolvedEpisode, ['obs1', 'obs2']);
     expect(fixture.nativeElement.textContent).toContain('started this episode');
-    expect(removeButtons(fixture)).toHaveLength(1);
+    expect(removeButtons(fixture)).toHaveLength(2);
+    expect(removeIn(fixture, 'started this episode')).not.toBeNull();
+  });
+
+  it('offers no Remove on a lone entry', async () => {
+    const fixture = await build({ ...baseEpisode, observationIds: ['obs1'] }, ['obs1']);
+    expect(removeButtons(fixture)).toHaveLength(0);
+  });
+
+  it('removes the start without a confirm and moves the pill to the start the API returns', async () => {
+    const fixture = await build({ ...baseEpisode, startedAtId: 'obs1', observationIds: ['obs1', 'obs2'] }, ['obs1', 'obs2']);
+    const confirm = jest.spyOn(window, 'confirm');
+    apiMock.post.mockReturnValueOnce(
+      of({ ...baseEpisode, startedAtId: 'obs2', startedAt: 1700100000, observationIds: ['obs2'] }),
+    );
+    // Both rows still render (the stubbed timeline does not shrink), so the pill's row is the check.
+    removeIn(fixture, 'started this episode').click();
+    fixture.detectChanges();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(apiMock.post).toHaveBeenCalledWith('/episodes/ep1/events', {
+      remove: [{ type: 'observation', id: 'obs1' }],
+    });
+    expect(fixture.componentInstance.isStart({ kind: 'observation', id: 'obs2' } as any)).toBe(true);
+    expect(fixture.componentInstance.isStart({ kind: 'observation', id: 'obs1' } as any)).toBe(false);
+    confirm.mockRestore();
   });
 
   it('confirms before removing the entry that ended the episode, then posts the removal', async () => {
     const fixture = await build(resolvedEpisode, ['obs1', 'obs2']);
     const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
 
-    removeButtons(fixture)[0].click();
+    removeIn(fixture, 'ended it').click();
     expect(confirm).toHaveBeenCalled();
     expect(apiMock.post).not.toHaveBeenCalled();
 
-    removeButtons(fixture)[0].click();
+    removeIn(fixture, 'ended it').click();
     expect(apiMock.post).toHaveBeenCalledWith('/episodes/ep1/events', {
       remove: [{ type: 'observation', id: 'obs2' }],
     });
