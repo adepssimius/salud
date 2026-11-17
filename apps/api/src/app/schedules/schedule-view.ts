@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { InterventionSchedule, ScheduleAdherence } from '@salud/shared/types';
+import { InterventionSchedule } from '@salud/shared/types';
+import { scheduleStateFor } from './schedule-state';
 import { interventions } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
 import { serverTimeZone, zonedDate, zonedWallTimeToInstant } from './zoned-time';
@@ -35,57 +36,13 @@ export function nextExplicitTime(times: string[], from: Date, strictlyAfter: boo
   return new Date(fromMs + 24 * 60 * 60 * 1000);
 }
 
-/**
- * How many occurrences were due by `now` — counted from `startAt` and **capped at the course's
- * end** (data-model.md → ScheduleAdherence): no slot after `endAt` counts, and never more than
- * `endAfterOccurrences`. Without the cap a finished course kept accruing "missed" doses forever.
- */
-export function expectedOccurrences(row: any, now: Date = new Date()): number {
-  // Whole seconds throughout, the API's own resolution — Postgres keeps milliseconds on one
-  // column and not another, and a sub-second gap must not drop the slot that sits exactly on endAt.
-  const startSec = normalizeTs(row.startAt)!;
-  const endAtSec = normalizeTs(row.endAt);
-  const limitSec = Math.min(Math.floor(now.getTime() / 1000), endAtSec ?? Infinity);
-  const cap = row.endAfterOccurrences != null ? row.endAfterOccurrences : Infinity;
-  let expected = 0;
-  if (limitSec >= startSec) {
-    if (row.frequencyHours) {
-      expected = Math.floor((limitSec - startSec) / (row.frequencyHours * 3600)) + 1;
-    } else if (row.explicitTimes) {
-      const times: string[] = typeof row.explicitTimes === 'string' ? JSON.parse(row.explicitTimes) : row.explicitTimes;
-      const zone: string | null = row.timeZone ?? null;
-      let cursor = nextExplicitTime(times, new Date(startSec * 1000), false, zone);
-      while (cursor.getTime() <= limitSec * 1000 && expected < cap && expected < 2000) {
-        expected++;
-        cursor = nextExplicitTime(times, cursor, true, zone);
-      }
-    }
-  }
-  return Math.min(expected, cap);
-}
-
 export async function scheduleLoggedCount(db: any, scheduleId: string): Promise<number> {
   const rows = await db.select().from(interventions).where(eq(interventions.scheduleId, scheduleId));
   return rows.length;
 }
 
-export async function computeScheduleAdherence(db: any, row: any): Promise<ScheduleAdherence> {
-  const loggedCount = await scheduleLoggedCount(db, row.id);
-  const expectedCount = expectedOccurrences(row);
-  const remainingOccurrences =
-    row.endAfterOccurrences != null ? Math.max(0, row.endAfterOccurrences - loggedCount) : null;
-  const nextDueTs = normalizeTs(row.nextDueAt);
-  const overdue = row.status === 'active' && nextDueTs != null && nextDueTs < Math.floor(Date.now() / 1000);
-  return {
-    expectedCount,
-    loggedCount,
-    missed: Math.max(0, expectedCount - loggedCount),
-    remainingOccurrences,
-    overdue,
-  };
-}
-
 export async function toScheduleView(db: any, row: any): Promise<InterventionSchedule> {
+  const state = await scheduleStateFor(db, row);
   return {
     id: row.id,
     patientId: row.patientId,
@@ -104,15 +61,28 @@ export async function toScheduleView(db: any, row: any): Promise<InterventionSch
     frequencyHours: row.frequencyHours ?? null,
     explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
     timeZone: row.timeZone ?? null,
+    missedDoseAction: row.missedDoseAction ?? null,
+    missedDoseCutoffHours: row.missedDoseCutoffHours ?? null,
+    missedDoseCourseEffect: row.missedDoseCourseEffect ?? null,
+    missedDoseNote: row.missedDoseNote ?? null,
+    missedDose: state.missedDose,
     startAt: normalizeTs(row.startAt)!,
     endAfterOccurrences: row.endAfterOccurrences ?? null,
     endAt: normalizeTs(row.endAt),
     notes: row.notes ?? null,
     status: row.status,
-    nextDueAt: normalizeTs(row.nextDueAt),
+    // From the computed state, which is what the stored column is persisted from on every write.
+    nextDueAt: state.nextDueAt,
     createdByUserId: row.createdByUserId,
     createdAt: normalizeTs(row.createdAt)!,
     updatedAt: normalizeTs(row.updatedAt)!,
-    adherence: await computeScheduleAdherence(db, row),
+    adherence: {
+      expectedCount: state.expectedCount,
+      loggedCount: state.loggedCount,
+      skippedCount: state.skippedCount,
+      missed: state.missed,
+      remainingOccurrences: state.remainingOccurrences,
+      overdue: state.overdue,
+    },
   };
 }

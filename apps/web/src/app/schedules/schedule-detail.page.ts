@@ -3,7 +3,8 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
-import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest } from '@salud/shared/types';
+import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest } from '@salud/shared/types';
+import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseAdvice } from './missed-dose-text';
 
 @Component({
   selector: 'app-schedule-detail-page',
@@ -32,6 +33,31 @@ import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesRespo
       </div>
       <div class="timing muted" *ngIf="s.nextDueAt">Next due {{ s.nextDueAt * 1000 | date: 'medium' }}</div>
       <div class="timing muted" *ngIf="!s.nextDueAt && s.status !== 'active'">No upcoming due date ({{ s.status }})</div>
+      <div class="timing small instruction" *ngIf="summary(s) as text">
+        <strong>If a dose is missed:</strong> {{ text }}<ng-container *ngIf="s.missedDoseNote"> — “{{ s.missedDoseNote }}”</ng-container>
+        <ng-container *ngIf="s.missedDoseCourseEffect"><br />{{ effectLabels[s.missedDoseCourseEffect] }}</ng-container>
+      </div>
+
+      <!-- The current missed dose and what the instruction says about it (frontend.md → Schedule
+           detail → "Missed doses"). The app repeats the instruction; the caregiver acts. -->
+      <section class="missed" *ngIf="s.missedDose as m">
+        <p class="missed-head">
+          <span class="pill pill-danger">missed</span>
+          Due {{ when(m.slotAt) }}
+        </p>
+        <p class="missed-advice" *ngIf="advice(m) as a">{{ a }}</p>
+        <div class="missed-actions">
+          <button type="button" [class.primary]="!skipFirst(m)" [class.secondary]="skipFirst(m)" (click)="logNow()" [disabled]="logging()" *ngIf="!m.doubleNextDue">
+            {{ logging() ? 'Logging…' : 'Log it now' }}
+          </button>
+          <button type="button" class="primary" (click)="logDouble()" [disabled]="logging()" *ngIf="m.doubleNextDue">
+            {{ logging() ? 'Logging…' : 'Log the double dose' }}
+          </button>
+          <button type="button" [class.primary]="skipFirst(m)" [class.secondary]="!skipFirst(m)" (click)="skip()" [disabled]="skipping()">
+            Skip this dose
+          </button>
+        </div>
+      </section>
 
       <section class="adherence">
         <h2>Intended vs. actual</h2>
@@ -43,6 +69,11 @@ import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesRespo
           <div class="stat">
             <div class="stat-value">{{ s.adherence.expectedCount }}</div>
             <div class="stat-label">expected by now</div>
+          </div>
+          <!-- Skipped is not missed (data-model.md → ScheduleAdherence): shown so the numbers add up. -->
+          <div class="stat" *ngIf="s.adherence.skippedCount">
+            <div class="stat-value">{{ s.adherence.skippedCount }}</div>
+            <div class="stat-label">skipped</div>
           </div>
           <div class="stat" [class.warn]="s.adherence.missed > 0">
             <div class="stat-value">{{ s.adherence.missed }}</div>
@@ -119,6 +150,17 @@ import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesRespo
         <ng-template #noDoses><p class="muted small">No doses on this schedule yet.</p></ng-template>
       </section>
 
+      <section class="doses" *ngIf="skips().length">
+        <h2>Skipped doses</h2>
+        <ul class="row-list linked">
+          <li *ngFor="let k of skips()">
+            <span>{{ when(k.slotAt) }}</span>
+            <span class="pill pill-neutral">{{ k.reason === 'made_up_by_double' ? 'made up by a double dose' : 'skipped' }}</span>
+            <button type="button" class="link unlink" *ngIf="k.reason === 'skipped'" (click)="unskip(k)" [disabled]="skipping()">Undo</button>
+          </li>
+        </ul>
+      </section>
+
       <p class="muted" *ngIf="s.notes">{{ s.notes }}</p>
       <p class="error" *ngIf="error()">{{ error() }}</p>
     </div>
@@ -180,6 +222,35 @@ import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesRespo
       .stat-label {
         font-size: 0.8rem;
         color: #cbd5e1;
+      }
+      .instruction {
+        color: var(--text-muted);
+      }
+      .missed {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        border-radius: var(--radius-control);
+        background: var(--danger-bg);
+        border: 1px solid var(--danger-border);
+      }
+      .missed p {
+        margin: 0;
+      }
+      .missed-head {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 600;
+      }
+      .missed-advice {
+        font-size: 1rem;
+      }
+      .missed-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
       }
       .doses {
         border-top: 1px solid var(--border);
@@ -277,6 +348,8 @@ export class ScheduleDetailPage implements OnInit {
 
   private apply(res: ScheduleDosesResponse) {
     this.schedule.set(res.schedule);
+    this.loadSkips();
+    this.loadContact(res.schedule);
     this.linked.set(res.linked);
     this.candidates.set(res.candidates);
   }
@@ -327,6 +400,91 @@ export class ScheduleDetailPage implements OnInit {
     if (d.amountMl != null) return `${d.amountMl} mL`;
     if (d.pillCount != null) return `×${formatPillCount(d.pillCount)}`;
     return null;
+  }
+
+  // ── Missed doses ──────────────────────────────────────────────────────────────────────────
+
+  readonly effectLabels = MISSED_DOSE_COURSE_EFFECT_LABELS;
+  skips = signal<ScheduleSkip[]>([]);
+  skipping = signal(false);
+  /** The prescriber line for "ask the prescriber": the schedule's condition's first contact. */
+  contact = signal<string | null>(null);
+  private contactFor: string | null = null;
+
+  summary(s: InterventionSchedule): string | null {
+    return instructionSummary(s.missedDoseAction, s.missedDoseCutoffHours);
+  }
+
+  advice(m: MissedDoseState): string | null {
+    return missedDoseAdvice(m, (sec) => this.when(sec), this.contact());
+  }
+
+  skipFirst(m: MissedDoseState): boolean {
+    return adviceIsSkip(m) || m.doubleNextDue;
+  }
+
+  private loadSkips() {
+    this.api.get<ScheduleSkip[]>(`/schedules/${this.scheduleId}/skips`).subscribe({
+      next: (rows) => this.skips.set(rows),
+      error: () => this.skips.set([]),
+    });
+  }
+
+  private loadContact(s: InterventionSchedule) {
+    if (s.missedDoseAction !== 'ask_prescriber' || !s.conditionId || this.contactFor === s.conditionId) return;
+    this.contactFor = s.conditionId;
+    this.api.get<Condition>(`/conditions/${s.conditionId}`).subscribe({
+      next: (c) => {
+        const first = c.contacts?.[0];
+        this.contact.set(first ? `${first.name}${first.role ? ` (${first.role})` : ''}${first.phone ? ` ${first.phone}` : ''}` : null);
+      },
+      error: () => this.contact.set(null),
+    });
+  }
+
+  skip() {
+    this.skipping.set(true);
+    this.error.set(null);
+    this.api.post<InterventionSchedule, SkipScheduleDoseRequest>(`/schedules/${this.scheduleId}/skips`, {}).subscribe({
+      next: () => {
+        this.skipping.set(false);
+        this.load();
+      },
+      error: (err) => {
+        this.skipping.set(false);
+        this.error.set(errorText(err, 'Could not skip this dose.'));
+      },
+    });
+  }
+
+  unskip(k: ScheduleSkip) {
+    this.skipping.set(true);
+    this.api.delete<InterventionSchedule>(`/schedules/${this.scheduleId}/skips/${k.id}`).subscribe({
+      next: () => {
+        this.skipping.set(false);
+        this.load();
+      },
+      error: (err) => {
+        this.skipping.set(false);
+        this.error.set(errorText(err, 'Could not undo the skip.'));
+      },
+    });
+  }
+
+  /** "Take two next time": the schedule's amounts, doubled, with every dose check still run. */
+  logDouble() {
+    this.logging.set(true);
+    this.error.set(null);
+    this.api.post<{ intervention: unknown; schedule: InterventionSchedule }, LogScheduleDto>(`/schedules/${this.scheduleId}/log`, { double: true }).subscribe({
+      next: () => {
+        this.logging.set(false);
+        this.load();
+      },
+      error: (err) => {
+        this.logging.set(false);
+        this.error.set(errorText(err, 'Could not log the double dose.'));
+      },
+    });
   }
 
   logNow() {

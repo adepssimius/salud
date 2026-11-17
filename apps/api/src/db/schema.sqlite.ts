@@ -380,6 +380,13 @@ export const interventionSchedules = sqliteTable('intervention_schedules', {
   // IANA zone the explicitTimes are wall-clock times in (data-model.md → InterventionSchedule).
   // Null only on rows that predate the column; those fall back to the server's own zone.
   timeZone: text('time_zone'),
+  // What the prescriber or label said to do about a missed dose (data-model.md →
+  // InterventionSchedule → "Missed-dose instruction"). Null = no instruction: the app gives no advice.
+  missedDoseAction: text('missed_dose_action', { enum: ['take_late_keep_times', 'take_late_restart', 'skip', 'double_next', 'ask_prescriber'] }),
+  // Only with a take-late action: skip instead when the next dose is within this many hours.
+  missedDoseCutoffHours: real('missed_dose_cutoff_hours'),
+  missedDoseCourseEffect: text('missed_dose_course_effect', { enum: ['finish_every_dose', 'end_on_date'] }),
+  missedDoseNote: text('missed_dose_note'),
   startAt: integer('start_at', { mode: 'timestamp' }).notNull(),
   endAfterOccurrences: integer('end_after_occurrences'),
   endAt: integer('end_at', { mode: 'timestamp' }),
@@ -391,6 +398,23 @@ export const interventionSchedules = sqliteTable('intervention_schedules', {
     .references(() => users.id),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(now()).notNull(),
+});
+
+// A planned slot of a schedule that was deliberately not given (data-model.md →
+// ScheduleSkip): recorded when the caregiver taps "Skip this dose", or when a prescribed double dose
+// makes up the slot it replaces. Distinct from a missed slot, which simply has no dose. One row per
+// (schedule, slot) — the service checks before inserting.
+export const scheduleSkips = sqliteTable('schedule_skips', {
+  id: text('id').primaryKey(),
+  scheduleId: text('schedule_id')
+    .notNull()
+    .references(() => interventionSchedules.id),
+  slotAt: integer('slot_at', { mode: 'timestamp' }).notNull(),
+  reason: text('reason', { enum: ['skipped', 'made_up_by_double'] }).notNull(),
+  recordedByUserId: text('recorded_by_user_id')
+    .notNull()
+    .references(() => users.id),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(now()).notNull(),
 });
 
 export const fileAssets = sqliteTable('file_assets', {

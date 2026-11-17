@@ -7,6 +7,7 @@ import {
   careTeamMemberships,
   episodesEventsPivot,
   interventionSchedules,
+  scheduleSkips,
   medicationEmbodiments,
   medications,
   interventions,
@@ -20,6 +21,7 @@ import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
 import { medicationTagsByIds } from '../medications/medication-tags';
 import { assertNoReservedMetadataKeys } from './reserved-metadata';
+import { persistScheduleState, scheduleStateFor } from '../schedules/schedule-state';
 import { DoseLimitedBy, DoseSource } from '@salud/shared/types';
 
 /** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
@@ -106,8 +108,12 @@ export class InterventionsService {
     userId: string,
     evaluation: DoseEvaluation,
     guidelineId: string | null,
+    prescribedDouble = false,
   ) {
-    const atypical = DosingService.atypicalPayload(evaluation);
+    const payload = DosingService.atypicalPayload(evaluation);
+    // Nothing is suppressed for a prescribed double: it is checked and flagged like any dose, and
+    // the advisory says why it is double so the warning is read in context (owner decision).
+    const atypical = payload && prescribedDouble ? { ...payload, prescribedDouble: true } : payload;
     if (atypical) {
       await this.advisoriesService.create({
         patientId,
@@ -161,6 +167,30 @@ export class InterventionsService {
     // Read-only and before the entry exists: a resolving entry may not land before every member
     // of the episode it resolves (data-model.md → "An episode may not end at its start…").
     await this.episodesService.assertResolvingTimeOrder(patientId, dto.resolvesEpisodeIds, performedAtTs);
+
+    // A dose filed against a schedule moves that schedule (schedule-state.ts), so the schedule must
+    // be this patient's — another child's plan is "not found", never touched.
+    let schedule: any = null;
+    if (dto.interventionScheduleId) {
+      const rows: any[] = await db
+        .select()
+        .from(interventionSchedules)
+        .where(eq(interventionSchedules.id, dto.interventionScheduleId))
+        .limit(1);
+      if (!rows.length || rows[0].patientId !== patientId) throw new NotFoundException('SCHEDULE_NOT_FOUND');
+      schedule = rows[0];
+    }
+    // "Take two next time" (api.md → Intervention schedules → "Missed doses"): only while the
+    // schedule's instruction says so and a dose is actually missed. Every dose check below still
+    // runs on the doubled amount; the dose records why it is double.
+    let madeUpSlotAt: number | null = null;
+    if (dto.prescribedDouble) {
+      const state = schedule ? await scheduleStateFor(db, schedule) : null;
+      if (!schedule || schedule.missedDoseAction !== 'double_next' || !state?.missedDose) {
+        throw new BadRequestException('DOUBLE_DOSE_NOT_DUE');
+      }
+      madeUpSlotAt = state.missedDose.slotAt;
+    }
 
     let doseEvaluation: DoseEvaluation | null = null;
     if (dto.type === 'medication_dose' && dto.medicationId) {
@@ -218,6 +248,7 @@ export class InterventionsService {
       isAtypical: reasons.length > 0,
       atypicalReason: reasons.length ? reasons.join(',') : null,
       nextAllowedAt: resolvedNextAllowedAt,
+      ...(madeUpSlotAt != null ? { prescribedDouble: true } : {}),
       // Extra client keys are welcome; the ones this service owns are not (ISSUES.md #28). The
       // guard above makes the spread order harmless — it can no longer reach a resolved field.
       ...dto.metadata,
@@ -233,6 +264,21 @@ export class InterventionsService {
       metadata: JSON.stringify(metadata),
       scheduleId: dto.interventionScheduleId ?? null,
     });
+
+    if (schedule) {
+      // The missed slot a prescribed double makes up is recorded as such — not missed, not a skip
+      // the caregiver tapped — and the schedule moves on from this dose.
+      if (madeUpSlotAt != null) {
+        await db.insert(scheduleSkips).values({
+          id: randomUUID(),
+          scheduleId: schedule.id,
+          slotAt: new Date(madeUpSlotAt * 1000),
+          reason: 'made_up_by_double',
+          recordedByUserId: userId,
+        });
+      }
+      await persistScheduleState(db, schedule.id);
+    }
 
     const episodeIds = new Set<string>(dto.episodeIds || []);
     let startedEpisodeId: string | null = null;
@@ -289,6 +335,7 @@ export class InterventionsService {
         userId,
         doseEvaluation,
         resolvedGuidelineId,
+        madeUpSlotAt != null,
       );
     }
 
@@ -536,6 +583,8 @@ export class InterventionsService {
       await tx.update(interventions).set(updates).where(eq(interventions.id, id));
       await this.episodesService.applyEventEpisodeCorrection(tx, episodePlan);
       for (const advisory of advisoryWrites) await this.advisoriesService.create(advisory, tx);
+      // A corrected time on a scheduled dose moves the schedule's next due with it.
+      if (row.scheduleId && dto.performedAt !== undefined) await persistScheduleState(tx, row.scheduleId);
     });
 
     return this.get(id, userId);

@@ -490,7 +490,18 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       nothing in the record showing it — and it could smuggle an unvalidated `amountMg` past the
       range check into the daily total that drives `exceeds_max_per_day`. Rejected rather than
       silently stripped, matching how an observation entry's `metadata` answers an unknown key.
-    - `interventionScheduleId` is stored only (no schedule state updates); also persisted as `scheduleId` column for querying.
+    - `interventionScheduleId` is persisted as the `scheduleId` column, must name **this patient's**
+      schedule (404 `SCHEDULE_NOT_FOUND` otherwise — another child's plan is never touched), and
+      **moves that schedule** exactly as `POST /schedules/:id/log` does (`nextDueAt`, `status`;
+      "Missed doses" below). Before this, a dose logged from Home's "Log dose" (which goes through
+      this route) left the schedule reading overdue.
+    - `prescribedDouble: true` — the schedule's prescribed double ("take two next time"; "Missed
+      doses" below). Only with an `interventionScheduleId` whose instruction is `double_next` while
+      a dose is missed, else 400 `DOUBLE_DOSE_NOT_DUE`. Every dose check runs on the amount as
+      given — nothing is suppressed; the dose records the reserved `metadata.prescribedDouble`
+      and its `atypical_dose` advisory carries `payload.prescribedDouble`, so a warning reads
+      "exceeds max per dose — prescribed double after a missed dose (schedule instruction)". The
+      missed slot is recorded as made up (`ScheduleSkip.reason = 'made_up_by_double'`).
     - `guidelineId` optional; omit if not provided.
     - `medicationId`, `medicationEmbodimentId` and `guidelineId` must be v4 UUIDs.
     - `amountMg`, `amountMl`, `pillCount`, `weightKgUsed` and `ageMonthsUsed` are range-checked; a
@@ -771,9 +782,17 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       "startAt": "ISO datetime",
       "endAfterOccurrences": 10,
       "endAt": null,
-      "notes": ""
+      "notes": "",
+      "missedDoseAction": "take_late_keep_times|take_late_restart|skip|double_next|ask_prescriber|null",
+      "missedDoseCutoffHours": 2,
+      "missedDoseCourseEffect": "finish_every_dose|end_on_date|null",
+      "missedDoseNote": "per the label"
     }
     ```
+  - The missed-dose fields are optional and null by default (data-model.md → InterventionSchedule →
+    "Missed-dose instruction"). 400 `MISSED_DOSE_INSTRUCTION_INVALID` for a cutoff without a
+    take-late action, or a course effect on a schedule with no end — checked on the merged result
+    on `PATCH` too.
   - Validate required fields per type (medication vs dressing change); exactly one of
     `frequencyHours` / `explicitTimes` is required — without one, `nextDueAt` has nothing to
     compute from. `episodeId` and `conditionId` are mutually exclusive — 400
@@ -798,16 +817,17 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     (`nextDueAt` in the past while `status = 'active'`).
 - `GET /api/schedules/:scheduleId` — same shape, single schedule.
 - `PATCH /api/schedules/:scheduleId`
-  - Update status (`active`, `paused`, `completed`), timing, or metadata; recompute `nextDueAt`
-    from the schedule's most recent logged dose (or `startAt` if none yet) whenever timing fields
-    (`frequencyHours`, `explicitTimes`, `timeZone`) or `status` change. `timeZone` is validated
-    as on create.
+  - Update status (`active`, `paused`, `completed`), timing, the missed-dose instruction, or
+    metadata; `nextDueAt` and `status` are recomputed from the result every time ("Missed doses"
+    below). `timeZone` is validated as on create.
 - `POST /api/schedules/:scheduleId/log`
   - Creates the corresponding intervention pre-filled from the schedule (medication/embodiment/
     dose amounts, or dressing fields) with `interventionScheduleId` set, **through the same
     `InterventionsService.create()` path as a manually-logged dose** — the dosing engine and
     advisories (atypical checks, stale weight, expired embodiment) run identically either way.
-    Body: `{ performedAt?, notes? }` (both optional; `performedAt` defaults to now).
+    Body: `{ performedAt?, notes?, double? }` (all optional; `performedAt` defaults to now).
+    `double: true` logs the prescribed double: the schedule's amounts doubled, sent as
+    `prescribedDouble` (400 `DOUBLE_DOSE_NOT_DUE` unless in force — see `POST .../interventions`).
   - Advances `nextDueAt` forward from the logged dose's time using the schedule's interval.
     When `endAfterOccurrences` is reached, or the next `nextDueAt` would fall after `endAt`, the
     schedule's `status` becomes `completed` and `nextDueAt` becomes `null`.
@@ -819,6 +839,36 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     override misreads it in the ER Brief.
   - Existing rows written before `'schedule'` existed carry `doseSource: 'override'` and are not
     rewritten.
+
+### Missed doses
+
+The schedule's missed-dose instruction (data-model.md → InterventionSchedule) records what the
+prescriber or label said; the app repeats it where the missed dose is seen and moves the schedule as
+it says, and **never decides on its own** (P6). No instruction, no advice.
+
+- **One computed state** (`apps/api/src/app/schedules/schedule-state.ts`) gives every schedule its
+  `nextDueAt`, `status`, `adherence` and `missedDose`, from its timing, its instruction, its doses
+  and its skips. Every write that can move a schedule persists `nextDueAt`/`status` from it: create,
+  `PATCH`, `/log`, a dose filed with `interventionScheduleId`, a time correction on such a dose,
+  linking (`/doses`), and skips. Reads compute it, so they always agree.
+- **Next due**: no instruction or `take_late_restart` — one interval after the last dose (or the
+  next fixed time after it), today's behaviour; every other instruction — the plan's own slots in
+  order, one consumed per dose or skip, so a late dose covers its slot and the times stay put.
+- **`missedDose`** on every `InterventionSchedule` (and on Home's `upcomingSchedules`): null unless
+  a dose is overdue; else `{ slotAt, nextSlotAt, action, pastCutoff, doubleNextDue }`.
+- **Course effect**: "give every dose" extends the course by a slot per skip; "end when planned"
+  ends a count course at its N-th planned slot even if fewer were given. Unset keeps today's
+  rules (a count course runs until N doses are given; a date course ends on its date).
+- `POST /api/schedules/:scheduleId/skips` — body `{ slotAt? }`: the caregiver skips the **current
+  missed slot** (`missedDose.slotAt`; a different `slotAt`, or nothing missed, is 400
+  `SCHEDULE_SLOT_NOT_SKIPPABLE`). Writes a `ScheduleSkip` (`reason: 'skipped'`) and recomputes;
+  returns the `InterventionSchedule` (201). Allowed whatever the instruction — recording what the
+  caregiver did is not advice.
+- `GET /api/schedules/:scheduleId/skips` — `ScheduleSkip[]`, newest slot first.
+- `DELETE /api/schedules/:scheduleId/skips/:skipId` — undo a skip tapped by mistake (the slot is
+  missed again); returns the `InterventionSchedule`. 404 `SCHEDULE_SKIP_NOT_FOUND`; a
+  `made_up_by_double` slot goes only with its dose (400 `SCHEDULE_SKIP_NOT_UNDOABLE`).
+- Access: every route resolves the schedule's patient and 404s a caller not on its care team.
 
 ### Linking existing doses
 
@@ -979,7 +1029,9 @@ is defined on linked doses only, everywhere it is shown.
       the two arrays and either can win the merge, so both must carry the prefill.
       `canGiveAt` / `limitedBy` are computed over **all** of the patient's doses of that
       medication, not just the episode's — the daily window does not stop at an episode boundary.
-    - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean } ]`
+    - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean, missedDose: MissedDoseState | null, missedDoseNote } ]`
+      — `nextDueAt`, `overdue` and `missedDose` from the schedule's computed state ("Missed doses"),
+      the same reading the schedule page and the dose form show.
     - `shoppingList`: `[ { embodimentId, medicationId, medicationName, label, runningLowFlaggedAt } ]`
       — embodiments across all the caregiver's patients' shared catalog currently flagged
       `runningLow` (F-9.3). One-tap `POST /api/embodiments/:embodimentId/restock` clears the flag.
@@ -1694,7 +1746,12 @@ sentence silently falls back to that call site's generic message rather than rea
 | `INTERVENTION_NOT_FOUND` | 404 | intervention get/update; `POST /schedules/:id/doses` naming a dose that is not this schedule's patient's (body carries `interventionIds`) |
 | `CONDITION_NOT_FOUND` | 404 | condition get/update |
 | `PROTOCOL_NOT_FOUND` | 404 | protocol get/update |
-| `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update |
+| `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update; an intervention create whose `interventionScheduleId` is not this patient's schedule |
+| `MISSED_DOSE_INSTRUCTION_INVALID` | 400 | schedule create/update (checked on the merged result) with `missedDoseCutoffHours` but no take-late `missedDoseAction`, or a `missedDoseCourseEffect` on a schedule with neither `endAt` nor `endAfterOccurrences` |
+| `SCHEDULE_SLOT_NOT_SKIPPABLE` | 400 | `POST /schedules/:id/skips` when no dose is missed, or `slotAt` is not the current missed slot |
+| `SCHEDULE_SKIP_NOT_FOUND` | 404 | `DELETE /schedules/:id/skips/:skipId` naming no skip of this schedule |
+| `SCHEDULE_SKIP_NOT_UNDOABLE` | 400 | `DELETE /schedules/:id/skips/:skipId` on a slot made up by a prescribed double (it goes only with that dose) |
+| `DOUBLE_DOSE_NOT_DUE` | 400 | `POST /schedules/:id/log` with `double`, or an intervention create with `prescribedDouble`, when the schedule's instruction is not "take two next time" or no dose is missed |
 | `MEDICATION_NOT_FOUND` | 404 | medication lookup by id |
 | `EMBODIMENT_NOT_FOUND` | 404 | medication embodiment lookup by id |
 | `GUIDELINE_NOT_FOUND` | 404 | dosing guideline lookup by id |

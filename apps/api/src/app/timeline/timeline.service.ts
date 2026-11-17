@@ -27,6 +27,7 @@ import {
   observationsSince,
   whatsNewSince,
 } from '../whats-new/whats-new-window';
+import { scheduleStateFor } from '../schedules/schedule-state';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
 import {
@@ -736,18 +737,24 @@ export class TimelineService {
         .select()
         .from(interventionSchedules)
         .where(and(inArray(interventionSchedules.patientId, patientIds), eq(interventionSchedules.status, 'active')));
-      upcomingSchedules = scheduleRows.map((r: any) => {
-        const nextDueAt = normalizeTs(r.nextDueAt);
-        return {
-          scheduleId: r.id,
-          patientId: r.patientId,
-          label: r.label,
-          type: r.type,
-          episodeId: r.episodeId ?? null,
-          nextDueAt,
-          overdue: nextDueAt != null && nextDueAt < nowTs,
-        };
-      });
+      // The schedule's live state (schedule-state.ts) — the same next due, overdue and missed-dose
+      // reading the schedule page and the dose form show, so Home never disagrees with them.
+      upcomingSchedules = await Promise.all(
+        scheduleRows.map(async (r: any) => {
+          const state = await scheduleStateFor(db, r, nowTs);
+          return {
+            scheduleId: r.id,
+            patientId: r.patientId,
+            label: r.label,
+            type: r.type,
+            episodeId: r.episodeId ?? null,
+            nextDueAt: state.nextDueAt,
+            overdue: state.overdue,
+            missedDose: state.missedDose,
+            missedDoseNote: r.missedDoseNote ?? null,
+          };
+        }),
+      );
     }
 
     // Ordering here is a dependency, not style: this consumes upcomingSchedules (built just above)

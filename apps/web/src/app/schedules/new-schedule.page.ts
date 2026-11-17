@@ -10,10 +10,15 @@ import { DoseGuidanceComponent } from '../interventions/dose-guidance.component'
 import { InfoTipComponent } from '../core/info-tip.component';
 import { PillCountInputComponent } from '../interventions/pill-count-input.component';
 import { defaultDailyTimes, scheduleName } from './schedule-name';
+import { MISSED_DOSE_ACTION_LABELS, MISSED_DOSE_COURSE_EFFECT_LABELS } from './missed-dose-text';
 import { debounceTime } from 'rxjs';
 import { toSignal } from '@angular/core/rxjs-interop';
 import {
   CreateScheduleDto,
+  MISSED_DOSE_ACTIONS,
+  MISSED_DOSE_COURSE_EFFECTS,
+  MissedDoseAction,
+  MissedDoseCourseEffect,
   DoseCheckDto,
   DoseCheckResult,
   InterventionSchedule,
@@ -203,6 +208,39 @@ import {
           </label>
         </div>
 
+        <!-- What the prescriber or label said to do about a missed dose (frontend.md → New schedule
+             form → "If a dose is missed"). Recorded, shown when a dose is missed, never decided by
+             the app; left blank, the app gives no advice. -->
+        <fieldset class="how-often">
+          <legend>If a dose is missed</legend>
+          <label class="field">
+            <select formControlName="missedDoseAction" aria-label="Missed-dose instruction">
+              <option value="">No instruction</option>
+              <option *ngFor="let a of missedDoseActions" [value]="a">{{ actionLabels[a] }}</option>
+            </select>
+          </label>
+          <label class="inline-check" *ngIf="isTakeLate()">
+            <span>Skip it instead if the next dose is within</span>
+            <input class="short" type="number" step="0.5" min="0.25" formControlName="missedDoseCutoffHours" aria-label="Cutoff in hours" />
+            <span>hours</span>
+            <app-info-tip label="What is the cutoff?">
+              Optional. When the next dose is this close, the app says to skip the late one instead,
+              as many labels do ("if it is almost time for the next dose, skip the missed dose").
+            </app-info-tip>
+          </label>
+          <label class="field" *ngIf="hasEnd()">
+            <span>Effect on the course</span>
+            <select formControlName="missedDoseCourseEffect">
+              <option value="">Not specified</option>
+              <option *ngFor="let e of courseEffects" [value]="e">{{ effectLabels[e] }}</option>
+            </select>
+          </label>
+          <label class="field" *ngIf="missedDoseActionValue()">
+            <span>What the label or prescriber said (optional)</span>
+            <input type="text" formControlName="missedDoseNote" placeholder="e.g. per the pharmacist, 11/16" />
+          </label>
+        </fieldset>
+
         <label class="field">
           <span>Notes</span>
           <textarea rows="2" formControlName="notes"></textarea>
@@ -289,6 +327,9 @@ import {
         font-size: 0.85rem;
       }
       .how-often {
+        /* A fieldset's default min-inline-size is min-content, so a select with long option text
+           pushed the whole page wider than a phone. */
+        min-width: 0;
         border: 1px solid var(--border);
         border-radius: var(--radius-control);
         padding: 0.6rem 0.75rem 0.75rem;
@@ -296,6 +337,10 @@ import {
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
+      }
+      .how-often select {
+        width: 100%;
+        max-width: 100%;
       }
       .how-often legend {
         padding: 0 0.25rem;
@@ -364,6 +409,10 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     endAfterOccurrences: [null as number | null],
     endAt: [''],
     notes: [''],
+    missedDoseAction: this.fb.control<MissedDoseAction | ''>('', { nonNullable: true }),
+    missedDoseCutoffHours: [null as number | null],
+    missedDoseCourseEffect: this.fb.control<MissedDoseCourseEffect | ''>('', { nonNullable: true }),
+    missedDoseNote: [''],
   });
 
   // A signal over the form control: a plain computed() over `.value` never re-ran, so switching to
@@ -391,6 +440,20 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     });
     return `Every ${h} hours: ${times.join(' → ')} → … around the clock.`;
   });
+
+  readonly missedDoseActions = MISSED_DOSE_ACTIONS;
+  readonly courseEffects = MISSED_DOSE_COURSE_EFFECTS;
+  readonly actionLabels = MISSED_DOSE_ACTION_LABELS;
+  readonly effectLabels = MISSED_DOSE_COURSE_EFFECT_LABELS;
+  private readonly actionSignal = toSignal(this.form.controls.missedDoseAction.valueChanges, { initialValue: this.form.controls.missedDoseAction.value });
+  missedDoseActionValue = computed(() => this.actionSignal());
+  isTakeLate = computed(() => this.actionSignal() === 'take_late_keep_times' || this.actionSignal() === 'take_late_restart');
+
+  /** A course effect only means something for a course that ends. */
+  hasEnd(): boolean {
+    const v = this.form.getRawValue();
+    return v.endAfterOccurrences != null || !!v.endAt;
+  }
 
   get dailyTimes() {
     return this.form.controls.dailyTimes;
@@ -631,6 +694,14 @@ export class NewSchedulePage implements OnInit, OnDestroy {
       endAfterOccurrences: val.endAfterOccurrences ?? undefined,
       endAt: val.endAt ? new Date(val.endAt).toISOString() : undefined,
       notes: val.notes || undefined,
+      ...(val.missedDoseAction
+        ? {
+            missedDoseAction: val.missedDoseAction,
+            missedDoseCutoffHours: this.isTakeLate() ? (val.missedDoseCutoffHours ?? undefined) : undefined,
+            missedDoseNote: val.missedDoseNote.trim() || undefined,
+          }
+        : {}),
+      ...(val.missedDoseCourseEffect && this.hasEnd() ? { missedDoseCourseEffect: val.missedDoseCourseEffect } : {}),
     };
 
     if (val.type === 'medication_dose') {

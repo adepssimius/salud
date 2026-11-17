@@ -118,6 +118,55 @@ describe('DashboardPage', () => {
     expect(text).toContain('ibuprofen');
   });
 
+  // frontend.md → Home → "Upcoming & overdue": a missed dose carries its schedule's instruction.
+  describe('missed doses', () => {
+    const row = (missedDose: any, missedDoseNote: string | null = null) => ({
+      scheduleId: 's1',
+      patientId: 'p1',
+      label: 'Amoxicillin q8h',
+      type: 'medication_dose',
+      episodeId: null,
+      nextDueAt: 1700000000,
+      overdue: true,
+      missedDose,
+      missedDoseNote,
+    });
+    const build = (schedule: any) => {
+      apiMock.get.mockImplementation((path: string) =>
+        path === '/dashboard' ? of({ ...emptyPayload, upcomingSchedules: [schedule] }) : throwError(() => new Error(`unexpected GET ${path}`)),
+      );
+      const fixture = TestBed.createComponent(DashboardPage);
+      fixture.detectChanges();
+      return fixture;
+    };
+    const buttons = (fixture: any) =>
+      (Array.from(fixture.nativeElement.querySelectorAll('.schedule-list button')) as HTMLButtonElement[]).map((b) => b.textContent!.trim());
+
+    it('repeats the instruction and offers Skip, which records the skip', () => {
+      const fixture = build(row({ slotAt: 1700000000, nextSlotAt: 1700028800, action: 'skip', pastCutoff: false, doubleNextDue: false }, 'per the label'));
+      expect(fixture.nativeElement.textContent).toContain('Skip this dose and give the next one as usual');
+      expect(fixture.nativeElement.textContent).toContain('“per the label”');
+      expect(buttons(fixture)).toEqual(expect.arrayContaining(['Log dose', 'Skip']));
+      apiMock.post.mockReturnValue(of({}));
+      fixture.componentInstance.skipDose('s1');
+      expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/skips', {});
+    });
+
+    it('sends a prescribed double to the dose form doubled', () => {
+      const fixture = build(row({ slotAt: 1700000000, nextSlotAt: 1700028800, action: 'double_next', pastCutoff: false, doubleNextDue: true }));
+      expect(buttons(fixture)).toContain('Log double dose');
+      expect(buttons(fixture)).not.toContain('Log dose');
+      fixture.componentInstance.logDose('s1', true);
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/interventions/new'], { queryParams: { scheduleId: 's1', double: '1' } });
+    });
+
+    it('gives no advice without an instruction', () => {
+      const fixture = build(row({ slotAt: 1700000000, nextSlotAt: 1700028800, action: null, pastCutoff: false, doubleNextDue: false }));
+      expect(fixture.nativeElement.querySelector('.missed-advice')).toBeNull();
+      expect(buttons(fixture)).toContain('Skip');
+    });
+  });
+
   describe('last doses strip', () => {
     const nowSec = () => Math.floor(Date.now() / 1000);
 

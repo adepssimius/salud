@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   ArrayUnique,
   IsArray,
   IsDateString,
@@ -100,6 +101,11 @@ export class CreateInterventionDto {
   @IsOptional()
   @IsString()
   interventionScheduleId?: string | null;
+
+  /** The schedule's prescribed double ("take two next time"); 400 DOUBLE_DOSE_NOT_DUE unless in force. */
+  @IsOptional()
+  @IsBoolean()
+  prescribedDouble?: boolean;
 
   @IsOptional()
   @IsString()

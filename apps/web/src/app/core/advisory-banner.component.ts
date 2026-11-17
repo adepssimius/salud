@@ -20,6 +20,16 @@ export function doseReasonLabel(code: string): string {
   return REASON_LABELS[code] ?? code.replace(/_/g, ' ');
 }
 
+/**
+ * The reasons a dose was flagged atypical, in words — with "prescribed double after a missed dose
+ * (schedule instruction)" when the dose was a schedule's "take two next time" (api.md →
+ * Intervention schedules → "Missed doses"). Never suppressed: the reason is said, not hidden.
+ */
+export function atypicalReasonsText(reasons: string[], prescribedDouble?: boolean): string {
+  const text = reasons.map(doseReasonLabel).join(', ');
+  return prescribedDouble ? `${text} — prescribed double after a missed dose (schedule instruction)` : text;
+}
+
 // Structurally compatible with both the persisted `Advisory` (nullable fields, from the DB) and
 // the unpersisted `AdvisoryCandidate` (optional fields, from a preview) — this component only
 // ever reads type/severity/payload, so it doesn't need to care which one it was handed.
@@ -101,7 +111,7 @@ export class AdvisoryBannerComponent {
     switch (this.advisory.type) {
       case 'atypical_dose': {
         const reasons: string[] = payload['reasons'] ?? [];
-        return 'Atypical dose — ' + reasons.map(doseReasonLabel).join(', ');
+        return 'Atypical dose — ' + atypicalReasonsText(reasons, payload['prescribedDouble']);
       }
       case 'stale_weight':
         return payload['daysSince'] == null

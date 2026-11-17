@@ -1,0 +1,28 @@
+meta {
+  name: Log Prescribed Double Dose
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/log
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "double": true
+  }
+}
+
+docs {
+  "Take two next time": logs the schedule's amounts doubled with metadata.prescribedDouble, and
+  records the missed slot as made up. 400 DOUBLE_DOSE_NOT_DUE unless the schedule's instruction is
+  double_next and a dose is missed. Every dose check still runs; the atypical advisory says why.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

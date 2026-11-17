@@ -143,6 +143,12 @@ export const ERROR_SENTENCES = {
     'Only doses linked to this schedule after they were logged can be unlinked. A dose logged from the schedule stays with it.',
   SCHEDULE_EPISODE_CONDITION_CONFLICT:
     'A schedule can be linked to an episode or a condition, not both. Clear one of them.',
+  MISSED_DOSE_INSTRUCTION_INVALID:
+    'A cutoff only goes with "take it late", and a course effect only with a course that ends. Adjust the missed-dose instruction and try again.',
+  SCHEDULE_SLOT_NOT_SKIPPABLE: 'There is no missed dose to skip right now. Reload the schedule to see where it stands.',
+  SCHEDULE_SKIP_NOT_FOUND: 'That skipped dose is no longer recorded. Reload the schedule.',
+  SCHEDULE_SKIP_NOT_UNDOABLE: 'This dose was made up by a double dose, so it can only be undone with that dose.',
+  DOUBLE_DOSE_NOT_DUE: 'A double dose is not due: the schedule doesn\'t say to take two, or no dose is missed. Reload and check the schedule.',
   SCHEDULE_NOT_FOUND: 'That schedule is no longer available. It may have been deleted.',
   SELF_RELATIONSHIP_ALREADY_EXISTS:
     'Someone on this care team is already marked as the patient. Change their relationship first.',

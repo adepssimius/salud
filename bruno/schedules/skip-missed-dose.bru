@@ -1,0 +1,30 @@
+meta {
+  name: Skip Missed Dose
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/skips
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {}
+}
+
+assert {
+  res.status: eq 201
+  res.body.adherence.skippedCount: gte 1
+}
+
+docs {
+  The caregiver skips the current missed slot (or the `slotAt` given, which must be that slot).
+  400 SCHEDULE_SLOT_NOT_SKIPPABLE when no dose is missed. Recorded as skipped, not missed.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

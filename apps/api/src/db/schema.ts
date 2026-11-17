@@ -35,6 +35,7 @@ export const {
   observations,
   observationEntries,
   interventions,
+  scheduleSkips,
   episodesEventsPivot,
   analytes,
   analyteRanges,

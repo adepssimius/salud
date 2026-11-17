@@ -367,6 +367,12 @@ export interface CreateInterventionDto {
   ageMonthsUsed?: number | null;
   guidelineId?: string | null;
   interventionScheduleId?: string | null;
+  /**
+   * This dose is the schedule's prescribed double ("take two next time"). Only with an
+   * `interventionScheduleId` whose instruction is in force, else 400 DOUBLE_DOSE_NOT_DUE. Every
+   * dose check still runs; the dose records `metadata.prescribedDouble` so a warning can say why.
+   */
+  prescribedDouble?: boolean;
   bodyLocation?: string;
   side?: 'left' | 'right' | 'bilateral' | 'n/a';
   dressingType?: string;
@@ -807,9 +813,46 @@ export interface DoseCheckResult {
 export type ScheduleType = InterventionType;
 export type ScheduleStatus = 'active' | 'paused' | 'completed';
 
+/**
+ * What the prescriber or label said to do about a missed dose (data-model.md → InterventionSchedule
+ * → "Missed-dose instruction"). The app records it and shows it; it never decides on its own (P6).
+ * Unset (null) means no instruction, and the app gives no advice.
+ */
+export type MissedDoseAction = 'take_late_keep_times' | 'take_late_restart' | 'skip' | 'double_next' | 'ask_prescriber';
+export const MISSED_DOSE_ACTIONS: readonly MissedDoseAction[] = [
+  'take_late_keep_times',
+  'take_late_restart',
+  'skip',
+  'double_next',
+  'ask_prescriber',
+];
+/** How skipped doses affect the course: run longer to give every dose, or end when planned. */
+export type MissedDoseCourseEffect = 'finish_every_dose' | 'end_on_date';
+export const MISSED_DOSE_COURSE_EFFECTS: readonly MissedDoseCourseEffect[] = ['finish_every_dose', 'end_on_date'];
+
+/**
+ * The schedule's current missed dose, if it has one — computed on read so Home, the schedule page
+ * and the dose form all say the same thing (api.md → Intervention schedules → "Missed doses").
+ */
+export interface MissedDoseState {
+  /** The planned moment that passed without a dose. */
+  slotAt: number; // epoch seconds
+  /** The schedule's next planned moment after it; null when the course ends first. */
+  nextSlotAt: number | null; // epoch seconds
+  /** The instruction, as recorded; null when there is none (the app then gives no advice). */
+  action: MissedDoseAction | null;
+  /** A take-late instruction whose cutoff has passed: the next dose is within the cutoff. */
+  pastCutoff: boolean;
+  /** "Take two next time" is in force: the next dose logged from the schedule is a double. */
+  doubleNextDue: boolean;
+}
+
 export interface ScheduleAdherence {
   expectedCount: number;
   loggedCount: number;
+  /** Slots deliberately not given (tapped Skip, or made up by a prescribed double). Not missed. */
+  skippedCount: number;
+  /** `max(0, expectedCount - loggedCount - skippedCount)`. */
   missed: number;
   remainingOccurrences: number | null;
   overdue: boolean;
@@ -835,6 +878,13 @@ export interface InterventionSchedule {
   // IANA zone the explicitTimes are wall-clock times in. Null only on schedules created before
   // the field existed; those read their times on the API server's clock (data-model.md).
   timeZone: string | null;
+  missedDoseAction: MissedDoseAction | null;
+  /** Only with a take-late action: skip instead when the next dose is within this many hours. */
+  missedDoseCutoffHours: number | null;
+  missedDoseCourseEffect: MissedDoseCourseEffect | null;
+  missedDoseNote: string | null;
+  /** The current missed dose and what the instruction says about it; null when none is missed. */
+  missedDose: MissedDoseState | null;
   startAt: number; // epoch seconds
   endAfterOccurrences: number | null;
   endAt: number | null; // epoch seconds
@@ -863,6 +913,10 @@ export interface CreateScheduleDto {
   frequencyHours?: number;
   explicitTimes?: string[];
   timeZone?: string; // IANA zone; the web sends the browser's
+  missedDoseAction?: MissedDoseAction | null;
+  missedDoseCutoffHours?: number | null;
+  missedDoseCourseEffect?: MissedDoseCourseEffect | null;
+  missedDoseNote?: string | null;
   startAt: string; // ISO datetime
   endAfterOccurrences?: number;
   endAt?: string; // ISO datetime
@@ -884,6 +938,10 @@ export interface UpdateScheduleDto {
   frequencyHours?: number;
   explicitTimes?: string[];
   timeZone?: string; // IANA zone; the web sends the browser's
+  missedDoseAction?: MissedDoseAction | null;
+  missedDoseCutoffHours?: number | null;
+  missedDoseCourseEffect?: MissedDoseCourseEffect | null;
+  missedDoseNote?: string | null;
   endAfterOccurrences?: number;
   endAt?: string | null;
   notes?: string;
@@ -927,6 +985,26 @@ export interface UpdateScheduleDosesRequest {
 export interface LogScheduleDto {
   performedAt?: string; // ISO datetime; defaults to now
   notes?: string;
+  /**
+   * Log the prescribed double ("take two next time"): doubles the schedule's amounts and records
+   * the missed slot as made up. 400 DOUBLE_DOSE_NOT_DUE unless the instruction is in force.
+   */
+  double?: boolean;
+}
+
+/** A slot deliberately not given (data-model.md → ScheduleSkip). */
+export interface ScheduleSkip {
+  id: string;
+  scheduleId: string;
+  slotAt: number; // epoch seconds
+  reason: 'skipped' | 'made_up_by_double';
+  recordedByUserId: string;
+  createdAt: number;
+}
+
+/** `POST /api/schedules/:id/skips` — skips the current missed slot unless `slotAt` names one. */
+export interface SkipScheduleDoseRequest {
+  slotAt?: number; // epoch seconds
 }
 
 // Conditions — see app-spec/data-model.md "Condition"
@@ -1250,6 +1328,9 @@ export interface DashboardUpcomingSchedule {
   episodeId: string | null;
   nextDueAt: number | null;
   overdue: boolean;
+  /** The current missed dose and what the schedule's instruction says about it; null when none. */
+  missedDose: MissedDoseState | null;
+  missedDoseNote: string | null;
 }
 
 export interface DashboardShoppingListItem {

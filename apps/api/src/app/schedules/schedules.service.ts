@@ -2,26 +2,20 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
-import { careTeamMemberships, interventionSchedules, interventions } from '../../db/schema';
+import { careTeamMemberships, interventionSchedules, interventions, scheduleSkips } from '../../db/schema';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
 import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
 import { RevisionsService } from '../revisions/revisions.service';
-import { ScheduleDose, ScheduleDosesResponse } from '@salud/shared/types';
+import { InterventionSchedule, ScheduleDose, ScheduleDosesResponse, ScheduleSkip } from '@salud/shared/types';
+import { SkipScheduleDoseDto } from './dto/skip-schedule-dose.dto';
+import { persistScheduleState, scheduleStateFor } from './schedule-state';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
-import { normalizeTs, toDate } from '../persistence/time';
-import { nextExplicitTime, scheduleLoggedCount, toScheduleView } from './schedule-view';
+import { normalizeTs } from '../persistence/time';
+import { toScheduleView } from './schedule-view';
 import { isValidTimeZone } from './zoned-time';
-
-interface TimingConfig {
-  frequencyHours: number | null;
-  explicitTimes: string[] | null;
-  // The zone explicitTimes are wall-clock times in. Null only on rows that predate the column,
-  // which keep the server-clock reading they always had (data-model.md → InterventionSchedule).
-  timeZone: string | null;
-}
 
 @Injectable()
 export class SchedulesService {
@@ -41,37 +35,6 @@ export class SchedulesService {
     if (!rows.length) {
       throw new NotFoundException('PATIENT_NOT_FOUND');
     }
-  }
-
-  private computeNextDueAt(timing: TimingConfig, from: Date, strictlyAfter: boolean): Date | null {
-    if (timing.frequencyHours) {
-      const base = strictlyAfter ? from.getTime() : from.getTime();
-      const offsetMs = strictlyAfter ? timing.frequencyHours * 3600_000 : 0;
-      return new Date(base + offsetMs);
-    }
-    if (timing.explicitTimes && timing.explicitTimes.length) {
-      return nextExplicitTime(timing.explicitTimes, from, strictlyAfter, timing.timeZone);
-    }
-    return null;
-  }
-
-  private applyEndConditions(
-    row: { endAfterOccurrences: number | null; endAt: any },
-    nextDueAt: Date | null,
-    loggedCount: number,
-  ): { nextDueAt: Date | null; completed: boolean } {
-    if (row.endAfterOccurrences != null && loggedCount >= row.endAfterOccurrences) {
-      return { nextDueAt: null, completed: true };
-    }
-    const endAtTs = normalizeTs(row.endAt);
-    if (nextDueAt && endAtTs != null && Math.floor(nextDueAt.getTime() / 1000) > endAtTs) {
-      return { nextDueAt: null, completed: true };
-    }
-    return { nextDueAt, completed: false };
-  }
-
-  private async loggedCount(scheduleId: string): Promise<number> {
-    return scheduleLoggedCount(this.db.db as any, scheduleId);
   }
 
   private async pickSchedule(row: any) {
@@ -96,16 +59,16 @@ export class SchedulesService {
     if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
       throw new BadRequestException('INVALID_TIME_ZONE');
     }
+    this.assertMissedDoseInstruction({
+      action: dto.missedDoseAction ?? null,
+      cutoffHours: dto.missedDoseCutoffHours ?? null,
+      courseEffect: dto.missedDoseCourseEffect ?? null,
+      hasEnd: dto.endAt != null || dto.endAfterOccurrences != null,
+    });
 
     const db = this.db.db as any;
     const id = randomUUID();
     const startAtDate = new Date(dto.startAt);
-    const timing: TimingConfig = {
-      frequencyHours: dto.frequencyHours ?? null,
-      explicitTimes: dto.explicitTimes ?? null,
-      timeZone: dto.timeZone ?? null,
-    };
-    const initialNextDueAt = this.computeNextDueAt(timing, startAtDate, false);
 
     await db.insert(interventionSchedules).values({
       id,
@@ -125,14 +88,20 @@ export class SchedulesService {
       frequencyHours: dto.frequencyHours ?? null,
       explicitTimes: dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null,
       timeZone: dto.timeZone ?? null,
+      missedDoseAction: dto.missedDoseAction ?? null,
+      missedDoseCutoffHours: dto.missedDoseCutoffHours ?? null,
+      missedDoseCourseEffect: dto.missedDoseCourseEffect ?? null,
+      missedDoseNote: dto.missedDoseNote?.trim() || null,
       startAt: startAtDate,
       endAfterOccurrences: dto.endAfterOccurrences ?? null,
       endAt: dto.endAt ? new Date(dto.endAt) : null,
       notes: dto.notes ?? null,
       status: 'active',
-      nextDueAt: initialNextDueAt,
+      nextDueAt: null,
       createdByUserId: userId,
     });
+    // The first due moment comes from the same state every later write uses.
+    await persistScheduleState(db, id);
 
     return this.get(id, userId);
   }
@@ -182,6 +151,14 @@ export class SchedulesService {
     if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
       throw new BadRequestException('INVALID_TIME_ZONE');
     }
+    // Checked against the merged result, as a correction is.
+    const merged = (key: keyof UpdateScheduleDto, column: string) => (dto[key] !== undefined ? dto[key] : row[column]);
+    this.assertMissedDoseInstruction({
+      action: (merged('missedDoseAction', 'missedDoseAction') as any) ?? null,
+      cutoffHours: (merged('missedDoseCutoffHours', 'missedDoseCutoffHours') as any) ?? null,
+      courseEffect: (merged('missedDoseCourseEffect', 'missedDoseCourseEffect') as any) ?? null,
+      hasEnd: merged('endAt', 'endAt') != null || merged('endAfterOccurrences', 'endAfterOccurrences') != null,
+    });
 
     const updates: Record<string, any> = {};
     const directFields = [
@@ -207,62 +184,28 @@ export class SchedulesService {
     if (dto.explicitTimes !== undefined) updates.explicitTimes = JSON.stringify(dto.explicitTimes);
     if (dto.timeZone !== undefined) updates.timeZone = dto.timeZone;
     if (dto.endAt !== undefined) updates.endAt = dto.endAt ? new Date(dto.endAt) : null;
-
-    const timingChanged =
-      dto.frequencyHours !== undefined ||
-      dto.explicitTimes !== undefined ||
-      dto.timeZone !== undefined ||
-      dto.status !== undefined;
-
-    if (timingChanged) {
-      const newStatus = dto.status ?? row.status;
-      if (newStatus === 'paused' || newStatus === 'completed') {
-        updates.nextDueAt = null;
-      } else {
-        const timing: TimingConfig = {
-          frequencyHours: dto.frequencyHours !== undefined ? dto.frequencyHours : row.frequencyHours,
-          explicitTimes:
-            dto.explicitTimes !== undefined ? dto.explicitTimes : row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
-          timeZone: dto.timeZone !== undefined ? dto.timeZone : row.timeZone ?? null,
-        };
-        const loggedCount = await this.loggedCount(id);
-        let base: Date;
-        let strictlyAfter: boolean;
-        if (loggedCount > 0) {
-          const lastDoseRows = await db
-            .select()
-            .from(interventions)
-            .where(eq(interventions.scheduleId, id));
-          const lastPerformedAtTs = Math.max(...lastDoseRows.map((r: any) => normalizeTs(r.performedAt) ?? 0));
-          base = new Date(lastPerformedAtTs * 1000);
-          strictlyAfter = true;
-        } else {
-          base = toDate(row.startAt)!;
-          strictlyAfter = false;
-        }
-        const next = this.computeNextDueAt(timing, base, strictlyAfter);
-        const { nextDueAt, completed } = this.applyEndConditions(
-          { endAfterOccurrences: dto.endAfterOccurrences ?? row.endAfterOccurrences, endAt: updates.endAt !== undefined ? updates.endAt : row.endAt },
-          next,
-          loggedCount,
-        );
-        updates.nextDueAt = nextDueAt;
-        if (completed) updates.status = 'completed';
-      }
-    }
+    if (dto.missedDoseAction !== undefined) updates.missedDoseAction = dto.missedDoseAction;
+    if (dto.missedDoseCutoffHours !== undefined) updates.missedDoseCutoffHours = dto.missedDoseCutoffHours;
+    if (dto.missedDoseCourseEffect !== undefined) updates.missedDoseCourseEffect = dto.missedDoseCourseEffect;
+    if (dto.missedDoseNote !== undefined) updates.missedDoseNote = dto.missedDoseNote?.trim() || null;
 
     if (Object.keys(updates).length) {
       await db.update(interventionSchedules).set(updates).where(eq(interventionSchedules.id, id));
     }
+    // Timing, status, end and instruction all move the next due moment; recompute from the result.
+    await persistScheduleState(db, id);
 
     return this.get(id, userId);
   }
 
   async log(id: string, userId: string, dto: LogScheduleDto) {
     const row = await this.getRow(id, userId);
-    const db = this.db.db as any;
 
     const performedAtDate = dto.performedAt ? new Date(dto.performedAt) : new Date();
+    // "Take two next time": the schedule's own amounts, doubled. InterventionsService.create checks
+    // that the instruction is in force and records the missed slot as made up.
+    const factor = dto.double ? 2 : 1;
+    const times = (v: number | null) => (v != null ? v * factor : undefined);
 
     const interventionDto: CreateInterventionDto = {
       performedAt: performedAtDate.toISOString(),
@@ -270,6 +213,7 @@ export class SchedulesService {
       episodeIds: row.episodeId ? [row.episodeId] : undefined,
       notes: dto.notes,
       interventionScheduleId: id,
+      ...(dto.double ? { prescribedDouble: true } : {}),
     };
     if (row.type === 'medication_dose') {
       Object.assign(interventionDto, {
@@ -280,9 +224,9 @@ export class SchedulesService {
         // (api.md -> Intervention schedules). Provenance only: the atypical checks judge the
         // amount and time, so a scheduled dose is checked like any other.
         doseSource: 'schedule' as const,
-        amountMg: row.doseMg ?? undefined,
-        amountMl: row.doseMl ?? undefined,
-        pillCount: row.pillCount ?? undefined,
+        amountMg: times(row.doseMg),
+        amountMl: times(row.doseMl),
+        pillCount: times(row.pillCount),
       });
     } else {
       Object.assign(interventionDto, {
@@ -292,22 +236,9 @@ export class SchedulesService {
       });
     }
 
+    // The dose path itself advances the schedule (InterventionsService.create persists its state),
+    // so a dose logged here and one filed from the dose form move it identically.
     const created = await this.interventionsService.create(row.patientId, userId, interventionDto);
-
-    // Advance nextDueAt forward from this occurrence.
-    const timing: TimingConfig = {
-      frequencyHours: row.frequencyHours,
-      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
-      timeZone: row.timeZone ?? null,
-    };
-    const loggedCount = await this.loggedCount(id);
-    const next = this.computeNextDueAt(timing, performedAtDate, true);
-    const { nextDueAt, completed } = this.applyEndConditions(row, next, loggedCount);
-
-    await db
-      .update(interventionSchedules)
-      .set({ nextDueAt, status: completed ? 'completed' : row.status })
-      .where(eq(interventionSchedules.id, id));
 
     return { intervention: created, schedule: await this.get(id, userId) };
   }
@@ -421,33 +352,85 @@ export class SchedulesService {
           .set({ scheduleId: linking ? id : null, metadata: JSON.stringify(m), updatedAt: new Date() })
           .where(eq(interventions.id, i));
       }
-      if (changed.length) await this.recomputeAfterDoseChange(tx, row);
+      if (changed.length) await persistScheduleState(tx, row.id);
     });
 
     return this.doses(id, userId);
   }
 
+  // ── Missed doses (api.md → Intervention schedules → "Missed doses") ───────────────────────
+
   /**
-   * After the set of doses on a schedule changes: an active schedule's `nextDueAt` follows its
-   * latest dose (or `startAt` with none), and reaching `endAfterOccurrences` / passing `endAt`
-   * completes it — the same rules as a timing PATCH. A paused or completed schedule is left as
-   * the caregiver set it.
+   * A cutoff belongs only to a take-late instruction (it says when to skip instead), and a course
+   * effect only to a course that ends — otherwise there is nothing for either to act on.
    */
-  private async recomputeAfterDoseChange(tx: any, row: any) {
-    if (row.status !== 'active') return;
-    const doses: any[] = await tx.select().from(interventions).where(eq(interventions.scheduleId, row.id));
-    const timing: TimingConfig = {
-      frequencyHours: row.frequencyHours,
-      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
-      timeZone: row.timeZone ?? null,
-    };
-    const next = doses.length
-      ? this.computeNextDueAt(timing, new Date(Math.max(...doses.map((d) => normalizeTs(d.performedAt) ?? 0)) * 1000), true)
-      : this.computeNextDueAt(timing, toDate(row.startAt)!, false);
-    const { nextDueAt, completed } = this.applyEndConditions(row, next, doses.length);
-    await tx
-      .update(interventionSchedules)
-      .set({ nextDueAt, status: completed ? 'completed' : row.status })
-      .where(eq(interventionSchedules.id, row.id));
+  private assertMissedDoseInstruction(v: { action: string | null; cutoffHours: number | null; courseEffect: string | null; hasEnd: boolean }) {
+    const takeLate = v.action === 'take_late_keep_times' || v.action === 'take_late_restart';
+    if (v.cutoffHours != null && !takeLate) throw new BadRequestException('MISSED_DOSE_INSTRUCTION_INVALID');
+    if (v.courseEffect != null && !v.hasEnd) throw new BadRequestException('MISSED_DOSE_INSTRUCTION_INVALID');
+  }
+
+  /**
+   * The caregiver skips the current missed dose: the slot is recorded as skipped (not missed), and
+   * the next due moves on. Only the current missed slot can be skipped — the app records what was
+   * done, never decides it (P6). 400 SCHEDULE_SLOT_NOT_SKIPPABLE otherwise.
+   */
+  async skip(id: string, userId: string, dto: SkipScheduleDoseDto): Promise<InterventionSchedule> {
+    const row = await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const state = await scheduleStateFor(db, row);
+    const slotAt = state.missedDose?.slotAt ?? null;
+    if (slotAt == null || (dto.slotAt != null && dto.slotAt !== slotAt)) {
+      throw new BadRequestException('SCHEDULE_SLOT_NOT_SKIPPABLE');
+    }
+    await this.db.withTransaction(async (tx: any) => {
+      await tx.insert(scheduleSkips).values({
+        id: randomUUID(),
+        scheduleId: id,
+        slotAt: new Date(slotAt * 1000),
+        reason: 'skipped',
+        recordedByUserId: userId,
+      });
+      await persistScheduleState(tx, id);
+    });
+    return this.get(id, userId);
+  }
+
+  /** The schedule's skipped slots, newest first. */
+  async listSkips(id: string, userId: string): Promise<ScheduleSkip[]> {
+    await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const rows: any[] = await db.select().from(scheduleSkips).where(eq(scheduleSkips.scheduleId, id));
+    return rows
+      .map((r) => ({
+        id: r.id,
+        scheduleId: r.scheduleId,
+        slotAt: normalizeTs(r.slotAt)!,
+        reason: r.reason,
+        recordedByUserId: r.recordedByUserId,
+        createdAt: normalizeTs(r.createdAt)!,
+      }))
+      .sort((a, b) => b.slotAt - a.slotAt);
+  }
+
+  /**
+   * Undo a skip tapped by mistake: the slot is missed again. A slot made up by a prescribed double
+   * belongs to that dose and goes only with it (400 SCHEDULE_SKIP_NOT_UNDOABLE).
+   */
+  async unskip(id: string, skipId: string, userId: string): Promise<InterventionSchedule> {
+    await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const rows: any[] = await db
+      .select()
+      .from(scheduleSkips)
+      .where(and(eq(scheduleSkips.id, skipId), eq(scheduleSkips.scheduleId, id)))
+      .limit(1);
+    if (!rows.length) throw new NotFoundException('SCHEDULE_SKIP_NOT_FOUND');
+    if (rows[0].reason !== 'skipped') throw new BadRequestException('SCHEDULE_SKIP_NOT_UNDOABLE');
+    await this.db.withTransaction(async (tx: any) => {
+      await tx.delete(scheduleSkips).where(eq(scheduleSkips.id, skipId));
+      await persistScheduleState(tx, id);
+    });
+    return this.get(id, userId);
   }
 }
