@@ -41,6 +41,7 @@ Load-bearing; every feature decision traces back to one of these.
 1. **Care timeline**
    - Continuous timeline per patient.
    - Derived “episodes” are manual frames defined by a start event and an end event (a frame must be defined by logged observations or interventions).
+   - A frame is drawn either while logging (an entry starts or resolves it) or afterward, from the patient's History, by naming it and choosing the existing entries that belong to it (P5).
    - Episode resolves when an observation or intervention is explicitly marked as resolving it; observations/interventions can be tagged with multiple episodes.
    - Per-episode timeline view showing only events tagged to that episode.
 2. **Observations**

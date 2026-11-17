@@ -51,11 +51,28 @@ describe('PatientHistoryPage', () => {
     expect(text).toContain('Cough');
   });
 
-  it('offers no way to create an episode', () => {
-    // Episodes only ever start as a side effect of logging (P5).
+  it('offers New episode on the Episodes card, empty or not', () => {
+    // Episodes can be drawn afterward from existing entries (frontend.md -> History).
+    apiMock.get.mockImplementation((path: string) => of([]));
     const fixture = build();
-    const labels = Array.from(fixture.nativeElement.querySelectorAll('button')).map((b: any) => b.textContent.trim());
-    expect(labels.some((l: string) => /new episode|add episode/i.test(l))).toBe(false);
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('No episodes yet.');
+    const button = Array.from(fixture.nativeElement.querySelectorAll('button')).find(
+      (b: any) => b.textContent.trim() === 'New episode',
+    ) as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    button.click();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/patients', 'p1', 'episodes', 'new']);
+  });
+
+  it('shows a resolved episode as a start–end range', () => {
+    apiMock.get.mockImplementation((path: string) =>
+      path === '/patients/p1/episodes'
+        ? of([{ id: 'e1', name: 'Fever Jan', status: 'resolved', startedAt: 1700000000, endedAt: 1700400000 }])
+        : of([]),
+    );
+    const fixture = build();
+    expect(fixture.nativeElement.textContent).toMatch(/Nov 14, 2023\s+–\s+Nov 19, 2023/);
   });
 
   it('says so when episodes cannot be loaded', () => {
