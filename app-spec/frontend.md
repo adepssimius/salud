@@ -277,7 +277,8 @@ narrative artifact is a feed, and the chart is its instrument panel:
   their author even after that caregiver leaves the care team.
 - **The chart is a collapsible header** above the feed — same hand-drawn SVG, same no-annotation
   rule (P6), same medication/tag filter chips, with filters applying to chart and feed together.
-  On desktop the chart and feed render side by side (P7).
+  On desktop the chart and feed render side by side (P7). The chart shows a fixed last-5-days
+  window while the feed stays unwindowed (→ Timeline below).
 - **Episode frames become feed dividers** as well as chart bands: "— Fever, day 3 —" section
   markers in the feed, clickable through to episode detail.
 - **The since-you-last-looked marker.** The What's-New watermark renders as a labeled divider
@@ -612,6 +613,27 @@ app. They therefore need somewhere to be entered.
   join the y-domain so a band is never clipped; no bands recorded means no shading). The glance
   view and the analysis view read against the same reference, in the same visual vocabulary as the
   analyte history chart — three charts, one way of showing "what should this be".
+- **A fixed recent window, not the whole history.** The chart always shows the **last 5 days
+  ending now** — a rolling 120 hours with "now" at the right edge, advancing while the page is
+  open. The x-axis spans the full window even when readings are sparse, so the same width always
+  means the same amount of time. The window applies to everything drawn — readings, dose ticks,
+  episode bands, and the "all doses" legend — and the y-domain is computed from the readings inside
+  the window plus every band bound (the rule above, unchanged); a reading older than the window
+  affects neither axis. The medication/tag chips filter as before, with the window applied after
+  them. The feed below stays unwindowed; older history is read there. **This view has no range
+  controls** — choosing a range belongs to a dedicated analysis view, which does not exist yet.
+- **A labeled time axis.** A faint vertical rule at each local midnight, labeled with a short
+  weekday and date ("Thu 12"), and "now" at the right edge. The labels render as HTML beneath the
+  SVG rather than SVG text, so they stay legible at phone width; a midnight label that would collide
+  with "now" is dropped, its rule kept.
+- **No line across a gap — except within an episode.** Two consecutive readings more than
+  **12 hours** apart are not joined: the curve breaks and each side keeps its points, because a line
+  across a long gap draws readings nobody took. Readings that both fall inside the same episode's
+  frame (the start/end span the chart bands and feed dividers use) are always joined, however far
+  apart — within one illness the curve is one story.
+- **Empty window.** With no temperature readings and no doses in the window, the plot is replaced
+  by one sentence: "No temperature readings or doses in the last 5 days — earlier entries are in
+  the journal below."
 - Filter chips for individual medications and for tags (F-5.1) — the motivating case is "when did
   she last get ibuprofen?" vs. "when did she last get *anything* for the fever?", two different
   questions with two different answers.
