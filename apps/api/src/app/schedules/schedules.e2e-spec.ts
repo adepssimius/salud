@@ -236,6 +236,48 @@ describe('Schedules (e2e)', () => {
     expect(list.body.every((s: any) => s.type === 'medication_dose')).toBe(true);
   });
 
+  // data-model.md → ScheduleAdherence: expectedCount stops at the course's end. A finished course
+  // must not keep accruing "missed" doses after endAt or past endAfterOccurrences.
+  it('caps expectedCount at endAt and at endAfterOccurrences', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 86400_000);
+    const byEndAt = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'medication_dose',
+        label: 'ended course',
+        medicationId,
+        frequencyHours: 24,
+        startAt: tenDaysAgo.toISOString(),
+        // Slots at day 0, 1, 2 (inclusive of the boundary) — three, not eleven.
+        endAt: new Date(tenDaysAgo.getTime() + 2 * 86400_000).toISOString(),
+      })
+      .expect(201);
+    expect(byEndAt.body.adherence.expectedCount).toBe(3);
+
+    const byCount = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'medication_dose',
+        label: 'five doses',
+        medicationId,
+        frequencyHours: 24,
+        startAt: tenDaysAgo.toISOString(),
+        endAfterOccurrences: 5,
+      })
+      .expect(201);
+    expect(byCount.body.adherence.expectedCount).toBe(5);
+    expect(byCount.body.adherence.missed).toBe(5);
+
+    const open = await request(app.getHttpServer())
+      .post(`/api/patients/${patientId}/schedules`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'medication_dose', label: 'open', medicationId, frequencyHours: 24, startAt: tenDaysAgo.toISOString() })
+      .expect(201);
+    expect(open.body.adherence.expectedCount).toBe(11);
+  });
+
   it('enforces patient access control (404, not 403)', async () => {
     const other = await registerAndLogin(app);
     const res = await request(app.getHttpServer())

@@ -236,8 +236,18 @@ describe('EpisodeDetailPage membership editing', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(EpisodeDetailPage);
     fixture.detectChanges();
+    // Remove lives behind Edit (frontend.md → Episode detail → the log), so turn it on.
+    fixture.componentInstance.toggleEditing();
+    fixture.detectChanges();
     return fixture;
   };
+
+  it('hides Remove until Edit is pressed', async () => {
+    const fixture = await build(resolvedEpisode, ['obs1', 'obs2']);
+    fixture.componentInstance.toggleEditing();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('button.remove')).toHaveLength(0);
+  });
 
   const removeButtons = (fixture: any) =>
     Array.from(fixture.nativeElement.querySelectorAll('button.remove')) as HTMLButtonElement[];
@@ -313,5 +323,129 @@ describe('EpisodeDetailPage membership editing', () => {
     apiMock.post.mockReturnValue(throwError(() => ({ error: { message: 'EPISODE_EVENT_NOT_FOUND' } })));
     removeButtons(fixture)[0].click();
     expect(fixture.componentInstance.error()).toContain('no longer available');
+  });
+});
+
+// The redesigned sections (frontend.md → Episode detail): where are we, keeping up, is it getting
+// better, and the log. Times are built in local time so day boundaries hold in any CI zone.
+describe('EpisodeDetailPage course view', () => {
+  const at = (daysAgo: number, h: number, m = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    d.setHours(h, m, 0, 0);
+    return Math.floor(d.getTime() / 1000);
+  };
+  const dose = (id: string, ts: number, scheduleId: string | null = null) => ({
+    id,
+    kind: 'intervention',
+    type: 'medication_dose',
+    timestamp: ts,
+    display: { type: 'medication_dose', scheduleId, metadata: { medicationId: 'cream', medicationEmbodimentId: 'emb' } },
+  });
+  const lesion = (id: string, ts: number, photo: boolean) => ({
+    id,
+    kind: 'observation',
+    type: 'observation',
+    timestamp: ts,
+    display: {
+      entries: [
+        { type: 'lesion_size', metadata: { lengthCm: 2.5, widthCm: 1.8, bodyLocation: 'inner thigh', side: 'left' } },
+        ...(photo ? [{ type: 'photo', metadata: { fileId: 'f1', bodyLocation: 'inner thigh', side: 'left' } }] : []),
+      ],
+    },
+  });
+  const medications = [{ id: 'cream', name: 'clotrimazole', embodiments: [{ id: 'emb', label: '1% cream', dosageForm: 'cream' }] }];
+  const schedule = {
+    id: 's1',
+    patientId: 'p1',
+    type: 'medication_dose',
+    medicationId: 'cream',
+    medicationEmbodimentId: 'emb',
+    episodeId: 'ep1',
+    label: 'Clotrimazole twice daily',
+    frequencyHours: null,
+    explicitTimes: ['08:00', '20:00'],
+    startAt: at(3, 7),
+    endAfterOccurrences: 28,
+    endAt: null,
+    status: 'active',
+    adherence: { expectedCount: 0, loggedCount: 0, missed: 0, remainingOccurrences: 28, overdue: false },
+  };
+  const entries = [
+    lesion('obs1', at(3, 7), false),
+    dose('d1', at(3, 8), 's1'),
+    dose('d2', at(3, 20)),
+    dose('d3', at(2, 8)),
+    lesion('obs2', at(1, 9), true),
+  ];
+  let routerMock: any;
+
+  const build = async (episodeOver: any) => {
+    routerMock = { navigate: jest.fn() };
+    const episode = { ...baseEpisode, startedAt: at(3, 7), observationIds: ['obs1', 'obs2'], medications, schedules: [], ...episodeOver };
+    await TestBed.configureTestingModule({
+      imports: [EpisodeDetailPage],
+      providers: [
+        {
+          provide: ApiClientService,
+          useValue: {
+            get: jest.fn((path: string) =>
+              path === '/episodes/ep1' ? of(episode) : path.includes('/timeline') ? of({ patient: { id: 'p1' }, entries }) : of(null),
+            ),
+            getBlob: jest.fn(() => of(new Blob())),
+          },
+        },
+        { provide: AuthService, useValue: { user: () => null } },
+        { provide: Router, useValue: routerMock },
+        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 'ep1']]) } } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(EpisodeDetailPage);
+    fixture.detectChanges();
+    return fixture;
+  };
+
+  it('summarises the day, the treatment by name, the last dose and the last measurement', async () => {
+    const fixture = await build({});
+    const text = fixture.nativeElement.querySelector('.summary').textContent;
+    expect(fixture.componentInstance.dayNumber()).toBe(4);
+    expect(text).toContain('clotrimazole (1% cream)');
+    expect(text).toContain('3 doses');
+    expect(text).toContain('2.5 × 1.8 cm');
+    expect(fixture.componentInstance.measurementIsOld()).toBe(false);
+  });
+
+  it('names the medicine on every dose line rather than "medication dose"', async () => {
+    const fixture = await build({});
+    expect(fixture.nativeElement.textContent).not.toContain('medication dose');
+  });
+
+  it('with no schedule, shows plain per-day counts and offers to add one', async () => {
+    const fixture = await build({});
+    const cells = Array.from(fixture.nativeElement.querySelectorAll('.strip .cell')) as HTMLElement[];
+    expect(cells).toHaveLength(4);
+    expect(cells.some((c) => c.classList.contains('short') || c.classList.contains('met'))).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('No schedule for this episode');
+    fixture.componentInstance.addSchedule();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules/new'], { queryParams: { patientId: 'p1', episodeId: 'ep1' } });
+  });
+
+  it('with a schedule, counts linked doses only, names the unlinked ones with a way to link them, and marks short days', async () => {
+    const fixture = await build({ schedules: [schedule] });
+    const text = fixture.nativeElement.querySelector('.keeping-up').textContent.replace(/\s+/g, ' ');
+    expect(text).toContain('1 of 28 doses');
+    expect(text).toContain("2 doses of this medicine in this episode aren't linked to the schedule");
+    fixture.componentInstance.linkDoses(schedule as any);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1'], { queryParams: { link: '1' } });
+    const short = fixture.nativeElement.querySelectorAll('.strip .cell.short');
+    expect(short.length).toBeGreaterThan(0);
+  });
+
+  it('puts the photos and sizes side by side, oldest first, saying when one has no photo', async () => {
+    const fixture = await build({});
+    const items = Array.from(fixture.nativeElement.querySelectorAll('.compare-item')) as HTMLElement[];
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain('No photo');
+    expect(items[1].textContent).not.toContain('No photo');
   });
 });

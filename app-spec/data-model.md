@@ -579,8 +579,9 @@ episodes.
     see "Data integrity rules"): a standing regimen belongs to a Condition directly, while an
     acute course belongs to the Episode it was prescribed for.
   - `label: string` (e.g., "Amoxicillin q8h", "Nightly dressing")
-  - Medication fields:
-    - `doseMg: decimal`
+  - Medication fields — all optional; a cream, ointment or gel course has no amount to schedule
+    (`MedicationEmbodiment.dosageForm`), so a schedule may carry none of them:
+    - `doseMg: decimal | null`
     - `doseMl: decimal | null`
     - `pillCount: decimal | null`
   - Dressing change fields:
@@ -770,7 +771,11 @@ the snapshot's contents do.
   (advisories.md → "Stale weight").
 - `ScheduleAdherence` (per `InterventionSchedule`, computed on read — intended-vs-actual, F-4.3):
   - `expectedCount`: how many occurrences should have happened between `startAt` and now, derived
-    from `frequencyHours` or `explicitTimes`.
+    from `frequencyHours` or `explicitTimes` — **capped at the course's end**: slots after `endAt`
+    do not count, and the count never exceeds `endAfterOccurrences`. Without the cap a finished
+    course would keep accruing missed doses forever. (Fixed `explicitTimes` slots are read on the
+    server's clock, not the household's — a known gap; the episode page computes its own per-day
+    expectations in the browser's local time for that reason.)
   - `loggedCount`: doses actually logged against this schedule (`intervention.scheduleId` match).
   - `missed`: `max(0, expectedCount - loggedCount)`.
   - `remainingOccurrences`: `endAfterOccurrences - loggedCount` when `endAfterOccurrences` is set

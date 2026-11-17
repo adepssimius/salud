@@ -5,6 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../core/error-display';
+import { AmountBoxes, amountBoxesFor, boxShown } from '../interventions/dose-amount-sync';
 import {
   CreateScheduleDto,
   InterventionSchedule,
@@ -96,20 +97,26 @@ import {
               </select>
             </label>
           </div>
-          <div class="grid">
-            <label class="field">
+          <!-- The embodiment decides which amount boxes show, as on the dose form (frontend.md →
+               "Dose entry"): a cream, ointment or gel has no amount to schedule, and a box holding
+               a value always shows so nothing is sent unseen. -->
+          <div class="grid" *ngIf="!noAmountBoxes(); else noAmount">
+            <label class="field" *ngIf="showBox('mg')">
               <span>Dose (mg)</span>
               <input type="number" step="0.01" formControlName="doseMg" />
             </label>
-            <label class="field">
+            <label class="field" *ngIf="showBox('ml')">
               <span>Dose (mL)</span>
               <input type="number" step="0.01" formControlName="doseMl" />
             </label>
-            <label class="field">
-              <span>Pill count</span>
+            <label class="field" *ngIf="showBox('pills')">
+              <span>{{ amountBoxes().count ?? 'Pill count' }}</span>
               <input type="number" step="0.5" formControlName="pillCount" />
             </label>
           </div>
+          <ng-template #noAmount>
+            <p class="muted small">No amount to measure for this form — say how much in the notes if it matters.</p>
+          </ng-template>
         </ng-container>
 
         <ng-container *ngIf="!isMedication()">
@@ -248,6 +255,8 @@ export class NewSchedulePage implements OnInit {
 
   prefillConditionId: string | null = null;
   prefillPatientId: string | null = null;
+  /** Set when opened from an episode's "Add a schedule" — saved under it, and back out to it. */
+  prefillEpisodeId: string | null = null;
 
   patients = signal<Patient[]>([]);
   activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
@@ -286,8 +295,11 @@ export class NewSchedulePage implements OnInit {
   ngOnInit(): void {
     this.prefillConditionId = this.route.snapshot.queryParamMap.get('conditionId');
     this.prefillPatientId = this.route.snapshot.queryParamMap.get('patientId');
+    this.prefillEpisodeId = this.route.snapshot.queryParamMap.get('episodeId');
     if (this.prefillConditionId) {
       this.form.patchValue({ conditionId: this.prefillConditionId });
+    } else if (this.prefillEpisodeId) {
+      this.form.patchValue({ episodeId: this.prefillEpisodeId });
     }
 
     const user = this.auth.user();
@@ -360,6 +372,20 @@ export class NewSchedulePage implements OnInit {
       next: (res) => this.embodiments.set(res),
       error: () => this.embodiments.set([]),
     });
+  }
+
+  amountBoxes(): AmountBoxes {
+    const id = this.form.controls.medicationEmbodimentId.value;
+    return amountBoxesFor(id ? this.embodiments().find((e) => e.id === id) : undefined);
+  }
+
+  showBox(box: 'mg' | 'ml' | 'pills'): boolean {
+    const control = box === 'mg' ? this.form.controls.doseMg : box === 'ml' ? this.form.controls.doseMl : this.form.controls.pillCount;
+    return boxShown(this.amountBoxes(), box) || control.value != null;
+  }
+
+  noAmountBoxes(): boolean {
+    return !this.showBox('mg') && !this.showBox('ml') && !this.showBox('pills');
   }
 
   clearMedication() {
@@ -440,7 +466,9 @@ export class NewSchedulePage implements OnInit {
   }
 
   private backOut() {
-    if (this.prefillConditionId) {
+    if (this.prefillEpisodeId) {
+      this.router.navigate(['/episodes', this.prefillEpisodeId]);
+    } else if (this.prefillConditionId) {
       this.router.navigate(['/conditions', this.prefillConditionId]);
     } else {
       this.router.navigate(['/dashboard']);

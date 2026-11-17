@@ -469,4 +469,117 @@ describe('Episodes (e2e)', () => {
       expect(obs.body.resolvesEpisodeIds).toEqual([episodeId]);
     });
   });
+
+  // api.md → Episodes → GET /episodes/:id: the episode's own schedules (with adherence) and the
+  // medications its doses and schedules name, so the episode page needs no catalog round trips.
+  describe('schedules and medications on the single-episode read', () => {
+    it('returns the episode\'s schedules with adherence and the medications its doses name', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const med = await request(app.getHttpServer())
+        .post('/api/medications')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: `clotrimazole-${randomUUID().slice(0, 6)}` })
+        .expect(201);
+      const emb = await request(app.getHttpServer())
+        .post(`/api/medications/${med.body.id}/embodiments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ label: '1% cream', dosageForm: 'cream' })
+        .expect(201);
+      const other = await request(app.getHttpServer())
+        .post('/api/medications')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: `unrelated-${randomUUID().slice(0, 6)}` })
+        .expect(201);
+
+      const obs = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          observedAt: new Date(Date.now() - 3 * 86400_000).toISOString(),
+          startEpisodeName: 'Ringworm',
+          entries: [{ type: 'lesion_size', metadata: { lengthCm: 2.5, widthCm: 1.8, bodyLocation: 'inner thigh', side: 'left' } }],
+        })
+        .expect(201);
+      const episodeId = obs.body.episodeIds[0];
+
+      // An ad hoc dose (no schedule) inside the episode — the cream, with no amount.
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/interventions`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'medication_dose',
+          performedAt: new Date(Date.now() - 2 * 86400_000).toISOString(),
+          medicationId: med.body.id,
+          medicationEmbodimentId: emb.body.id,
+          doseSource: 'override',
+          episodeIds: [episodeId],
+        })
+        .expect(201);
+
+      // A cream course: no doseMg, twice daily for 14 doses, filed under the episode.
+      const sched = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/schedules`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'medication_dose',
+          label: 'Clotrimazole twice daily',
+          episodeId,
+          medicationId: med.body.id,
+          medicationEmbodimentId: emb.body.id,
+          frequencyHours: 12,
+          startAt: new Date(Date.now() - 25 * 3600_000).toISOString(),
+          endAfterOccurrences: 14,
+        })
+        .expect(201);
+      expect(sched.body.doseMg).toBeNull();
+      // Logging from the schedule works with no amount at all.
+      await request(app.getHttpServer())
+        .post(`/api/schedules/${sched.body.id}/log`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+
+      // A schedule for another episode-less course must not appear.
+      await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/schedules`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ type: 'medication_dose', label: 'unrelated', medicationId: other.body.id, frequencyHours: 8, startAt: new Date().toISOString() })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/episodes/${episodeId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(res.body.schedules).toHaveLength(1);
+      const s = res.body.schedules[0];
+      expect(s.id).toBe(sched.body.id);
+      expect(typeof s.startAt).toBe('number');
+      // Slots at -25h, -13h, -1h: three expected; one logged against the schedule. The ad hoc
+      // dose is not counted until it is linked (api.md → "Linking existing doses").
+      expect(s.adherence).toMatchObject({ expectedCount: 3, loggedCount: 1, missed: 2, remainingOccurrences: 13 });
+
+      expect(res.body.medications).toEqual([
+        { id: med.body.id, name: med.body.name, embodiments: [{ id: emb.body.id, label: '1% cream', dosageForm: 'cream' }] },
+      ]);
+      expect(res.body.interventionIds).toHaveLength(2);
+    });
+
+    it('returns empty schedules and medications for an episode with neither', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const obs = await request(app.getHttpServer())
+        .post(`/api/patients/${patientId}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ observedAt: new Date().toISOString(), startEpisodeName: 'Cold', entries: [{ type: 'note', metadata: { text: 'sniffles' } }] })
+        .expect(201);
+      const res = await request(app.getHttpServer())
+        .get(`/api/episodes/${obs.body.episodeIds[0]}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(res.body.schedules).toEqual([]);
+      expect(res.body.medications).toEqual([]);
+    });
+  });
 });

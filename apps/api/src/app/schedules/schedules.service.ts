@@ -12,6 +12,7 @@ import { ScheduleDose, ScheduleDosesResponse } from '@salud/shared/types';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs, toDate } from '../persistence/time';
+import { nextExplicitTime, scheduleLoggedCount, toScheduleView } from './schedule-view';
 
 interface TimingConfig {
   frequencyHours: number | null;
@@ -38,25 +39,6 @@ export class SchedulesService {
     }
   }
 
-  // Finds the next occurrence of any HH:MM in `times`, at-or-after `from` (or strictly after,
-  // when advancing past a just-logged dose).
-  private nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean): Date {
-    const sorted = [...times].sort();
-    const fromMs = from.getTime();
-    for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
-      for (const t of sorted) {
-        const [h, m] = t.split(':').map(Number);
-        const candidate = new Date(from);
-        candidate.setDate(from.getDate() + dayOffset);
-        candidate.setHours(h, m, 0, 0);
-        const ok = strictlyAfter ? candidate.getTime() > fromMs : candidate.getTime() >= fromMs;
-        if (ok) return candidate;
-      }
-    }
-    // Unreachable with valid HH:MM input; fail safe rather than throw mid-schedule-math.
-    return new Date(fromMs + 24 * 60 * 60 * 1000);
-  }
-
   private computeNextDueAt(timing: TimingConfig, from: Date, strictlyAfter: boolean): Date | null {
     if (timing.frequencyHours) {
       const base = strictlyAfter ? from.getTime() : from.getTime();
@@ -64,7 +46,7 @@ export class SchedulesService {
       return new Date(base + offsetMs);
     }
     if (timing.explicitTimes && timing.explicitTimes.length) {
-      return this.nextExplicitTime(timing.explicitTimes, from, strictlyAfter);
+      return nextExplicitTime(timing.explicitTimes, from, strictlyAfter);
     }
     return null;
   }
@@ -85,73 +67,11 @@ export class SchedulesService {
   }
 
   private async loggedCount(scheduleId: string): Promise<number> {
-    const db = this.db.db as any;
-    const rows = await db.select().from(interventions).where(eq(interventions.scheduleId, scheduleId));
-    return rows.length;
-  }
-
-  private async computeAdherence(row: any) {
-    const loggedCount = await this.loggedCount(row.id);
-    const startAt = toDate(row.startAt)!;
-    const now = new Date();
-    let expectedCount = 0;
-    if (now > startAt) {
-      if (row.frequencyHours) {
-        const elapsedHours = (now.getTime() - startAt.getTime()) / 3600_000;
-        expectedCount = Math.floor(elapsedHours / row.frequencyHours) + 1;
-      } else if (row.explicitTimes) {
-        const times: string[] = JSON.parse(row.explicitTimes);
-        let cursor = this.nextExplicitTime(times, startAt, false);
-        let guard = 0;
-        while (cursor.getTime() <= now.getTime() && guard < 2000) {
-          expectedCount++;
-          cursor = this.nextExplicitTime(times, cursor, true);
-          guard++;
-        }
-      }
-    }
-    const remainingOccurrences =
-      row.endAfterOccurrences != null ? Math.max(0, row.endAfterOccurrences - loggedCount) : null;
-    const nextDueTs = normalizeTs(row.nextDueAt);
-    const overdue = row.status === 'active' && nextDueTs != null && nextDueTs < Math.floor(Date.now() / 1000);
-    return {
-      expectedCount,
-      loggedCount,
-      missed: Math.max(0, expectedCount - loggedCount),
-      remainingOccurrences,
-      overdue,
-    };
+    return scheduleLoggedCount(this.db.db as any, scheduleId);
   }
 
   private async pickSchedule(row: any) {
-    return {
-      id: row.id,
-      patientId: row.patientId,
-      type: row.type,
-      medicationId: row.medicationId ?? null,
-      medicationEmbodimentId: row.medicationEmbodimentId ?? null,
-      episodeId: row.episodeId ?? null,
-      conditionId: row.conditionId ?? null,
-      label: row.label,
-      doseMg: row.doseMg ?? null,
-      doseMl: row.doseMl ?? null,
-      pillCount: row.pillCount ?? null,
-      bodyLocation: row.bodyLocation ?? null,
-      side: row.side ?? null,
-      dressingType: row.dressingType ?? null,
-      frequencyHours: row.frequencyHours ?? null,
-      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
-      startAt: normalizeTs(row.startAt),
-      endAfterOccurrences: row.endAfterOccurrences ?? null,
-      endAt: normalizeTs(row.endAt),
-      notes: row.notes ?? null,
-      status: row.status,
-      nextDueAt: normalizeTs(row.nextDueAt),
-      createdByUserId: row.createdByUserId,
-      createdAt: normalizeTs(row.createdAt),
-      updatedAt: normalizeTs(row.updatedAt),
-      adherence: await this.computeAdherence(row),
-    };
+    return toScheduleView(this.db.db as any, row);
   }
 
   async create(patientId: string, userId: string, dto: CreateScheduleDto) {

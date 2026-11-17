@@ -188,4 +188,51 @@ describe('NewSchedulePage', () => {
     expect(apiMock.get).toHaveBeenCalledWith('/schedules/sched-9/doses');
     expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 'sched-9'], { queryParams: { link: '1' } });
   });
+
+  // frontend.md → Episode detail → "Add a schedule": opened with the episode filled in, saved
+  // under it, and back to the episode afterwards.
+  it('prefills the episode from query params, saves under it, and returns to the episode', () => {
+    queryParams = { patientId: 'p1', episodeId: 'ep1' };
+    apiMock.post.mockReturnValue(of({ id: 'sched-3' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    expect(comp.form.getRawValue().episodeId).toBe('ep1');
+
+    comp.form.patchValue({ label: 'Clotrimazole twice daily', medicationId: 'med-1', explicitTimesRaw: '08:00, 20:00' });
+    comp.submit();
+    expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/schedules', expect.objectContaining({ episodeId: 'ep1' }));
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
+  });
+
+  it('shows no amount boxes for a cream, and sends no amount', () => {
+    apiMock.post.mockReturnValue(of({ id: 'sched-4' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.embodiments.set([{ id: 'emb-cream', label: '1% cream', dosageForm: 'cream', unitType: 'other' } as any]);
+    comp.form.patchValue({ patientId: 'p1', label: 'Cream', medicationId: 'med-1', medicationEmbodimentId: 'emb-cream', frequencyHours: 12 });
+    fixture.detectChanges();
+
+    expect(comp.noAmountBoxes()).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('No amount to measure for this form');
+    expect(fixture.nativeElement.querySelector('input[formcontrolname=doseMg]')).toBeNull();
+
+    comp.submit();
+    const body = apiMock.post.mock.calls[0][1];
+    expect(body.doseMg).toBeUndefined();
+    expect(body.doseMl).toBeUndefined();
+    expect(body.pillCount).toBeUndefined();
+  });
+
+  it('keeps the mg box for a tablet', () => {
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.embodiments.set([{ id: 'emb-tab', label: '200 mg tablet', dosageForm: 'tablet', unitType: 'tablet' } as any]);
+    comp.form.patchValue({ medicationEmbodimentId: 'emb-tab' });
+    expect(comp.showBox('mg')).toBe(true);
+    expect(comp.showBox('ml')).toBe(false);
+    expect(comp.amountBoxes().count).toBe('Tablets');
+  });
 });
