@@ -150,6 +150,8 @@ export const ERROR_SENTENCES = {
   SCHEDULE_SKIP_NOT_UNDOABLE: 'This dose was made up by a double dose, so it can only be undone with that dose.',
   DOUBLE_DOSE_NOT_DUE: 'A double dose is not due: the schedule doesn\'t say to take two, or no dose is missed. Reload and check the schedule.',
   SCHEDULE_NOT_FOUND: 'That schedule is no longer available. It may have been deleted.',
+  SCHEDULE_HAS_DOSES:
+    'Doses are already logged on this schedule, so its type and medicine stay as they are. To change them, mark it complete and start a new schedule.',
   SELF_RELATIONSHIP_ALREADY_EXISTS:
     'Someone on this care team is already marked as the patient. Change their relationship first.',
   SNAPSHOT_NOT_FOUND: 'That shared link is no longer available. It may have expired or been revoked.',

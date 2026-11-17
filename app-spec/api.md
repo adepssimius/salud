@@ -816,10 +816,8 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     (`endAfterOccurrences - loggedCount`, `null` for open-ended schedules), and `overdue`
     (`nextDueAt` in the past while `status = 'active'`).
 - `GET /api/schedules/:scheduleId` — same shape, single schedule.
-- `PATCH /api/schedules/:scheduleId`
-  - Update status (`active`, `paused`, `completed`), timing, the missed-dose instruction, or
-    metadata; `nextDueAt` and `status` are recomputed from the result every time ("Missed doses"
-    below). `timeZone` is validated as on create.
+- `PATCH /api/schedules/:scheduleId` — see "Editing a schedule" below.
+- `DELETE /api/schedules/:scheduleId` — see "Deleting a schedule" below.
 - `POST /api/schedules/:scheduleId/log`
   - Creates the corresponding intervention pre-filled from the schedule (medication/embodiment/
     dose amounts, or dressing fields) with `interventionScheduleId` set, **through the same
@@ -839,6 +837,53 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     override misreads it in the ER Brief.
   - Existing rows written before `'schedule'` existed carry `doseSource: 'override'` and are not
     rewritten.
+
+### Editing a schedule
+
+`PATCH /api/schedules/:scheduleId` — any subset of the create fields (`type`, `startAt` included),
+plus `status` (`active`, `paused`, `completed`). Returns the `InterventionSchedule`.
+
+- `null` clears an optional field (amounts, dressing fields, `endAfterOccurrences`, `endAt`,
+  `notes`, the missed-dose fields, `episodeId`/`conditionId`); a required one (`type`, `label`,
+  `startAt`, `status`, `timeZone`) ignores `null`. Setting `frequencyHours` clears `explicitTimes`
+  and vice versa, unless the body sends both.
+- **Checked on the merged result** exactly as create checks its body: `MEDICATION_ID_REQUIRED`,
+  `BODY_LOCATION_REQUIRED`, `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED`,
+  `SCHEDULE_EPISODE_CONDITION_CONFLICT`, `INVALID_TIME_ZONE`, `MISSED_DOSE_INSTRUCTION_INVALID`.
+  Changing `type` clears the other type's fields.
+- **`type` and `medicationId` cannot change once any dose is linked** — 409 `SCHEDULE_HAS_DOSES`. A
+  dose of one medicine must never count toward a schedule for another; a different medicine is a
+  different schedule. The patient never changes. Everything else (embodiment, amounts, timing,
+  start, end, episode/condition, instruction, notes, name) stays editable.
+- **An edit replaces the plan as if it had always been so.** There is no plan history: `nextDueAt`,
+  `status`, `adherence` and `missedDose` are recomputed over the whole course from the new timing
+  ("Missed doses" below), so changing q8h to q6h recounts expected-by-now from `startAt` on.
+  Linked doses stay linked — a link is an explicit fact, and a later `startAt` does not undo it.
+  When the prescription itself changed mid-course, the course is marked complete and a new
+  schedule started, which keeps the old course's adherence as it was (frontend.md → Schedule
+  detail → "Editing").
+
+### Deleting a schedule
+
+`DELETE /api/schedules/:scheduleId` → `{ deleted: true, unlinkedDoseCount, removedSkipCount }`.
+
+A schedule is a plan, not part of the care record, so this is a **hard delete** — but **logged doses
+are never deleted with it** (F-1.4; "Voiding" below). In one transaction:
+
+- Every dose with this `scheduleId` stays, and loses its link: `scheduleId`,
+  `metadata.interventionScheduleId` and `metadata.scheduleLinked` are cleared, and each gets a
+  `Revision` of its prior state, so its History still names the schedule it was on. **`doseSource`
+  is left as it was** — a dose logged from the schedule still says so.
+- The schedule's `ScheduleSkip`s are deleted (plan bookkeeping with nothing to attach to).
+- The schedule row is deleted. A later read is 404 `SCHEDULE_NOT_FOUND`.
+
+Everything else that shows a schedule reads it live — Home's due rows, the episode page, the
+condition page, the live ER Brief, What's-New, and the medication catalog's dependency counts — so
+the schedule simply disappears from them. A frozen ER Brief snapshot keeps the copy it froze; it
+never links back to the schedule. For a course that really happened, **Mark complete**, not
+delete, is how it stays on record.
+
+Access: as every schedule route — the schedule's patient, 404 to a caller not on its care team.
 
 ### Missed doses
 
@@ -1746,11 +1791,12 @@ sentence silently falls back to that call site's generic message rather than rea
 | `INTERVENTION_NOT_FOUND` | 404 | intervention get/update; `POST /schedules/:id/doses` naming a dose that is not this schedule's patient's (body carries `interventionIds`) |
 | `CONDITION_NOT_FOUND` | 404 | condition get/update |
 | `PROTOCOL_NOT_FOUND` | 404 | protocol get/update |
-| `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update; an intervention create whose `interventionScheduleId` is not this patient's schedule |
+| `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update/delete; an intervention create whose `interventionScheduleId` is not this patient's schedule |
 | `MISSED_DOSE_INSTRUCTION_INVALID` | 400 | schedule create/update (checked on the merged result) with `missedDoseCutoffHours` but no take-late `missedDoseAction`, or a `missedDoseCourseEffect` on a schedule with neither `endAt` nor `endAfterOccurrences` |
 | `SCHEDULE_SLOT_NOT_SKIPPABLE` | 400 | `POST /schedules/:id/skips` when no dose is missed, or `slotAt` is not the current missed slot |
 | `SCHEDULE_SKIP_NOT_FOUND` | 404 | `DELETE /schedules/:id/skips/:skipId` naming no skip of this schedule |
 | `SCHEDULE_SKIP_NOT_UNDOABLE` | 400 | `DELETE /schedules/:id/skips/:skipId` on a slot made up by a prescribed double (it goes only with that dose) |
+| `SCHEDULE_HAS_DOSES` | 409 | `PATCH /schedules/:id` changing `type` or `medicationId` while a dose is linked to the schedule |
 | `DOUBLE_DOSE_NOT_DUE` | 400 | `POST /schedules/:id/log` with `double`, or an intervention create with `prescribedDouble`, when the schedule's instruction is not "take two next time" or no dose is missed |
 | `MEDICATION_NOT_FOUND` | 404 | medication lookup by id |
 | `EMBODIMENT_NOT_FOUND` | 404 | medication embodiment lookup by id |

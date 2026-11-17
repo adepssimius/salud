@@ -15,6 +15,7 @@ import { debounceTime } from 'rxjs';
 import { toSignal } from '@angular/core/rxjs-interop';
 import {
   CreateScheduleDto,
+  UpdateScheduleDto,
   MISSED_DOSE_ACTIONS,
   MISSED_DOSE_COURSE_EFFECTS,
   MissedDoseAction,
@@ -35,8 +36,8 @@ import {
   imports: [CommonModule, ReactiveFormsModule, DoseGuidanceComponent, PillCountInputComponent, InfoTipComponent],
   template: `
     <div class="card">
-      <h1>New Schedule</h1>
-      <p class="muted">
+      <h1>{{ editId ? 'Edit schedule' : 'New Schedule' }}</h1>
+      <p class="muted" *ngIf="!editId">
         Intent, not an event — "amoxicillin 400 mg every 8 h for 10 doses." Log the actual doses
         from the dashboard as they happen.
       </p>
@@ -53,7 +54,7 @@ import {
         <div class="grid">
           <label class="field">
             <span>Type</span>
-            <select formControlName="type">
+            <select formControlName="type" [attr.aria-describedby]="locked() ? 'locked-note' : null">
               <option value="medication_dose">Medication dose</option>
               <option value="dressing_change">Dressing change</option>
             </select>
@@ -62,13 +63,20 @@ import {
             <span>Episode (optional)</span>
             <select formControlName="episodeId">
               <option value="">None</option>
-              <option *ngFor="let ep of activeEpisodes()" [value]="ep.id">{{ ep.name }}</option>
+              <option *ngFor="let ep of episodeOptions()" [value]="ep.id">{{ ep.name }}</option>
             </select>
           </label>
           <p class="muted condition-note" *ngIf="prefillConditionId">
             Linked to this Condition's standing regimen.
           </p>
         </div>
+
+        <!-- A dose of one medicine must not count toward a schedule for another (api.md →
+             "Editing a schedule"), so these two stay put once doses are logged. -->
+        <p class="muted small" id="locked-note" *ngIf="locked()">
+          Doses are already logged on this schedule, so its type and medicine stay as they are. To
+          change them, mark it complete and start a new schedule.
+        </p>
 
         <ng-container *ngIf="isMedication()">
           <div class="grid">
@@ -93,7 +101,7 @@ import {
               <ng-template #medicationChosen>
                 <div class="chosen-med">
                   <span>{{ selectedMedication()!.name }}</span>
-                  <button type="button" class="link" (click)="clearMedication()">change</button>
+                  <button type="button" class="link" (click)="clearMedication()" *ngIf="!locked()">change</button>
                 </div>
               </ng-template>
             </div>
@@ -255,10 +263,18 @@ import {
           <span class="muted small" *ngIf="!labelEdited">Filled in from the choices above — type to name it yourself.</span>
         </label>
 
+        <!-- An edit rewrites the whole course (api.md → "Editing a schedule"): said before saving,
+             only when it changes something already counted. -->
+        <p class="muted small rewrite-note" *ngIf="rewritesPast()">
+          This recounts the whole course as if the new plan had always applied — {{ linkedCount() }}
+          logged {{ linkedCount() === 1 ? 'dose stays' : 'doses stay' }} linked. If the prescription
+          changed, mark this schedule complete and start a new one instead.
+        </p>
+
         <div class="actions">
           <button type="button" class="secondary" (click)="cancel()">Cancel</button>
-          <button type="submit" class="primary" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Saving…' : 'Create schedule' }}
+          <button type="submit" class="primary" [disabled]="form.invalid || saving() || loadingEdit()">
+            {{ saving() ? 'Saving…' : editId ? 'Save changes' : 'Create schedule' }}
           </button>
         </div>
         <p class="error" *ngIf="error()">{{ error() }}</p>
@@ -362,6 +378,12 @@ import {
       .daily-times input {
         width: 7.5rem;
       }
+      .rewrite-note {
+        margin: 0;
+        padding: 0.6rem 0.75rem;
+        border-radius: var(--radius-control);
+        border: 1px solid var(--border);
+      }
     `,
   ],
 })
@@ -376,6 +398,22 @@ export class NewSchedulePage implements OnInit, OnDestroy {
   prefillPatientId: string | null = null;
   /** Set when opened from an episode's "Add a schedule" — saved under it, and back out to it. */
   prefillEpisodeId: string | null = null;
+  /** Set at /schedules/:id/edit: the same form, prefilled, saving with PATCH (frontend.md → Schedule detail → "Editing"). */
+  editId: string | null = null;
+  loadingEdit = signal(false);
+  /** Doses linked to the schedule being edited; type and medicine are fixed once there are any. */
+  linkedCount = signal(0);
+  locked = computed(() => !!this.editId && this.linkedCount() > 0);
+  /** The schedule's own episode, when it is no longer active and so missing from the list. */
+  private currentEpisode = signal<{ id: string; name: string } | null>(null);
+  episodeOptions = computed(() => {
+    const list = this.activeEpisodes();
+    const cur = this.currentEpisode();
+    return cur && !list.some((e) => e.id === cur.id) ? [cur, ...list] : list;
+  });
+  /** The timing as loaded, to tell when an edit would recount a course that already has doses. */
+  private timingBaseline: string | null = null;
+  rewritesPast = signal(false);
 
   patients = signal<Patient[]>([]);
   activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
@@ -474,6 +512,7 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     this.prefillConditionId = this.route.snapshot.queryParamMap.get('conditionId');
     this.prefillPatientId = this.route.snapshot.queryParamMap.get('patientId');
     this.prefillEpisodeId = this.route.snapshot.queryParamMap.get('episodeId');
+    this.editId = this.route.snapshot.paramMap?.get('id') ?? null;
     if (this.prefillConditionId) {
       this.form.patchValue({ conditionId: this.prefillConditionId });
     } else if (this.prefillEpisodeId) {
@@ -493,6 +532,10 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     this.form.controls.label.valueChanges.subscribe((v) => (this.labelEdited = !!v.trim()));
     this.form.valueChanges.subscribe(() => this.refreshName());
     this.form.valueChanges.pipe(debounceTime(400)).subscribe(() => this.runDoseCheck());
+    this.form.valueChanges.subscribe(() =>
+      this.rewritesPast.set(this.timingBaseline != null && this.linkedCount() > 0 && this.timingKey() !== this.timingBaseline),
+    );
+    if (this.editId) this.loadForEdit(this.editId);
 
     const user = this.auth.user();
     if (!user && this.auth.token) {
@@ -506,9 +549,123 @@ export class NewSchedulePage implements OnInit, OnDestroy {
   }
 
   private defaultDateTime() {
-    const now = new Date();
-    const tzOffset = now.getTimezoneOffset() * 60000;
-    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
+    return this.localInput(Date.now());
+  }
+
+  /** A `datetime-local` value for an instant, in the browser's zone. */
+  private localInput(ms: number) {
+    const tzOffset = new Date(ms).getTimezoneOffset() * 60000;
+    return new Date(ms - tzOffset).toISOString().slice(0, 16);
+  }
+
+  // ── Editing (frontend.md → Schedule detail → "Editing") ────────────────────────────────────
+
+  /** Everything that decides which slots the course expects. */
+  private timingKey(): string {
+    const v = this.form.getRawValue();
+    return JSON.stringify([
+      v.startAt,
+      v.frequencyMode,
+      v.frequencyMode === 'interval' ? v.frequencyHours : [...v.dailyTimes].sort(),
+      v.endAt,
+      v.endAfterOccurrences,
+    ]);
+  }
+
+  private loadForEdit(id: string) {
+    this.loadingEdit.set(true);
+    // The stored name is kept while the form fills; prefillFinished decides whether it is the
+    // caregiver's own or the generated one, which keeps following the form.
+    this.labelEdited = true;
+    this.api.get<ScheduleDosesResponse>(`/schedules/${id}/doses`).subscribe({
+      next: (res) => this.prefill(res),
+      error: (err) => {
+        this.loadingEdit.set(false);
+        this.error.set(errorText(err, 'Unable to load schedule.'));
+      },
+    });
+  }
+
+  private prefill(res: ScheduleDosesResponse) {
+    const s = res.schedule;
+    this.linkedCount.set(res.linked.length);
+    this.prefillPatientId = s.patientId;
+    this.prefillConditionId = s.conditionId;
+    this.form.patchValue({
+      patientId: s.patientId,
+      label: s.label,
+      type: s.type,
+      episodeId: s.episodeId ?? '',
+      conditionId: s.conditionId ?? '',
+      medicationId: s.medicationId ?? '',
+      medicationEmbodimentId: s.medicationEmbodimentId ?? '',
+      bodyLocation: s.bodyLocation ?? '',
+      side: s.side ?? 'n/a',
+      dressingType: s.dressingType ?? '',
+      startAt: this.localInput(s.startAt * 1000),
+      endAfterOccurrences: s.endAfterOccurrences,
+      endAt: s.endAt ? this.localInput(s.endAt * 1000) : '',
+      notes: s.notes ?? '',
+      missedDoseAction: s.missedDoseAction ?? '',
+      missedDoseCutoffHours: s.missedDoseCutoffHours,
+      missedDoseCourseEffect: s.missedDoseCourseEffect ?? '',
+      missedDoseNote: s.missedDoseNote ?? '',
+    });
+    if (s.explicitTimes?.length) {
+      // The count lays out default times; the stored ones replace them.
+      this.form.controls.timesPerDay.setValue(s.explicitTimes.length);
+      const arr = this.form.controls.dailyTimes;
+      arr.clear({ emitEvent: false });
+      for (const t of [...s.explicitTimes].sort()) arr.push(this.fb.nonNullable.control(t), { emitEvent: false });
+      arr.updateValueAndValidity();
+    } else {
+      this.form.patchValue({ frequencyHours: s.frequencyHours, frequencyMode: 'interval' });
+    }
+    // Stored amounts, not typing: the box later edits follow is the one the plan was most likely
+    // written in.
+    const source = s.doseMl != null ? 'ml' : s.pillCount != null ? 'pills' : s.doseMg != null ? 'mg' : null;
+    this.amountSync.set({ mg: s.doseMg, ml: s.doseMl, pills: s.pillCount }, source);
+
+    this.form.controls.patientId.disable({ emitEvent: false });
+    if (this.locked()) this.form.controls.type.disable({ emitEvent: false });
+    if (!s.conditionId) this.loadEpisodes(s.patientId);
+    if (s.episodeId) {
+      this.api.get<{ id: string; name: string }>(`/episodes/${s.episodeId}`).subscribe({
+        next: (ep) => this.currentEpisode.set({ id: ep.id, name: ep.name }),
+        error: () => this.currentEpisode.set(null),
+      });
+    }
+
+    if (!s.medicationId) {
+      this.prefillFinished(s);
+      return;
+    }
+    this.api.get<Medication>(`/medications/${s.medicationId}`).subscribe({
+      next: (m) => {
+        this.selectedMedication.set(m);
+        this.api.get<MedicationEmbodiment[]>(`/medications/${m.id}/embodiments`).subscribe({
+          next: (list) => {
+            this.embodiments.set(list);
+            this.amountSync.refresh();
+            this.prefillFinished(s);
+          },
+          error: () => this.prefillFinished(s),
+        });
+      },
+      error: () => this.prefillFinished(s),
+    });
+  }
+
+  /**
+   * The stored name is the caregiver's own unless it is exactly what the form would generate from
+   * the stored plan — then it keeps following the form, as it did when the schedule was created.
+   */
+  private prefillFinished(s: InterventionSchedule) {
+    this.labelEdited = false;
+    const generated = this.generatedName();
+    this.labelEdited = generated !== s.label;
+    this.timingBaseline = this.timingKey();
+    this.loadingEdit.set(false);
   }
 
   private loadPatients() {
@@ -586,10 +743,15 @@ export class NewSchedulePage implements OnInit, OnDestroy {
 
   /** The generated name, written in until the caregiver types their own. */
   private refreshName() {
-    if (this.labelEdited) return;
+    if (this.labelEdited || this.loadingEdit()) return;
+    const name = this.generatedName();
+    if (name !== this.form.getRawValue().label) this.form.controls.label.setValue(name, { emitEvent: false });
+  }
+
+  private generatedName(): string {
     const v = this.form.getRawValue();
     const embodiment = this.embodiments().find((e) => e.id === v.medicationEmbodimentId) ?? null;
-    const name = scheduleName({
+    return scheduleName({
       type: v.type,
       medicationName: this.selectedMedication()?.name ?? null,
       embodiment,
@@ -601,7 +763,6 @@ export class NewSchedulePage implements OnInit, OnDestroy {
       bodyLocation: v.bodyLocation,
       side: v.side,
     });
-    if (name !== v.label) this.form.controls.label.setValue(name, { emitEvent: false });
   }
 
   /** The dose check, for its guidance only (see the template). */
@@ -678,6 +839,10 @@ export class NewSchedulePage implements OnInit, OnDestroy {
 
     const times = val.dailyTimes.map((t) => t.trim()).filter(Boolean);
     const explicitTimes = val.frequencyMode === 'daily' && times.length ? [...times].sort() : undefined;
+    if (this.editId) {
+      this.saveEdit(this.editId, explicitTimes);
+      return;
+    }
 
     const body: CreateScheduleDto = {
       type: val.type,
@@ -748,7 +913,56 @@ export class NewSchedulePage implements OnInit, OnDestroy {
     });
   }
 
+  /**
+   * PATCH with every field the form owns, null where it is empty, so a cleared box clears the
+   * stored value (api.md → "Editing a schedule"). The zone is not sent: a schedule keeps its own
+   * until someone changes it on the schedule page (data-model.md → InterventionSchedule.timeZone).
+   */
+  private saveEdit(id: string, explicitTimes: string[] | undefined) {
+    const val = this.form.getRawValue();
+    const medication = val.type === 'medication_dose';
+    const action = val.missedDoseAction || null;
+    const body: UpdateScheduleDto = {
+      type: val.type,
+      label: val.label,
+      episodeId: val.conditionId ? null : val.episodeId || null,
+      conditionId: val.conditionId || null,
+      startAt: new Date(val.startAt).toISOString(),
+      frequencyHours: val.frequencyMode === 'interval' ? val.frequencyHours : null,
+      explicitTimes: explicitTimes ?? null,
+      endAfterOccurrences: val.endAfterOccurrences ?? null,
+      endAt: val.endAt ? new Date(val.endAt).toISOString() : null,
+      notes: val.notes.trim() || null,
+      missedDoseAction: action,
+      missedDoseCutoffHours: action && this.isTakeLate() ? (val.missedDoseCutoffHours ?? null) : null,
+      missedDoseCourseEffect: val.missedDoseCourseEffect && this.hasEnd() ? val.missedDoseCourseEffect : null,
+      missedDoseNote: action ? val.missedDoseNote.trim() || null : null,
+      medicationId: medication ? val.medicationId || null : null,
+      medicationEmbodimentId: medication ? val.medicationEmbodimentId || null : null,
+      doseMg: medication ? val.doseMg : null,
+      doseMl: medication ? val.doseMl : null,
+      pillCount: medication ? val.pillCount : null,
+      bodyLocation: medication ? null : val.bodyLocation || null,
+      side: medication ? null : (val.side as UpdateScheduleDto['side']),
+      dressingType: medication ? null : val.dressingType || null,
+    };
+    this.api.patch<InterventionSchedule, UpdateScheduleDto>(`/schedules/${id}`, body).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.router.navigate(['/schedules', id]);
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(errorText(err, 'Could not save the schedule.'));
+      },
+    });
+  }
+
   cancel() {
+    if (this.editId) {
+      this.router.navigate(['/schedules', this.editId]);
+      return;
+    }
     this.backOut();
   }
 

@@ -297,6 +297,14 @@ export const appRoutes: Route[] = [
     title: 'New schedule',
     canActivate: [authGuard],
   },
+  // The same form, prefilled (frontend.md → Schedule detail → "Editing").
+  {
+    path: 'schedules/:id/edit',
+    loadComponent: () =>
+      import('./schedules/new-schedule.page').then((m) => m.NewSchedulePage),
+    title: 'Edit schedule',
+    canActivate: [authGuard],
+  },
   {
     path: 'schedules/:id',
     loadComponent: () =>

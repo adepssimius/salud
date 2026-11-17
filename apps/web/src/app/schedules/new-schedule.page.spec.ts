@@ -10,9 +10,11 @@ describe('NewSchedulePage', () => {
   let authMock: any;
   let routerMock: any;
   let queryParams: Record<string, string>;
+  let params: Record<string, string>;
 
   beforeEach(async () => {
     queryParams = {};
+    params = {};
     apiMock = {
       get: jest.fn((path: string) =>
         path.endsWith('/doses') ? of({ schedule: {}, linked: [], candidates: [] }) : of([{ id: 'p1', fullName: 'Patient 1' }]),
@@ -35,7 +37,12 @@ describe('NewSchedulePage', () => {
         { provide: Router, useValue: routerMock },
         {
           provide: ActivatedRoute,
-          useValue: { snapshot: { queryParamMap: { get: (key: string) => queryParams[key] ?? null } } },
+          useValue: {
+            snapshot: {
+              queryParamMap: { get: (key: string) => queryParams[key] ?? null },
+              paramMap: { get: (key: string) => params[key] ?? null },
+            },
+          },
         },
       ],
     }).compileComponents();
@@ -396,5 +403,105 @@ describe('NewSchedulePage', () => {
     body = apiMock.post.mock.calls[1][1];
     expect(body).toMatchObject({ missedDoseAction: 'skip', missedDoseCourseEffect: 'finish_every_dose' });
     expect(body.missedDoseCutoffHours).toBeUndefined();
+  });
+
+  // ── Editing (frontend.md → Schedule detail → "Editing") ───────────────────────────────────
+  describe('editing at /schedules/:id/edit', () => {
+    const stored = (over: Record<string, any> = {}) => ({
+      id: 's1',
+      patientId: 'p1',
+      type: 'medication_dose',
+      medicationId: 'med-1',
+      medicationEmbodimentId: null,
+      episodeId: null,
+      conditionId: null,
+      label: 'Amoxicillin for the ear',
+      doseMg: 400,
+      doseMl: null,
+      pillCount: null,
+      bodyLocation: null,
+      side: null,
+      dressingType: null,
+      frequencyHours: 8,
+      explicitTimes: null,
+      timeZone: 'America/Chicago',
+      missedDoseAction: 'skip',
+      missedDoseCutoffHours: null,
+      missedDoseCourseEffect: null,
+      missedDoseNote: 'per the label',
+      startAt: Date.UTC(2026, 0, 1, 14) / 1000,
+      endAfterOccurrences: 10,
+      endAt: null,
+      notes: null,
+      status: 'active',
+      ...over,
+    });
+
+    function open(schedule: any, linked: any[] = []) {
+      params = { id: 's1' };
+      apiMock.patch = jest.fn().mockReturnValue(of(schedule));
+      apiMock.get.mockImplementation((path: string) => {
+        if (path === '/schedules/s1/doses') return of({ schedule, linked, candidates: [] });
+        if (path === '/medications/med-1') return of({ id: 'med-1', name: 'Amoxicillin', brandNames: [] });
+        if (path === '/medications/med-1/embodiments') return of([]);
+        if (path.endsWith('/episodes')) return of([]);
+        return of([{ id: 'p1', fullName: 'Patient 1' }]);
+      });
+      const fixture = TestBed.createComponent(NewSchedulePage);
+      fixture.detectChanges();
+      return { fixture, comp: fixture.componentInstance };
+    }
+
+    it('opens prefilled and saves with PATCH, clearing what was emptied, then returns to the schedule', () => {
+      const { fixture, comp } = open(stored());
+      expect(fixture.nativeElement.querySelector('h1').textContent).toContain('Edit schedule');
+      expect(comp.form.getRawValue()).toMatchObject({ patientId: 'p1', doseMg: 400, frequencyHours: 8, endAfterOccurrences: 10, missedDoseAction: 'skip', missedDoseNote: 'per the label' });
+      expect(comp.selectedMedication()?.name).toBe('Amoxicillin');
+      expect(comp.form.controls.patientId.disabled).toBe(true);
+
+      comp.form.patchValue({ endAfterOccurrences: null, frequencyHours: 6 });
+      comp.submit();
+      const [path, body] = apiMock.patch.mock.calls[0];
+      expect(path).toBe('/schedules/s1');
+      expect(body).toMatchObject({ frequencyHours: 6, explicitTimes: null, endAfterOccurrences: null, missedDoseAction: 'skip', medicationId: 'med-1', bodyLocation: null });
+      expect(body.timeZone).toBeUndefined();
+      expect(apiMock.post).not.toHaveBeenCalled();
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1']);
+    });
+
+    it("never overwrites a name the caregiver typed", () => {
+      const { comp } = open(stored());
+      comp.form.patchValue({ doseMg: 500 });
+      expect(comp.form.getRawValue().label).toBe('Amoxicillin for the ear');
+    });
+
+    it('keeps a generated name following the form', () => {
+      const { comp } = open(stored({ label: '400 mg Amoxicillin q8h' }));
+      comp.form.patchValue({ doseMg: 500 });
+      expect(comp.form.getRawValue().label).toBe('500 mg Amoxicillin q8h');
+    });
+
+    it('prefills fixed times as times of day', () => {
+      const { comp } = open(stored({ frequencyHours: null, explicitTimes: ['20:00', '08:00'] }));
+      expect(comp.isDaily()).toBe(true);
+      expect(comp.form.getRawValue().dailyTimes).toEqual(['08:00', '20:00']);
+    });
+
+    it('locks type and medicine once doses are logged, and warns when a timing change recounts them', () => {
+      const { fixture, comp } = open(stored(), [{ interventionId: 'd1' }]);
+      expect(comp.locked()).toBe(true);
+      expect(comp.form.controls.type.disabled).toBe(true);
+      expect(comp.rewritesPast()).toBe(false);
+      comp.form.patchValue({ frequencyHours: 6 });
+      fixture.detectChanges();
+      expect(comp.rewritesPast()).toBe(true);
+      expect(fixture.nativeElement.textContent).toContain('recounts the whole course');
+    });
+
+    it('cancel returns to the schedule', () => {
+      const { comp } = open(stored());
+      comp.cancel();
+      expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1']);
+    });
   });
 });

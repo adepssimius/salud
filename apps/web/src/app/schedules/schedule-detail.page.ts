@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
-import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest } from '@salud/shared/types';
+import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest, ScheduleDeleteResponse } from '@salud/shared/types';
 import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseAdvice } from './missed-dose-text';
 
 @Component({
@@ -129,6 +129,7 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
         <button type="button" class="secondary" (click)="complete()" *ngIf="s.status !== 'completed'">
           Mark complete
         </button>
+        <button type="button" class="secondary" (click)="edit()">Edit</button>
       </div>
 
       <!-- Doses on this schedule, and the ad hoc ones that could be (frontend.md → Schedule detail
@@ -163,6 +164,14 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
 
       <p class="muted" *ngIf="s.notes">{{ s.notes }}</p>
       <p class="error" *ngIf="error()">{{ error() }}</p>
+
+      <!-- Last and apart: a schedule is a plan, deleting it never deletes a dose (frontend.md →
+           Schedule detail → "Deleting"). -->
+      <div class="delete-row">
+        <button type="button" class="secondary delete" (click)="deleteSchedule()" [disabled]="deleting()">
+          {{ deleting() ? 'Deleting…' : 'Delete schedule' }}
+        </button>
+      </div>
     </div>
   `,
   styles: [
@@ -300,6 +309,14 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
       }
       .unlink {
         margin-left: auto;
+      }
+      .delete-row {
+        border-top: 1px solid var(--border);
+        padding-top: 0.75rem;
+      }
+      .delete {
+        color: var(--danger-text);
+        border-color: var(--danger-border);
       }
       .actions {
         justify-content: flex-start;
@@ -539,5 +556,50 @@ export class ScheduleDetailPage implements OnInit {
 
   backToDashboard() {
     this.router.navigate(['/dashboard']);
+  }
+
+  edit() {
+    this.router.navigate(['/schedules', this.scheduleId, 'edit']);
+  }
+
+  // ── Deleting (frontend.md → Schedule detail → "Deleting") ────────────────────────────────
+
+  deleting = signal(false);
+
+  /** What the confirmation says will happen: the doses stay, unlinked; the skips go. */
+  deleteMessage(s: InterventionSchedule): string {
+    const doses = this.linked().length;
+    const skips = this.skips().length;
+    const lines = [`Delete "${s.label}"?`, ''];
+    if (doses) {
+      lines.push(
+        `${doses} logged ${doses === 1 ? 'dose stays' : 'doses stay'} in the journal and the care record, no longer linked to a schedule.`,
+      );
+    } else {
+      lines.push('No doses are logged on this schedule.');
+    }
+    if (skips) lines.push(`${skips} skipped ${skips === 1 ? 'dose is' : 'doses are'} removed with it.`);
+    lines.push('', 'This cannot be undone. If the course really happened, Mark complete keeps it instead.');
+    return lines.join('\n');
+  }
+
+  deleteSchedule() {
+    const s = this.schedule();
+    if (!s || this.deleting() || !window.confirm(this.deleteMessage(s))) return;
+    this.deleting.set(true);
+    this.error.set(null);
+    this.api.delete<ScheduleDeleteResponse>(`/schedules/${this.scheduleId}`).subscribe({
+      next: () => {
+        this.deleting.set(false);
+        // Back to where the schedule lived: its episode or condition, else Home.
+        if (s.episodeId) this.router.navigate(['/episodes', s.episodeId]);
+        else if (s.conditionId) this.router.navigate(['/conditions', s.conditionId]);
+        else this.router.navigate(['/dashboard']);
+      },
+      error: (err) => {
+        this.deleting.set(false);
+        this.error.set(errorText(err, 'Could not delete schedule.'));
+      },
+    });
   }
 }

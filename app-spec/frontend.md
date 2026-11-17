@@ -628,6 +628,32 @@ derives from existing payloads:
 - **Offered right after creating a schedule.** When the new-schedule form saves a schedule that
   already has candidates, it opens this page with the checklist open (`?link=1`) instead of backing
   out to where it came from; with none it backs out as before.
+- **Editing.** **Edit** (beside Mark complete) opens the new-schedule form itself at
+  `/schedules/:id/edit` — one component, not a fork, as the condition editors share theirs —
+  prefilled from `GET /api/schedules/:id/doses`, titled "Edit schedule", saving with
+  `PATCH /api/schedules/:id` ("Save changes") and returning to this page; Cancel returns here too.
+  Everything set at creation is editable, the missed-dose instruction included, except:
+  - the patient, shown but fixed;
+  - **type and medicine, once a dose is linked** — shown read-only with the sentence "Doses are
+    already logged on this schedule, so its type and medicine stay as they are. To change them,
+    mark it complete and start a new schedule." (api.md → "Editing a schedule");
+  - the zone, which is not resent: a schedule keeps its own (the "Use my time zone" offer above is
+    how it changes).
+  - **The name.** A stored name that is exactly what the form would generate from the stored plan
+    keeps following the form, as at creation; any other name is the caregiver's own and is never
+    overwritten. Emptying the box hands it back to the generator, as at creation.
+  - **A timing change recounts the whole course.** When start, how often or the end differs from
+    what was loaded and doses are linked, the form says so above Save: "This recounts the whole
+    course as if the new plan had always applied — N logged doses stay linked. If the prescription
+    changed, mark this schedule complete and start a new one instead."
+  - After saving, this page reloads, so adherence, missed and next due show the recomputed values.
+- **Deleting.** **Delete schedule** sits last on the page, apart from the other actions. Its
+  confirmation states what will happen, with the counts from this page: "Delete "⟨name⟩"? N logged
+  doses stay in the journal and the care record, no longer linked to a schedule. M skipped doses
+  are removed with it. This cannot be undone. If the course really happened, Mark complete keeps
+  it instead." (or "No doses are logged on this schedule."). Then `DELETE /api/schedules/:id`
+  (api.md → "Deleting a schedule") and back to where the schedule lived — its episode, its
+  condition, or Home.
 
 ## Conditions
 - `new-condition.page.ts`: patient (pre-selected from the entry point), name, diagnosis text,

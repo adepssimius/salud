@@ -1,0 +1,27 @@
+meta {
+  name: Delete Schedule
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.deleted: eq true
+}
+
+docs {
+  Hard-deletes the plan and its skips. Every linked dose stays in the record: its schedule link is
+  cleared (with a Revision of its prior state) and its doseSource is untouched. Returns
+  { deleted, unlinkedDoseCount, removedSkipCount }. Run last — it removes {{scheduleId}}.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

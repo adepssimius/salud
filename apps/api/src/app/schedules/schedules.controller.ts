@@ -61,6 +61,12 @@ export class SchedulesController {
     return await this.schedules.update(id, req.user.userId, dto);
   }
 
+  // A hard delete of the plan; its doses stay, unlinked (api.md → "Deleting a schedule").
+  @Delete('schedules/:id')
+  async remove(@Request() req: any, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return await this.schedules.remove(id, req.user.userId);
+  }
+
   @Post('schedules/:id/log')
   async log(
     @Request() req: any,
