@@ -13,7 +13,11 @@ import {
 import {
   AdvisoryCandidate,
   AgeBandGuidance,
+  AtypicalDoseReason,
+  FULL_DOSE_MARGIN,
   WeightBasedGuidance,
+  deriveAmountMg,
+  toDrawableMl,
 } from '@salud/shared/types';
 import { normalizeTs } from '../persistence/time';
 
@@ -21,6 +25,10 @@ export interface DoseEvaluationInput {
   medicationId: string;
   embodimentId?: string | null;
   amountMg?: number | null;
+  // Used only when amountMg is absent: the mg is derived from these and the embodiment, exactly as
+  // the save path stores it (api.md → Interventions), so a preview and a save judge the same mg.
+  amountMl?: number | null;
+  pillCount?: number | null;
   occurredAt: Date;
   // Set when re-evaluating an existing dose (InterventionsService.update, or the correction form's
   // dose-checks preview) so that dose's own row doesn't count itself as a prior dose in the
@@ -36,32 +44,28 @@ export interface DoseEvaluation {
   };
   ageMonthsUsed: number;
   weightKgUsed: number | null;
+  // The amount every check below judged: the one given, else derived from amountMl/pillCount.
+  amountMg: number | null;
+  amountMgDerived: boolean;
   dailyTotalMgBefore: number;
   dailyTotalMg: number | null; // prospective total including the candidate amount; null if no amount given
   nextAllowedAt: number | null; // this candidate dose's own forward next-allowed time
   intervalTooShort: boolean;
   exceedsMaxPerDose: boolean;
   exceedsMaxPerDay: boolean;
-  // stale_weight / expired_embodiment only — atypical_dose is composed by the caller,
-  // which alone knows whether doseSource is 'override' (see advisories.md).
+  belowFullDose: boolean;
+  // The smallest dose of the guidelines that judged the amount too low; null unless belowFullDose.
+  fullDoseMg: number | null;
+  // The atypical_dose verdict, in a fixed order. Judges amount and time only — never doseSource —
+  // so the dose-checks preview and every save path read the same list (data-model.md → "Data
+  // integrity rules").
+  reasons: AtypicalDoseReason[];
+  // stale_weight / expired_embodiment / reactions only — the atypical_dose advisory is written by
+  // the caller from `reasons`, since only it knows the dose's context id.
   advisories: AdvisoryCandidate[];
 }
 
 const STALE_WEIGHT_DAYS = 60;
-
-/**
- * Round a volume to something a caregiver can actually draw: the graduations printed on a
- * paediatric oral syringe are 0.1 mL at and above 1 mL, and 0.05 mL below it. Reporting
- * "5.4375 mL" names a volume nobody can measure, and rounding in the display layer would put the
- * arithmetic back on the client — which api.md forbids for exactly the same reason it forbids the
- * client computing mg.
- *
- * toFixed(2) before Number() so binary-float dust (0.30000000000000004) never reaches the wire.
- */
-function toDrawableMl(ml: number): number {
-  const step = ml >= 1 ? 0.1 : 0.05;
-  return Number((Math.round(ml / step) * step).toFixed(2));
-}
 
 @Injectable()
 export class DosingService {
@@ -77,6 +81,25 @@ export class DosingService {
     if (!rows.length) {
       throw new NotFoundException('PATIENT_NOT_FOUND');
     }
+  }
+
+  /** 90% of a full dose, to the cent, so exactly 90% passes despite float dust (900.0000001). */
+  private fullDoseFloor(doseMg: number): number {
+    return Number((doseMg * FULL_DOSE_MARGIN).toFixed(2));
+  }
+
+  /**
+   * The atypical_dose advisory for an evaluation, or null when the dose is not atypical. One
+   * builder for the preview and both save paths, so the payload cannot drift between them.
+   */
+  static atypicalPayload(evaluation: DoseEvaluation): Record<string, any> | null {
+    if (!evaluation.reasons.length) return null;
+    return {
+      reasons: evaluation.reasons,
+      amountMg: evaluation.amountMg,
+      dailyTotalMg: evaluation.dailyTotalMg,
+      ...(evaluation.belowFullDose ? { fullDoseMg: evaluation.fullDoseMg } : {}),
+    };
   }
 
   private ageInMonths(dateOfBirth: string, at: Date): number {
@@ -230,16 +253,45 @@ export class DosingService {
     else if (ageBandGuideline?.frequencyPerDay) intervalHours = 24 / ageBandGuideline.frequencyPerDay;
     const nextAllowedAt = intervalHours != null ? occurredAtTs + Math.round(intervalHours * 3600) : null;
 
+    const derivedMg =
+      input.amountMg == null
+        ? deriveAmountMg(embodiment, { amountMl: input.amountMl, pillCount: input.pillCount })
+        : null;
+    const amountMg: number | null = input.amountMg ?? derivedMg;
+
     let dailyTotalMg: number | null = null;
     let exceedsMaxPerDose = false;
     let exceedsMaxPerDay = false;
-    if (input.amountMg != null) {
-      dailyTotalMg = dailyTotalMgBefore + input.amountMg;
+    let belowFullDose = false;
+    let fullDoseMg: number | null = null;
+    if (amountMg != null) {
+      dailyTotalMg = dailyTotalMgBefore + amountMg;
       const maxPerDose = weightBasedGuideline?.maxMgPerDose ?? null;
-      if (maxPerDose != null && input.amountMg > maxPerDose) exceedsMaxPerDose = true;
+      if (maxPerDose != null && amountMg > maxPerDose) exceedsMaxPerDose = true;
       const maxPerDay = weightBasedGuideline?.maxMgPerDay ?? ageBandGuideline?.maxMgPerDay ?? null;
       if (maxPerDay != null && dailyTotalMg > maxPerDay) exceedsMaxPerDay = true;
+
+      // below_full_dose: flagged only when every applicable guideline rejects the amount. A
+      // guideline accepts a lower amount when it is underDose 'allowed', when it has no dose to
+      // compare (weight-based with no weight on file; age-band with no doseMg), or when the amount
+      // is within the margin. A dose that follows either of two guidelines is never flagged.
+      const judges: Array<{ underDose: string | null; doseMg: number | null }> = [];
+      if (weightBasedGuideline) judges.push({ underDose: weightBasedGuideline.underDose, doseMg: weightBased?.computedMg ?? null });
+      if (ageBandGuideline) judges.push({ underDose: ageBandGuideline.underDose, doseMg: ageBandGuideline.doseMg ?? null });
+      const rejecting = judges.filter(
+        (j) => j.underDose === 'flagged' && j.doseMg != null && j.doseMg > 0 && amountMg < this.fullDoseFloor(j.doseMg),
+      );
+      if (judges.length && rejecting.length === judges.length) {
+        belowFullDose = true;
+        fullDoseMg = Math.min(...rejecting.map((j) => j.doseMg as number));
+      }
     }
+
+    const reasons: AtypicalDoseReason[] = [];
+    if (exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
+    if (exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
+    if (intervalTooShort) reasons.push('interval_too_short');
+    if (belowFullDose) reasons.push('below_full_dose');
 
     const advisories: AdvisoryCandidate[] = [];
     if (weightRecordedAt === null) {
@@ -306,12 +358,17 @@ export class DosingService {
       guidance: { weightBased, ageBand },
       ageMonthsUsed: ageMonths,
       weightKgUsed,
+      amountMg,
+      amountMgDerived: derivedMg != null,
       dailyTotalMgBefore,
       dailyTotalMg,
       nextAllowedAt,
       intervalTooShort,
       exceedsMaxPerDose,
       exceedsMaxPerDay,
+      belowFullDose,
+      fullDoseMg,
+      reasons,
       advisories,
     };
   }

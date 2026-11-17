@@ -1,0 +1,1 @@
+ALTER TABLE `medication_guidelines` ADD `under_dose` text DEFAULT 'allowed' NOT NULL;

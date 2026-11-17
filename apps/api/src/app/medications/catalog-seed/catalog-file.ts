@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync, ValidationError } from 'class-validator';
-import type { GuidelineType, MedicationUnitType } from '@salud/shared/types';
+import type { GuidelineType, GuidelineUnderDose, MedicationUnitType } from '@salud/shared/types';
 import { CreateMedicationDto } from '../dto/create-medication.dto';
 import { CreateEmbodimentDto } from '../dto/create-embodiment.dto';
 import { CreateGuidelineDto } from '../dto/create-guideline.dto';
@@ -32,6 +32,7 @@ export interface CatalogFileGuideline {
   doseMl?: number;
   pillCount?: number;
   frequencyPerDay?: number;
+  underDose?: GuidelineUnderDose; // absent = 'allowed'
   notes?: string;
 }
 
@@ -101,6 +102,7 @@ const GUIDELINE_KEYS = [
   'doseMl',
   'pillCount',
   'frequencyPerDay',
+  'underDose',
   'notes',
 ];
 

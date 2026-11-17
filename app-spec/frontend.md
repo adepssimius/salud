@@ -207,9 +207,9 @@ follows the household's state instead of rendering one fixed stack of sections:
   - **The dose source is part of "same as last time", not a field the repeat resets.**
     `doseSource` records *how the caregiver arrived at the amount* (api.md → Interventions), and
     repeating a weight-based dose is still arriving at it from the weight-based guideline. Leaving
-    the form on its `override` default would record every repeat as an ad-hoc deviation and flag
-    it atypical — a false signal in the atypical-dose count and in the ER Brief, produced by the
-    shortcut rather than by anything the caregiver did. The one source that does not carry over is
+    the form on its `override` default would record every repeat as a hand-typed amount — a false
+    provenance in the dose detail and the ER Brief, produced by the shortcut rather than by anything
+    the caregiver did. The one source that does not carry over is
     `schedule`: a dose repeated from the card is not executing the standing schedule (it has no
     `interventionScheduleId`), so it prefills as `override`, which is what it is. This applies to
     Quick Log's recents cards on the same grounds — same prefill contract, same reasoning.
@@ -432,6 +432,28 @@ derives from existing payloads:
   syringe to divide by the concentration themselves. Where the engine reports the volume as derived
   rather than as the guideline's own (`ageBand.doseMlSource === 'derived'`), say so in muted text, so
   a derived number is never read as coming from the `source` line printed beneath it.
+- **The amount boxes fill each other.** mg, mL and pill count are one amount written three ways,
+  and the selected embodiment says how they relate:
+  - With a `concentrationMgPerMl`, typing mL fills mg (`mL × concentration`, to 0.01 mg) and typing
+    mg fills mL (`mg ÷ concentration`, with the engine's syringe rounding: 0.1 mL at or above 1 mL,
+    0.05 mL below — api.md → "mL derivation").
+  - With a `strengthMgPerUnit`, the pill count and mg fill each other the same way (`pills ×
+    strength`, to 0.01 mg). From mg, the pill count is filled only when it lands within 0.02 of a
+    whole number plus one of the offered fractions; otherwise it is cleared rather than rounded to a
+    pill count that would misstate the dose.
+  - With neither (a cream, unit type "other"), nothing is calculated: the boxes stay independent
+    and optional.
+  - The box the caregiver typed in last is the one the others follow. Changing the embodiment
+    recalculates from it, and clears a filled box the new embodiment cannot fill.
+  - The arithmetic is the shared `dose-amounts` helpers in `@salud/shared/types`, the same code the
+    API uses to derive `amountMg` (api.md → Interventions), so the form and the saved dose cannot
+    disagree. This is converting the caregiver's own amount, not guideline math, which stays
+    server-side. When mg was filled from mL or pills, the form leaves `amountMg` out of the request
+    and lets the server derive it, so the record says (`amountMgDerived`) that the caregiver gave a
+    volume or a pill count. "Use this" on a guidance card counts as typing mg.
+- **Partial pills.** The pill count is a whole-number box plus a fraction select: none, ¼, ⅓, ½,
+  ⅔, ¾. It is sent as one decimal (⅓ as 0.3333…), and read back everywhere through one formatter
+  that prints `1 ½` / `⅓`, falling back to the decimal for anything that is not one of these.
 - **Stale-weight prompt (F-3.2)**: when the `stale_weight` advisory candidate comes back from
   `dose-checks`, show an inline prompt offering to log a fresh weight before leaning on
   weight-based guidance, rather than silently trusting a >60-day-old number.
@@ -705,7 +727,8 @@ recorded can be read back.
 - **A medication dose shows its whole provenance**, which is the reason the page exists — the
   caregiver asking "why was it that much?" three days later:
   - the medication (linked to its catalog page) and the embodiment's label;
-  - `amountMg`, `amountMl` and `pillCount` as recorded;
+  - `amountMg`, `amountMl` and `pillCount` as recorded — a derived `amountMg` reads "320 mg (from
+    10 mL)", and the pill count through the partial-pill formatter ("Dose entry");
   - `doseSource` in words — weight-based, age-based, override ("no guideline followed") or schedule
     — beside `weightKgUsed` (in the reader's weight unit) and `ageMonthsUsed`, the inputs the
     number was computed from;
@@ -992,6 +1015,10 @@ days cannot tell the two series apart, let alone read either one forwards. This 
   - **`guideline-editor.component.ts`**, one per guideline row — every field the guideline's type
     carries except `type` itself, which is shown read-only (a weight-based guideline is not edited
     into an age band; delete it and add the other kind). `source` stays required, as on create.
+    It also carries **Smaller doses** (`underDose`), a select on both types: "Fine — it’s a
+    maximum" (`allowed`, the default) or "Flag — give the full dose" (`flagged`), short enough
+    not to clip in a phone-width select; a hint under it says what `flagged` does. The read view
+    mentions it only when it is `flagged` ("full dose"), the unusual case.
 - **Edit is a visible button on each section and row, never behind a menu or a long-press.** This
   is mostly done on a phone, by someone fixing a misspelling they just noticed; an affordance they
   have to discover is one they will not find. Forms are a single column with full-width inputs at

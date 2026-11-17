@@ -231,8 +231,9 @@ describe('While You Were Asleep (e2e)', () => {
       .set('Authorization', `Bearer ${author.token}`)
       .send({ performedAt: new Date().toISOString(), type: 'dressing_change', bodyLocation: 'Left knee', side: 'left' })
       .expect(201);
-    // An override dose is flagged atypical, which writes an advisory pointing back at the dose
-    // (contextType/contextId) — the author tripped it, so it is not news to the author either.
+    // A dose over its guideline's per-dose maximum is flagged atypical, which writes an advisory
+    // pointing back at the dose (contextType/contextId) — the author tripped it, so it is not news
+    // to the author either.
     const med = await request(app.getHttpServer())
       .post('/api/medications')
       .set('Authorization', `Bearer ${author.token}`)
@@ -242,6 +243,11 @@ describe('While You Were Asleep (e2e)', () => {
       .post(`/api/medications/${med.body.id}/embodiments`)
       .set('Authorization', `Bearer ${author.token}`)
       .send({ label: 'own-entries suspension', unitType: 'ml' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/medications/${med.body.id}/guidelines`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ source: 'test', type: 'weight_based', mgPerKg: 1, maxMgPerDose: 100, maxMgPerDay: 1000, minIntervalHours: 4 })
       .expect(201);
     const dose = await request(app.getHttpServer())
       .post(`/api/patients/${pid}/interventions`)

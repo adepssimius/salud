@@ -452,12 +452,19 @@ episodes.
 - Medication dose:
   - `medicationId: uuid`
   - `medicationEmbodimentId: uuid`
-  - `amountMg: decimal`
+  - `amountMg: decimal` — when the request carries no `amountMg`, the server derives it from the
+    selected embodiment: `amountMl × concentrationMgPerMl`, else `pillCount × strengthMgPerUnit`,
+    rounded to 0.01 mg (api.md → Interventions). Without the figure it needs, it stays empty.
+  - `amountMgDerived: boolean` — `true` when `amountMg` was derived as above rather than entered.
+    Reserved (server-written). A later correction that changes only the volume or pill count
+    re-derives a derived `amountMg`; an entered one is never touched.
   - `amountMl: decimal | null`
-  - `pillCount: decimal | null`
+  - `pillCount: decimal | null` — partial pills allowed (¼, ⅓, ½, ⅔, ¾ in the form; any positive
+    decimal on the wire, so ⅓ is stored as 0.3333…).
   - `doseSource: enum('weight_based','age_based','override','schedule')` — how the caregiver arrived
     at the amount, not a judgment about it. `weight_based`/`age_based`: they took the engine's
-    number. `override`: they typed their own, following neither guideline. `schedule`: the dose came
+    number. `override`: they typed their own amount — provenance only, never itself a reason to flag
+    the dose (see "Data integrity rules"). `schedule`: the dose came
     from `POST /api/schedules/:scheduleId/log`, i.e. a plan set up earlier rather than a decision
     made in the moment — a client never sends this value.
   - `weightKgUsed: decimal | null`
@@ -537,6 +544,14 @@ episodes.
   - `maxMgPerDay: decimal`
   - `frequencyPerDay: integer`
 - Shared fields:
+  - `underDose: enum('allowed','flagged')`, default `'allowed'` — what a dose *below* this
+    guideline's dose means. `'allowed'`: the guideline's figures are a ceiling, and taking less is
+    normal (adult acetaminophen: "up to 1000 mg"); only the maximums and the interval are checked.
+    `'flagged'`: the full dose should be given (some antibiotics), so a dose more than 10% below it
+    is flagged `below_full_dose` (see "Data integrity rules"). A setting rather than a minimum-mg
+    number because a weight-based dose scales with the patient. "The guideline's dose" is the
+    engine's `computedMg` for `weight_based` (`min(mgPerKg × weight, maxMgPerDose)`, so none
+    without a weight on file) and `doseMg` for `age_band` (none when null).
   - `notes: text`
 
 ### InterventionSchedule
@@ -749,23 +764,26 @@ the snapshot's contents do.
 - Episode start/end linkages come from `episodes_events_pivot`; a single event can start one episode and optionally resolve others.
 - Medication dose `weightKgUsed` required when `doseSource = 'weight_based'`.
 - `isAtypical` set true when any of the following hold (all evaluated independently; every one that
-  triggers contributes its reason to the comma-joined `atypicalReason`):
-  - `doseSource = 'override'` **and no `scheduleId`** — reason `override`. Note the exemption keys on
-    `scheduleId`, not on `doseSource`: a scheduled dose is written with `doseSource = 'schedule'` and
-    so never reaches this branch anyway, and rows written before that value existed carry
-    `'override'` with a `scheduleId` and are still correctly exempt. A caregiver-chosen
-    amount that doesn't follow either computed guideline is inherently the "legitimate off-guideline
-    decision" the app preserves as a first-class annotated event (F-2.4) — not itself a magnitude
-    problem, but worth a permanent trace that no guideline was followed. This is exempted when the
-    dose is logged from an `InterventionSchedule` (`scheduleId` set): a scheduled dose is executing
-    a plan a caregiver already deliberately set up, not an ad-hoc deviation in the moment — flagging
-    every scheduled dose as atypical would just be noise. The magnitude/interval checks below still
-    apply regardless of `scheduleId`.
+  triggers contributes its reason to the comma-joined `atypicalReason`). Every rule judges the
+  **amount and the time**, never how the amount was arrived at: `doseSource` and `scheduleId` play no
+  part, so a hand-typed dose, a guideline's dose and a scheduled dose are checked alike, and the
+  `dose-checks` preview (which has no `doseSource`) always agrees with the save. With no applicable
+  guideline there is nothing to compare an amount against, so only `interval_too_short` can fire.
+  The checks use the effective `amountMg` — entered or derived — and the amount rules are skipped
+  when there is none.
   - `amountMg` exceeds the applicable guideline's `maxMgPerDose` — reason `exceeds_max_per_dose`.
   - The prospective daily total (prior same-medication doses in the trailing 24h, plus this one)
     exceeds the applicable guideline's `maxMgPerDay` — reason `exceeds_max_per_day`.
   - `performedAt` earlier than the immediately preceding same-medication dose's own `nextAllowedAt`
     — reason `interval_too_short`.
+  - `amountMg` is below 90% of the guideline's dose (`MedicationGuideline.underDose`) for **every**
+    applicable guideline that can judge it — reason `below_full_dose`. A guideline "can judge" an
+    amount when it is `underDose: 'flagged'` and has a dose to compare (see `MedicationGuideline`);
+    one that is `'allowed'`, or has no dose to compare, accepts any lower amount, so a dose that
+    follows either of two applicable guidelines is never flagged. Exactly 90% passes. The 10% margin
+    absorbs syringe graduations and tablet strengths that don't divide the computed dose.
+  - Legacy: rows written before 2026-11 may carry the reason `override` (a hand-typed amount, once
+    flagged for that alone). It is no longer produced; readers keep its label for old rows.
   - None of these ever blocks the save (N-3, P1) — see `advisories.md` → "No hard stops".
 - `resolvesEpisodeIds` on observations/interventions must be a subset of episodes they are linked to via pivot.
 - Every episode id an observation or intervention references — in `episodeIds` or

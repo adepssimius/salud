@@ -32,6 +32,7 @@ const FIELD_WORDS: Record<string, string> = {
   doseMl: 'Dose (mL)',
   pillCount: 'Pills per dose',
   frequencyPerDay: 'Doses per day',
+  underDose: 'Smaller doses',
 };
 
 function plural(n: number, one: string, many: string) {
@@ -117,8 +118,8 @@ function plural(n: number, one: string, many: string) {
               </div>
               <details *ngFor="let d of item.differences" class="diff small">
                 <summary>{{ fieldWords(d) }} differs</summary>
-                <div><span class="muted">Your list:</span> {{ showValue(d.database) }}</div>
-                <div><span class="muted">Repo:</span> {{ showValue(d.file) }}</div>
+                <div><span class="muted">Your list:</span> {{ showValue(d.database, d.field) }}</div>
+                <div><span class="muted">Repo:</span> {{ showValue(d.file, d.field) }}</div>
               </details>
             </li>
           </ul>
@@ -282,8 +283,10 @@ export class CatalogSeedPreviewComponent implements OnInit {
     return FIELD_WORDS[d.field] ?? d.field;
   }
 
-  showValue(v: CatalogSeedValue): string {
+  showValue(v: CatalogSeedValue, field?: string): string {
     if (v === null || (Array.isArray(v) && !v.length)) return '(none)';
+    if (field === 'underDose' && v === 'allowed') return 'Fine — it’s a maximum';
+    if (field === 'underDose' && v === 'flagged') return 'Flag — give the full dose';
     return Array.isArray(v) ? v.join(', ') : String(v);
   }
 }

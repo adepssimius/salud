@@ -157,6 +157,34 @@ describe('NewInterventionPage', () => {
     expect(component.error()).toBeDefined();
   });
 
+  it('fills mg from mL and leaves amountMg for the server to derive, in the preview and the save', fakeAsync(() => {
+    apiMock.get.mockImplementation((path: string) => {
+      if (path.includes('/embodiments')) {
+        return of([{ id: 'emb-1', label: 'Infant 160 mg/5 mL', concentrationMgPerMl: 32, strengthMgPerUnit: null, unitType: 'ml' }]);
+      }
+      return of([{ id: 'p1', fullName: 'Patient 1' }]);
+    });
+    apiMock.post.mockReturnValue(of({ guidance: { weightBased: null, ageBand: null }, advisories: [], dailyTotalMg: 0 }));
+    const fixture = TestBed.createComponent(NewInterventionPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    component.form.patchValue({ patientId: 'p1' });
+    component.selectMedication({ id: 'med-1', name: 'acetaminophen' } as any);
+    component.form.controls.medicationEmbodimentId.setValue('emb-1');
+    component.form.controls.amountMl.setValue(10);
+    expect(component.form.getRawValue().amountMg).toBe(320);
+
+    tick(400);
+    const preview = apiMock.post.mock.calls.filter(([path]: [string]) => path.endsWith('/dose-checks')).pop();
+    expect(preview[1]).toMatchObject({ amountMl: 10 });
+    expect(preview[1].amountMg).toBeUndefined();
+
+    component.submit();
+    const saved = apiMock.post.mock.calls.find(([path]: [string]) => path.endsWith('/interventions'));
+    expect(saved[1]).toMatchObject({ amountMl: 10, medicationEmbodimentId: 'emb-1' });
+    expect(saved[1].amountMg).toBeUndefined();
+  }));
+
   it('searches medications and selects one, loading its embodiments', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path === '/medications') {

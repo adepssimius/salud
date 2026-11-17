@@ -284,7 +284,8 @@ describe('Interventions (e2e)', () => {
       expect(attempt.body.keys.sort()).toEqual(['atypicalReason', 'isAtypical']);
 
       // The same dose without the smuggled keys saves, and keeps the verdict the engine computed:
-      // an override with no schedule is atypical by definition (data-model.md).
+      // nothing to compare against, so not atypical — a hand-typed amount is not itself a reason
+      // (data-model.md → Data integrity rules).
       const honest = await request(app.getHttpServer())
         .post(`/api/patients/${patientId}/interventions`)
         .set(auth)
@@ -296,8 +297,8 @@ describe('Interventions (e2e)', () => {
           amountMg: 200,
         })
         .expect(201);
-      expect(honest.body.metadata.isAtypical).toBe(true);
-      expect(honest.body.metadata.atypicalReason).toContain('override');
+      expect(honest.body.metadata.isAtypical).toBe(false);
+      expect(honest.body.metadata.atypicalReason).toBeNull();
     });
 
     it('refuses to let metadata smuggle an unvalidated amount past the DTO range check', async () => {
@@ -356,7 +357,9 @@ describe('Interventions (e2e)', () => {
         .send({ metadata: { loggedFrom: 'bruno' } })
         .expect(200);
       expect(allowed.body.metadata.loggedFrom).toBe('bruno');
-      expect(allowed.body.metadata.isAtypical).toBe(true); // untouched by the client
+      // Untouched by the client: still exactly the engine's verdict from create.
+      expect(allowed.body.metadata.isAtypical).toBe(created.body.metadata.isAtypical);
+      expect(allowed.body.metadata.atypicalReason).toBe(created.body.metadata.atypicalReason);
     });
   });
 
@@ -760,7 +763,8 @@ describe('Correcting an intervention (e2e)', () => {
 
   it('a notes-only edit writes no advisory and keeps every engine-resolved field (ISSUES #33)', async () => {
     const pid = await patientWithWeight();
-    const d = await dose(pid, { doseSource: 'override', amountMg: 120 });
+    // Over the per-dose maximum, so the dose carries an atypical verdict and an advisory to keep.
+    const d = await dose(pid, { doseSource: 'override', amountMg: 250 });
     expect(d.metadata.isAtypical).toBe(true);
     const before = await advisoriesFor(pid, d.id);
     expect(before.length).toBeGreaterThan(0);

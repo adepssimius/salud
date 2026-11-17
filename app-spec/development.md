@@ -56,7 +56,8 @@
     embodiment: `{ key, label, unitType, concentrationMg?, concentrationVolumeMl?,
     concentrationMgPerMl?, strengthMgPerUnit?, notes?, guidelines?: [ … ] }` (concentration as the
     pair **or** the per-mL figure, never both, same rule as the API); each guideline:
-    `{ key, source, type, …the type's numeric fields, notes? }`. A guideline under an embodiment
+    `{ key, source, type, …the type's numeric fields, underDose?, notes? }` (`underDose` defaults to
+    `"allowed"`, data-model.md → `MedicationGuideline`). A guideline under an embodiment
     applies to that embodiment; one under the medication applies across its embodiments.
   - `key`s are lower-kebab-case, unique among their siblings, and **never renamed or reused** —
     they are the `selectionId`s a preview hands out. Matching against a database is by name/label,

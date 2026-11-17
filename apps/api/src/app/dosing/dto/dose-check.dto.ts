@@ -1,4 +1,4 @@
-import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { DoseCheckDto as DoseCheckContract } from '@salud/shared/types';
 
 export class DoseCheckDto implements DoseCheckContract {
@@ -13,6 +13,17 @@ export class DoseCheckDto implements DoseCheckContract {
   @IsOptional()
   @IsNumber()
   amountMg?: number;
+
+  // Used only without amountMg: the mg is derived from these and the embodiment, as on save.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amountMl?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  pillCount?: number;
 
   // Not future-bounded: dose-checks is a preview that persists nothing, and its whole job is to
   // answer "what if I gave this at X" (api.md -> Conventions).

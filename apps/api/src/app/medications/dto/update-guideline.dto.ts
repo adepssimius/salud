@@ -1,4 +1,5 @@
-import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import type { GuidelineUnderDose } from '@salud/shared/types';
 
 // Bounds mirror CreateGuidelineDto. There is deliberately no age-range ordering constraint here:
 // both halves are independently optional, so `PATCH { ageMinMonths: 200 }` against a row whose max
@@ -73,6 +74,14 @@ export class UpdateGuidelineDto {
   @Min(1)
   @Max(24)
   frequencyPerDay?: number;
+
+  // Whether a dose below this guideline's dose is fine or atypical (data-model.md ->
+  // MedicationGuideline). Defaults to 'allowed' on create. The values are inlined, not imported:
+  // tools/seed-catalog.ts loads this DTO under plain ts-node, where @salud/shared/types only
+  // resolves for type-only imports.
+  @IsOptional()
+  @IsIn(['allowed', 'flagged'] satisfies GuidelineUnderDose[])
+  underDose?: GuidelineUnderDose;
 
   @IsOptional()
   @IsString()

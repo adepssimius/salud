@@ -50,6 +50,13 @@
       "when": 1788035826206,
       "tag": "0006_loving_wither",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794875306475,
+      "tag": "0007_bright_slipstream",
+      "breakpoints": true
     }
   ]
 }
