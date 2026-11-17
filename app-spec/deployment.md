@@ -225,6 +225,7 @@ the 1Password Connect operator, everything else is a literal.
 | `DB_CLIENT` | `postgres` |
 | `DATABASE_URL` | assembled in the container command from `salud-secrets`' `dbUsername`/`dbPassword`/`dbDatabase` against `postgresql.databases.svc.cluster.local:5432`, percent-encoding the password so it's never stored as a second, fully-formed connection string |
 | `JWT_SECRET` | from `salud-secrets`; ≥32 chars, required |
+| `CATALOG_SEED_URL` | unset — the repo's `catalog/medication-catalog.json` on GitHub `main`, read by "Check repo catalog" (api.md → "Repo catalog"). Needs outbound HTTPS; `file:` for a local copy, empty to disable |
 | `ACCESS_LOG` | unset (on). `false` disables the HTTP access log — see Logging |
 | `SLOW_REQUEST_MS` | unset (1000). Requests at or over this are logged at warn and tagged `SLOW` |
 | `OIDC_ENABLED` | `true`. With `NODE_ENV=production` this is the login-mode cutover, and it has been made — see "Access control" → "OIDC login" |
@@ -242,8 +243,13 @@ silently falling back to the pod's ephemeral filesystem.
 
 A freshly provisioned instance starts with an **empty medication catalog**, and every dose-guidance
 feature is inert until it has one — no medications means no embodiments, no guidelines, no
-weight-based or age-band math, and no atypical-dose detection. Populate it with `yarn seed:catalog`
-run against the instance (development.md), or enter medications by hand.
+weight-based or age-band math, and no atypical-dose detection. Populate it from the Medication
+catalog page's **"Check repo catalog"** (api.md → "Repo catalog"), which previews what the repo's
+`catalog/medication-catalog.json` would add and adds what the caregiver confirms — or enter
+medications by hand. The same button is how a medication later merged into that file reaches this
+instance. It fetches from `CATALOG_SEED_URL` (default: the file on GitHub's `main`), so the api
+pods need outbound HTTPS to `raw.githubusercontent.com`; an instance without it can point the
+variable at a `file:` path, or set it empty to hide the feature's data source entirely.
 
 The API deliberately does **not** seed at boot. `main.ts` applies pending migrations before it
 listens, but it must never write rows: the catalog is the household's own data, and a pod restart

@@ -1014,6 +1014,77 @@ flag.
   concern, specced in a later milestone alongside the rest of the Advisory model (§4.11 of the
   requirements doc) — this section only covers the CRUD shape of the flags themselves.
 
+### Repo catalog (catalog seed)
+New catalog medications ship as a repo change, not as rows typed into one instance: they are
+added to `catalog/medication-catalog.json` (format in development.md → "The repo catalog file") and
+merged to `main`. A caregiver then pulls them in from the Medication catalog page (frontend.md →
+"Medication catalog" → "Check repo catalog"). **Nothing is written at boot** — the catalog is the
+household's data, and it changes only when a caregiver previews and confirms.
+
+**Where the file comes from.** `CATALOG_SEED_URL`, read from the environment only — never from a
+request, so a caller cannot point the API at an arbitrary host. Default
+`https://raw.githubusercontent.com/adepssimius/salud/main/catalog/medication-catalog.json` (the
+repo is public; no token). A `file:` URL reads a local file instead (tests, and self-hosters with no
+outbound internet). Set to the empty string to turn the feature off. The fetch is capped at 10
+seconds and 256 KB, and the body is validated field by field before anything is reconciled: it is
+untrusted input even from our own repo. A file whose `version` is newer than the running code
+understands is refused as `CATALOG_SEED_INVALID` — `main` may be ahead of the deployed image.
+
+**Reconciling** compares the file against the database with the catalog's own identity rules:
+- a **medication** matches on `name`, trimmed and case-insensitive (the `MEDICATION_NAME_TAKEN`
+  comparison). A retired (`defaultActive: false`) medication is present; one a caregiver deleted is
+  simply missing, and shows up as available to add again.
+- an **embodiment** matches on `label`, trimmed and case-insensitive, within its matched medication;
+- a **guideline** matches on (`embodiment`, `type`, `source` trimmed and case-insensitive) within its
+  matched medication — a guideline has no name, and its source is what a reader sees.
+
+Every unmatched item is **missing** and offered for adding; there are three kinds, each with a
+`selectionId` built from the file's keys:
+- **new medication** (`<medKey>`) — added whole, with every embodiment and guideline in the file;
+- **new embodiment** on an existing medication (`<medKey>/<embKey>`) — added with its guidelines;
+- **new guideline** on an existing embodiment, or a medication-wide one (`<medKey>/<embKey>/<gKey>`,
+  `<medKey>//<gKey>` for medication-wide).
+
+Matched items are reported **present**, with the fields whose value differs from the file
+(`description`, `brandNames`, `tags`; `notes`, the concentration pair, `strengthMgPerUnit`,
+`unitType`; the guideline's numeric fields). The differences are information only: **reconciling
+never updates or deletes an existing row.** The household's edits are the household's; changing one
+back is a deliberate edit through the ordinary `PATCH` routes. Cabinet fields (`atHome`,
+`expiresAt`, `runningLow`) are not in the file and are never written — they describe one
+household's bottle, not the catalog.
+
+- `POST /api/medications/catalog-seed/preview`
+  - No body. Fetches the file and reconciles it.
+  - Response: `CatalogSeedPreview` — `{ sourceUrl, sourceHash, fetchedAt, newMedications[],
+    newEmbodiments[], newGuidelines[], present[] }`. `sourceHash` is the SHA-256 of the fetched bytes.
+    Each missing item carries its `selectionId` and enough to render it (names, labels, the
+    guideline's source and numbers); each present item carries the matched row's id and its
+    `differences: { field, database, file }[]`.
+  - A `POST`, not a `GET`, because it reaches out to another host on every call and must never be
+    prefetched or cached.
+- `POST /api/medications/catalog-seed/apply`
+  - Body: `{ sourceHash: string, select: string[] }` — `selectionId`s from the preview.
+  - Fetches the file **again** and refuses with 409 `CATALOG_SEED_CHANGED` if its hash differs from
+    `sourceHash`: a confirmation means "add what I was shown", not whatever `main` holds a minute
+    later. Reconciles again, then adds each selected item that is **still** missing; one that has
+    stopped being missing since the preview (another caregiver added it) is skipped, not duplicated.
+    Selecting an embodiment or guideline whose parent is not present and not also selected is
+    skipped the same way. Unknown `selectionId`s are skipped too.
+  - Each medication's rows are written in one transaction, so a failure never leaves a medication
+    with half its embodiments.
+  - Response: `{ added: string[], skipped: { selectionId, reason }[] }` (200), where `reason` is
+    `'already_present' | 'parent_missing' | 'unknown'`.
+  - Applies are serialised within one api process, so two confirmations landing on the same pod
+    reconcile one after the other and the second skips what the first added. Known gap, accepted:
+    across pods the name check is not atomic, so two caregivers confirming within milliseconds of
+    each other on different replicas could each add the medication — the same window
+    `POST /api/medications` has today.
+- Errors for both: 503 `CATALOG_SEED_NOT_CONFIGURED` (`CATALOG_SEED_URL` empty), 502
+  `CATALOG_SEED_UNAVAILABLE` (fetch failed, timed out, non-2xx, or over the size cap), 502
+  `CATALOG_SEED_INVALID` (not valid JSON, fails validation, duplicate keys, or an unsupported
+  `version`).
+- Same authorization as the rest of the catalog: any authenticated caregiver.
+
 ## ER Brief
 
 See `er-brief.md` for the full concept (header/body field mapping, P6 shape rule, snapshot token
@@ -1414,7 +1485,7 @@ Adding a filter later is a breaking change for clients parsing these shapes.
   Only non-zero counts appear. A client that ignores `dependents` still gets a working string code.
 
 ### Error codes
-53 codes are thrown today (54 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
+57 codes are thrown today (58 documented — `CARE_DOCUMENT_FILE_NOT_FOUND` is spec'd ahead of its
 implementation), all `SCREAMING_SNAKE_CASE`. A new code must follow that casing and be
 added to this table in the same change that introduces it — a code without an entry here is
 undocumented, and (per frontend.md → "Errors & failure messages") a code without a matching web-side
@@ -1471,6 +1542,10 @@ sentence silently falls back to that call site's generic message rather than rea
 | `EMBODIMENT_IN_USE` | 409 | `DELETE /api/embodiments/:id` with dependent rows; body carries `dependents` |
 | `GUIDELINE_IN_USE` | 409 | `DELETE /api/guidelines/:id` with dependent rows; body carries `dependents` |
 | `EMBODIMENT_CONCENTRATION_IN_USE` | 409 | `PATCH /api/embodiments/:id` that would change a dosing field (`concentrationMgPerMl`, the pair, `strengthMgPerUnit`, `unitType`) while a logged dose or schedule references the embodiment; body carries `dependents` (`schedules`, `interventions`) |
+| `CATALOG_SEED_NOT_CONFIGURED` | 503 | `POST /api/medications/catalog-seed/preview`\|`apply` with `CATALOG_SEED_URL` set empty |
+| `CATALOG_SEED_UNAVAILABLE` | 502 | catalog-seed preview/apply: the repo catalog file could not be fetched (network, timeout, non-2xx, over 256 KB) |
+| `CATALOG_SEED_INVALID` | 502 | catalog-seed preview/apply: the fetched file is not valid JSON, fails validation, or has a `version` newer than this build |
+| `CATALOG_SEED_CHANGED` | 409 | `POST /api/medications/catalog-seed/apply` whose `sourceHash` no longer matches the file — preview again |
 | `REACTION_NOT_FOUND` | 404 | reaction delete — unknown id, or one belonging to another patient |
 | `DOCUMENT_FILE_NOT_FOUND` | 400 (array form) | a `document` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — same semantics as `PHOTO_FILE_NOT_FOUND` |
 | `LAB_FILE_NOT_FOUND` | 400 | `POST .../lab-imports` with a `fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
