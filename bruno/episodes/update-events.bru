@@ -20,8 +20,11 @@ body:json {
 }
 
 docs {
-  Adding a member or removing a non-member is a no-op. Removing the entry that started the episode
-  is 400 CANNOT_UNLINK_STARTED_EPISODE; removing the entry that resolved it reopens the episode.
+  Adding a member or removing a non-member is a no-op. The start always follows the earliest
+  member: adding an earlier entry makes it the start, and removing the start promotes the
+  next-earliest. Removing every member is 400 EPISODE_LAST_ENTRY; leaving a resolved episode's
+  resolving entry earlier than all its other members is 400 EPISODE_TIME_ORDER_INVALID. Removing the
+  entry that resolved it reopens the episode.
 }
 
 settings {

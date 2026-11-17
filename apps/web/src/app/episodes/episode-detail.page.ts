@@ -93,7 +93,7 @@ import { EpisodeEntryPickerComponent, PickedEntry, entryKey } from './episode-en
               <button
                 type="button"
                 class="link remove"
-                *ngIf="!isStart(e)"
+                *ngIf="events().length > 1"
                 [disabled]="busy()"
                 (click)="remove(e)"
               >
@@ -267,12 +267,13 @@ export class EpisodeDetailPage implements OnInit {
   }
 
   /**
-   * The start has no Remove at all (CANNOT_UNLINK_STARTED_EPISODE). Removing the entry that ended
+   * Any entry can be removed, the start included: the next-earliest entry then starts the episode,
+   * and the page re-renders from the Episode the call returns (data-model.md → "An episode starts
+   * at its earliest entry"). A lone entry has no Remove (EPISODE_LAST_ENTRY). Removing the entry that ended
    * the episode reopens it, which is worth a confirm — it changes the episode's status, not just
    * its contents.
    */
   remove(e: TimelineEntry) {
-    if (this.isStart(e)) return;
     if (this.isEnd(e) && !window.confirm('This entry ended the episode. Removing it reopens the episode. Continue?')) {
       return;
     }

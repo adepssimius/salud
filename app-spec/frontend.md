@@ -277,7 +277,8 @@ narrative artifact is a feed, and the chart is its instrument panel:
   their author even after that caregiver leaves the care team.
 - **The chart is a collapsible header** above the feed — same hand-drawn SVG, same no-annotation
   rule (P6), same medication/tag filter chips, with filters applying to chart and feed together.
-  On desktop the chart and feed render side by side (P7).
+  On desktop the chart and feed render side by side (P7). The chart shows a fixed last-5-days
+  window while the feed stays unwindowed (→ Timeline below).
 - **Episode frames become feed dividers** as well as chart bands: "— Fever, day 3 —" section
   markers in the feed, clickable through to episode detail.
 - **The since-you-last-looked marker.** The What's-New watermark renders as a labeled divider
@@ -329,6 +330,8 @@ derives from existing payloads:
 - Use consistent labels: `Sign In` and `Sign Up`.
 - Dedicated pages for sign in, sign up, and logout (logout clears stored session and redirects to sign in).
 - JWT stored client-side (localStorage) and sent via auth interceptor as `Authorization: Bearer <token>`.
+- The bare domain `/` opens Home. A signed-in caregiver who opens `/login` or `/register` (a bookmark, a stale tab) goes to Home instead; a signed-out visitor to any guarded route, `/` included, goes to `/login`. Both are decided before the page renders, from the stored token alone, so neither sees the other's page flash.
+- A stored token whose `exp` has passed is cleared on the spot and treated as signed out. A token the server rejects for any other reason ends on the first 401 (interceptor → logout), landing on `/login` once.
 
 ## Profile experience
 > v2 moves the Patients tab to a top-level `/patients` list and the patient-detail content into
@@ -632,6 +635,27 @@ app. They therefore need somewhere to be entered.
   join the y-domain so a band is never clipped; no bands recorded means no shading). The glance
   view and the analysis view read against the same reference, in the same visual vocabulary as the
   analyte history chart — three charts, one way of showing "what should this be".
+- **A fixed recent window, not the whole history.** The chart always shows the **last 5 days
+  ending now** — a rolling 120 hours with "now" at the right edge, advancing while the page is
+  open. The x-axis spans the full window even when readings are sparse, so the same width always
+  means the same amount of time. The window applies to everything drawn — readings, dose ticks,
+  episode bands, and the "all doses" legend — and the y-domain is computed from the readings inside
+  the window plus every band bound (the rule above, unchanged); a reading older than the window
+  affects neither axis. The medication/tag chips filter as before, with the window applied after
+  them. The feed below stays unwindowed; older history is read there. **This view has no range
+  controls** — choosing a range belongs to a dedicated analysis view, which does not exist yet.
+- **A labeled time axis.** A faint vertical rule at each local midnight, labeled with a short
+  weekday and date ("Thu 12"), and "now" at the right edge. The labels render as HTML beneath the
+  SVG rather than SVG text, so they stay legible at phone width; a midnight label that would collide
+  with "now" is dropped, its rule kept.
+- **No line across a gap — except within an episode.** Two consecutive readings more than
+  **12 hours** apart are not joined: the curve breaks and each side keeps its points, because a line
+  across a long gap draws readings nobody took. Readings that both fall inside the same episode's
+  frame (the start/end span the chart bands and feed dividers use) are always joined, however far
+  apart — within one illness the curve is one story.
+- **Empty window.** With no temperature readings and no doses in the window, the plot is replaced
+  by one sentence: "No temperature readings or doses in the last 5 days — earlier entries are in
+  the journal below."
 - Filter chips for individual medications and for tags (F-5.1) — the motivating case is "when did
   she last get ibuprofen?" vs. "when did she last get *anything* for the fever?", two different
   questions with two different answers.
@@ -654,9 +678,12 @@ app. They therefore need somewhere to be entered.
   core/event-display.ts); and, when active, its medications' last-dose summary.
 - **Add entries** opens the same entry picker the new-episode form uses, over the patient's
   entries not yet in this episode (`POST /api/episodes/:id/events` with `add`). Each event row
-  carries **Remove** (`remove`), except the entry that started the episode, which is labelled
-  "started this episode" instead. Removing the entry that resolved the episode asks for
-  confirmation first, because it reopens the episode.
+  carries **Remove** (`remove`); the entry that started the episode — always its earliest entry —
+  also carries a "started this episode" pill, and both the pill and the "started …" time in the
+  header follow the start when an earlier entry is added or the start is removed (the page
+  re-renders from the `Episode` the call returns). When only one entry remains it has no Remove
+  (`EPISODE_LAST_ENTRY`). Removing the entry that resolved the episode asks for confirmation
+  first, because it reopens the episode.
 - **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation or
   intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve endpoint. The
   page's "Resolve this episode" action routes to `/observations/new` with this episode pre-selected
@@ -785,9 +812,10 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
     what a correction must not rewrite — the correction gets its own attribution in History;
   - **`unitPreferenceAtEntry`**: it records what the original recorder had on screen, which a later
     correction does not change (api.md → Observations);
-  - **starting a new episode**: the "start a new episode" option is absent; an episode this entry
-    started is shown checked and locked, with "This entry started this episode" — unlinking it is
-    refused by the API (`CANNOT_UNLINK_STARTED_EPISODE`).
+  - **starting a new episode**: the "start a new episode" option is absent. An episode this entry
+    started is no longer locked: unchecking it removes the entry from that episode and the next
+    earliest entry becomes its start, exactly as Remove on the episode page does (refused only for
+    an episode's last entry, `EPISODE_LAST_ENTRY`).
 - **Dose correction keeps the live preview.** On a dose, the form calls `POST .../dose-checks`
   debounced exactly as on create ("Dose entry"), with `occurredAt` set to the corrected time, and
   renders the same guidance cards and advisory banners. The danger interstitial applies as on
@@ -802,7 +830,7 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
   with a link back to the entry — the card is the moment of relevance and must not be navigated
   past. **Cancel** returns to the detail page and sends nothing.
 - **Errors** follow "Errors & failure messages": every code the `PATCH` can return —
-  `FIELD_NOT_CORRECTABLE`, `CANNOT_UNLINK_STARTED_EPISODE`, `EPISODE_TIME_ORDER_INVALID`,
+  `FIELD_NOT_CORRECTABLE`, `EPISODE_LAST_ENTRY`, `EPISODE_TIME_ORDER_INVALID`,
   `EPISODE_ALREADY_RESOLVED`, `DATE_IN_FUTURE`, and create's validation codes — has a sentence in
   `core/error-display.ts`; the call site's fallback is "Could not save the correction." The form
   stays filled after an error. A 404 on load (the entry is gone, or not on this caregiver's care
