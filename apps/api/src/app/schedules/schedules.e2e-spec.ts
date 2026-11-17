@@ -252,4 +252,164 @@ describe('Schedules (e2e)', () => {
       .set('Authorization', `Bearer ${other.token}`)
       .expect(404);
   });
+
+  // api.md → Intervention schedules → "Linking existing doses": doses logged ad hoc before the
+  // schedule existed are attached explicitly, never counted implicitly.
+  describe('linking existing doses', () => {
+    const http = () => request(app.getHttpServer());
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${token}`);
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    let pid: string;
+    let otherEmbodimentId: string;
+    let otherMedId: string;
+
+    const giveDose = async (performedAt: string, over: Record<string, any> = {}) =>
+      (
+        await auth(http().post(`/api/patients/${pid}/interventions`))
+          .send({ type: 'medication_dose', performedAt, medicationId, medicationEmbodimentId: embodimentId, amountMg: 200, doseSource: 'override', ...over })
+          .expect(201)
+      ).body.id as string;
+
+    const makeSchedule = async (over: Record<string, any> = {}) =>
+      (
+        await auth(http().post(`/api/patients/${pid}/schedules`))
+          .send({ type: 'medication_dose', label: 'q12h', medicationId, medicationEmbodimentId: embodimentId, frequencyHours: 12, startAt: hoursAgo(48), ...over })
+          .expect(201)
+      ).body;
+
+    beforeAll(async () => {
+      pid = await createPatient();
+      otherEmbodimentId = (
+        await auth(http().post(`/api/medications/${medicationId}/embodiments`)).send({ label: 'other bottle', concentrationMgPerMl: 20, unitType: 'ml' }).expect(201)
+      ).body.id;
+      otherMedId = (await auth(http().post('/api/medications')).send({ name: `other-${Date.now()}` }).expect(201)).body.id;
+    });
+
+    it('lists only matching unlinked doses in the window, links them with a revision each, and recomputes adherence and nextDueAt', async () => {
+      const before = await giveDose(hoursAgo(60)); // before startAt
+      const a = await giveDose(hoursAgo(47));
+      const b = await giveDose(hoursAgo(35));
+      const c = await giveDose(hoursAgo(23));
+      await giveDose(hoursAgo(22), { medicationEmbodimentId: otherEmbodimentId }); // other embodiment
+      await giveDose(hoursAgo(21), { medicationId: otherMedId, medicationEmbodimentId: undefined }); // other medicine
+      const sched = await makeSchedule();
+      expect(sched.adherence).toMatchObject({ loggedCount: 0, expectedCount: 5, missed: 5, overdue: true });
+
+      const listed = await auth(http().get(`/api/schedules/${sched.id}/doses`)).expect(200);
+      expect(listed.body.linked).toEqual([]);
+      expect(listed.body.candidates.map((d: any) => d.interventionId)).toEqual([c, b, a]);
+      expect(listed.body.candidates.map((d: any) => d.interventionId)).not.toContain(before);
+
+      const res = await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: [a, b, c] }).expect(201);
+      expect(res.body.candidates).toEqual([]);
+      expect(res.body.linked.map((d: any) => [d.interventionId, d.linkedLater, d.doseSource])).toEqual([
+        [c, true, 'override'],
+        [b, true, 'override'],
+        [a, true, 'override'],
+      ]);
+      expect(res.body.schedule.adherence).toMatchObject({ loggedCount: 3, missed: 2 });
+      // Next due follows the latest linked dose (23h ago) by one interval: 11h ago.
+      const latest = Math.floor(new Date(hoursAgo(23)).getTime() / 1000);
+      expect(Math.abs(res.body.schedule.nextDueAt - (latest + 12 * 3600))).toBeLessThanOrEqual(1);
+
+      const dose = await auth(http().get(`/api/interventions/${a}`)).expect(200);
+      expect(dose.body.scheduleId).toBe(sched.id);
+      expect(dose.body.metadata.doseSource).toBe('override');
+      const revs = await auth(http().get(`/api/interventions/${a}/revisions`)).expect(200);
+      expect(revs.body).toHaveLength(1);
+      expect(revs.body[0].snapshot.scheduleId).toBeNull();
+
+      // Linked to this schedule now, so not a candidate for another one.
+      const other = await makeSchedule({ label: 'second plan' });
+      const otherList = await auth(http().get(`/api/schedules/${other.id}/doses`)).expect(200);
+      expect(otherList.body.candidates.map((d: any) => d.interventionId)).not.toContain(a);
+      await auth(http().post(`/api/schedules/${other.id}/doses`)).send({ link: [a] }).expect(400, /DOSE_NOT_LINKABLE/);
+
+      // Unlink one: back to a candidate, its schedule link and flag gone, another revision.
+      const un = await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ unlink: [c] }).expect(201);
+      expect(un.body.linked.map((d: any) => d.interventionId)).toEqual([b, a]);
+      expect(un.body.candidates.map((d: any) => d.interventionId)).toContain(c);
+      expect(un.body.schedule.adherence.loggedCount).toBe(2);
+      const cDose = await auth(http().get(`/api/interventions/${c}`)).expect(200);
+      expect(cDose.body.scheduleId).toBeNull();
+      expect(cDose.body.metadata.scheduleLinked).toBeUndefined();
+    });
+
+    it('refuses to unlink a dose logged from the schedule itself', async () => {
+      const sched = await makeSchedule({ startAt: hoursAgo(2) });
+      const logged = await auth(http().post(`/api/schedules/${sched.id}/log`)).send({}).expect(201);
+      const res = await auth(http().post(`/api/schedules/${sched.id}/doses`))
+        .send({ unlink: [logged.body.intervention.id] })
+        .expect(400);
+      expect(res.body.message).toBe('DOSE_NOT_UNLINKABLE');
+      const list = await auth(http().get(`/api/schedules/${sched.id}/doses`)).expect(200);
+      expect(list.body.linked).toHaveLength(1);
+      expect(list.body.linked[0].linkedLater).toBe(false);
+    });
+
+    it('completes the schedule when linking reaches endAfterOccurrences', async () => {
+      const d1 = await giveDose(hoursAgo(30));
+      const d2 = await giveDose(hoursAgo(18));
+      const sched = await makeSchedule({ startAt: hoursAgo(31), endAfterOccurrences: 2 });
+      const res = await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: [d1, d2] }).expect(201);
+      expect(res.body.schedule.status).toBe('completed');
+      expect(res.body.schedule.nextDueAt).toBeNull();
+      expect(res.body.schedule.adherence.remainingOccurrences).toBe(0);
+    });
+
+    it('writes nothing when any dose in the request is not linkable', async () => {
+      const good = await giveDose(hoursAgo(5));
+      const wrongMed = await giveDose(hoursAgo(4), { medicationId: otherMedId, medicationEmbodimentId: undefined });
+      const sched = await makeSchedule({ startAt: hoursAgo(6) });
+      const res = await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: [good, wrongMed] }).expect(400);
+      expect(res.body).toMatchObject({ message: 'DOSE_NOT_LINKABLE', interventionIds: [wrongMed] });
+      const dose = await auth(http().get(`/api/interventions/${good}`)).expect(200);
+      expect(dose.body.scheduleId).toBeNull();
+    });
+
+    it('rejects an empty or self-contradicting request', async () => {
+      const sched = await makeSchedule();
+      const d = await giveDose(hoursAgo(1));
+      await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({}).expect(400, /SCHEDULE_DOSES_INVALID/);
+      await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: [d], unlink: [d] }).expect(400, /SCHEDULE_DOSES_INVALID/);
+      await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: ['not-a-uuid'] }).expect(400);
+    });
+
+    it("treats another patient's dose as not found, and a non-member gets 404 on the schedule", async () => {
+      const sched = await makeSchedule();
+      const outsider = await registerAndLogin(app);
+      const theirPatient = (
+        await request(app.getHttpServer())
+          .post('/api/patients')
+          .set('Authorization', `Bearer ${outsider.token}`)
+          .send({ fullName: 'Other kid', dateOfBirth: '2018-01-01', sexAtBirth: 'male', myRole: 'parent' })
+          .expect(201)
+      ).body.id;
+      const theirMed = (
+        await request(app.getHttpServer()).post('/api/medications').set('Authorization', `Bearer ${outsider.token}`).send({ name: `theirs-${Date.now()}` }).expect(201)
+      ).body.id;
+      const theirDose = (
+        await request(app.getHttpServer())
+          .post(`/api/patients/${theirPatient}/interventions`)
+          .set('Authorization', `Bearer ${outsider.token}`)
+          .send({ type: 'medication_dose', performedAt: hoursAgo(1), medicationId: theirMed, doseSource: 'override' })
+          .expect(201)
+      ).body.id;
+      const res = await auth(http().post(`/api/schedules/${sched.id}/doses`)).send({ link: [theirDose] }).expect(404);
+      expect(res.body.message).toBe('INTERVENTION_NOT_FOUND');
+      await request(app.getHttpServer()).get(`/api/schedules/${sched.id}/doses`).set('Authorization', `Bearer ${outsider.token}`).expect(404);
+      await request(app.getHttpServer())
+        .post(`/api/schedules/${sched.id}/doses`)
+        .set('Authorization', `Bearer ${outsider.token}`)
+        .send({ link: [theirDose] })
+        .expect(404);
+    });
+
+    it('still refuses the schedule link as a dose correction', async () => {
+      const d = await giveDose(hoursAgo(1));
+      const sched = await makeSchedule();
+      await auth(http().patch(`/api/interventions/${d}`)).send({ interventionScheduleId: sched.id }).expect(400, /FIELD_NOT_CORRECTABLE/);
+      await auth(http().patch(`/api/interventions/${d}`)).send({ metadata: { scheduleLinked: true } }).expect(400, /RESERVED_METADATA_KEY/);
+    });
+  });
 });

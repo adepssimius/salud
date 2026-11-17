@@ -6,6 +6,9 @@ import { careTeamMemberships, interventionSchedules, interventions } from '../..
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
+import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
+import { RevisionsService } from '../revisions/revisions.service';
+import { ScheduleDose, ScheduleDosesResponse } from '@salud/shared/types';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs, toDate } from '../persistence/time';
@@ -20,6 +23,7 @@ export class SchedulesService {
   constructor(
     private readonly db: DatabaseService,
     private readonly interventionsService: InterventionsService,
+    private readonly revisionsService: RevisionsService,
   ) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
@@ -368,5 +372,143 @@ export class SchedulesService {
       .where(eq(interventionSchedules.id, id));
 
     return { intervention: created, schedule: await this.get(id, userId) };
+  }
+
+  // ── Linking existing doses (api.md → Intervention schedules → "Linking existing doses") ──────
+
+  private toScheduleDose(row: any): ScheduleDose {
+    const m = row.metadata ? JSON.parse(row.metadata) : {};
+    return {
+      interventionId: row.id,
+      performedAt: normalizeTs(row.performedAt)!,
+      medicationEmbodimentId: m.medicationEmbodimentId ?? null,
+      amountMg: m.amountMg ?? null,
+      amountMl: m.amountMl ?? null,
+      pillCount: m.pillCount ?? null,
+      doseSource: m.doseSource ?? null,
+      recordedByUserId: row.recordedByUserId,
+      linkedLater: m.scheduleLinked === true,
+    };
+  }
+
+  /**
+   * Whether an intervention row could be linked to this schedule: no schedule yet, the schedule's
+   * type, its medicine (and its embodiment, when the schedule names one), and performed inside the
+   * schedule's window — `startAt` to `endAt`, or open-ended.
+   */
+  private isCandidate(schedule: any, row: any): boolean {
+    if (row.patientId !== schedule.patientId || row.scheduleId || row.type !== schedule.type) return false;
+    const m = row.metadata ? JSON.parse(row.metadata) : {};
+    if (schedule.type === 'medication_dose') {
+      if (m.medicationId !== schedule.medicationId) return false;
+      if (schedule.medicationEmbodimentId && m.medicationEmbodimentId !== schedule.medicationEmbodimentId) return false;
+    }
+    const at = normalizeTs(row.performedAt)!;
+    const start = normalizeTs(schedule.startAt)!;
+    const end = normalizeTs(schedule.endAt);
+    return at >= start && (end == null || at <= end);
+  }
+
+  private async dosesFor(schedule: any): Promise<{ linked: ScheduleDose[]; candidates: ScheduleDose[] }> {
+    const db = this.db.db as any;
+    const rows: any[] = await db.select().from(interventions).where(eq(interventions.patientId, schedule.patientId));
+    const newestFirst = (a: ScheduleDose, b: ScheduleDose) => b.performedAt - a.performedAt;
+    return {
+      linked: rows.filter((r) => r.scheduleId === schedule.id).map((r) => this.toScheduleDose(r)).sort(newestFirst),
+      candidates: rows.filter((r) => this.isCandidate(schedule, r)).map((r) => this.toScheduleDose(r)).sort(newestFirst),
+    };
+  }
+
+  async doses(id: string, userId: string): Promise<ScheduleDosesResponse> {
+    const row = await this.getRow(id, userId);
+    return { schedule: await this.pickSchedule(row), ...(await this.dosesFor(row)) };
+  }
+
+  /**
+   * Attach doses logged ad hoc to this schedule, or detach ones attached that way. Each changed
+   * dose gets a Revision (its prior state), `doseSource` is left as it was, and a service-owned
+   * `scheduleLinked` flag marks the link as made after the fact — the only links that can be
+   * undone; a dose logged *from* the schedule stays its own. Then `nextDueAt` and status are
+   * recomputed exactly as a timing PATCH does: from the schedule's latest dose. All in one
+   * transaction — a request that fails any check writes nothing.
+   */
+  async updateDoses(id: string, userId: string, dto: UpdateScheduleDosesDto): Promise<ScheduleDosesResponse> {
+    const row = await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const link = [...new Set(dto.link ?? [])];
+    const unlink = [...new Set(dto.unlink ?? [])];
+    // Nothing to do, or the same dose asked to be both linked and unlinked.
+    if ((!link.length && !unlink.length) || link.some((i) => unlink.includes(i))) {
+      throw new BadRequestException('SCHEDULE_DOSES_INVALID');
+    }
+
+    const ids = [...link, ...unlink];
+    const found: any[] = await db.select().from(interventions).where(inArray(interventions.id, ids));
+    const byId = new Map(found.map((r) => [r.id, r]));
+    // Another patient's dose is reported as not found, never as "not linkable" (no existence leak).
+    const missing = ids.filter((i) => !byId.has(i) || byId.get(i).patientId !== row.patientId);
+    if (missing.length) throw new NotFoundException({ message: 'INTERVENTION_NOT_FOUND', interventionIds: missing });
+
+    const toLink = link.filter((i) => byId.get(i).scheduleId !== id); // already linked: no-op
+    const notLinkable = toLink.filter((i) => !this.isCandidate(row, byId.get(i)));
+    if (notLinkable.length) throw new BadRequestException({ message: 'DOSE_NOT_LINKABLE', interventionIds: notLinkable });
+
+    const toUnlink = unlink.filter((i) => byId.get(i).scheduleId === id); // not linked here: no-op
+    const notUnlinkable = toUnlink.filter((i) => {
+      const m = byId.get(i).metadata ? JSON.parse(byId.get(i).metadata) : {};
+      return m.scheduleLinked !== true;
+    });
+    if (notUnlinkable.length) throw new BadRequestException({ message: 'DOSE_NOT_UNLINKABLE', interventionIds: notUnlinkable });
+
+    // Snapshots before the transaction opens (RevisionsService.capture's contract).
+    const changed = [...toLink, ...toUnlink];
+    const snapshots = new Map<string, any>();
+    for (const i of changed) snapshots.set(i, await this.interventionsService.get(i, userId));
+
+    await this.db.withTransaction(async (tx: any) => {
+      for (const i of changed) {
+        const r = byId.get(i);
+        const m = r.metadata ? JSON.parse(r.metadata) : {};
+        const linking = toLink.includes(i);
+        if (linking) {
+          m.interventionScheduleId = id;
+          m.scheduleLinked = true;
+        } else {
+          m.interventionScheduleId = null;
+          delete m.scheduleLinked;
+        }
+        await this.revisionsService.capture('intervention', i, snapshots.get(i), userId, tx);
+        await tx
+          .update(interventions)
+          .set({ scheduleId: linking ? id : null, metadata: JSON.stringify(m), updatedAt: new Date() })
+          .where(eq(interventions.id, i));
+      }
+      if (changed.length) await this.recomputeAfterDoseChange(tx, row);
+    });
+
+    return this.doses(id, userId);
+  }
+
+  /**
+   * After the set of doses on a schedule changes: an active schedule's `nextDueAt` follows its
+   * latest dose (or `startAt` with none), and reaching `endAfterOccurrences` / passing `endAt`
+   * completes it — the same rules as a timing PATCH. A paused or completed schedule is left as
+   * the caregiver set it.
+   */
+  private async recomputeAfterDoseChange(tx: any, row: any) {
+    if (row.status !== 'active') return;
+    const doses: any[] = await tx.select().from(interventions).where(eq(interventions.scheduleId, row.id));
+    const timing: TimingConfig = {
+      frequencyHours: row.frequencyHours,
+      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+    };
+    const next = doses.length
+      ? this.computeNextDueAt(timing, new Date(Math.max(...doses.map((d) => normalizeTs(d.performedAt) ?? 0)) * 1000), true)
+      : this.computeNextDueAt(timing, toDate(row.startAt)!, false);
+    const { nextDueAt, completed } = this.applyEndConditions(row, next, doses.length);
+    await tx
+      .update(interventionSchedules)
+      .set({ nextDueAt, status: completed ? 'completed' : row.status })
+      .where(eq(interventionSchedules.id, row.id));
   }
 }

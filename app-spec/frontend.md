@@ -580,6 +580,25 @@ derives from existing payloads:
   - **The ER Brief is the deliberate exception** and keeps wall-clock times: it is a clinical print
     document handed to triage staff, who need the actual time of the last dose, not its age.
 
+## Schedule detail
+- `schedule-detail.page.ts` at `/schedules/:id`: label, type, status, timing and next due, the
+  intended-vs-actual stats (logged, expected by now, missed, remaining), Log now / Pause / Resume /
+  Mark complete, notes. One request, `GET /api/schedules/:id/doses`, which carries the schedule
+  with its adherence alongside its doses.
+- **Doses.** Every dose on the schedule, newest first, each marked "from schedule" (logged with
+  Log now or from a due row) or "linked later". A dose linked later carries **Unlink**; one logged
+  from the schedule does not (api.md → "Linking existing doses").
+- **Linking existing doses.** Adherence counts linked doses only, so doses of this medicine given
+  and logged ad hoc before the schedule existed read as missed. When the API lists candidates, the
+  section says so in a sentence ("19 doses of this medicine were logged without this schedule
+  since it started, so they count as missed") with **Link existing doses**. That opens a checklist
+  of the candidates — date, time and amount — **all preselected**, since the usual case is that
+  they were all for this course; the caregiver unticks any that weren't and confirms
+  "Link N doses". The page then re-renders from the response: adherence and next due move at once.
+- **Offered right after creating a schedule.** When the new-schedule form saves a schedule that
+  already has candidates, it opens this page with the checklist open (`?link=1`) instead of backing
+  out to where it came from; with none it backs out as before.
+
 ## Conditions
 - `new-condition.page.ts`: patient (pre-selected from the entry point), name, diagnosis text,
   status, and editors for `baselines`/`devices`/`contacts` — each a simple add/remove list (plain

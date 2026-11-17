@@ -17,6 +17,7 @@ import { SchedulesService } from './schedules.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
+import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -65,5 +66,19 @@ export class SchedulesController {
     @Body() dto: LogScheduleDto,
   ) {
     return await this.schedules.log(id, req.user.userId, dto);
+  }
+
+  @Get('schedules/:id/doses')
+  async doses(@Request() req: any, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return await this.schedules.doses(id, req.user.userId);
+  }
+
+  @Post('schedules/:id/doses')
+  async updateDoses(
+    @Request() req: any,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateScheduleDosesDto,
+  ) {
+    return await this.schedules.updateDoses(id, req.user.userId, dto);
   }
 }
