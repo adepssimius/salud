@@ -109,10 +109,11 @@ export function toCm(value: number, unit: LengthUnit): number {
   standalone: true,
   imports: [CommonModule, FormsModule, PhotoThumbnailComponent],
   template: `
-    <div class="entry-builder" [class.compact]="!!lockedType">
+    <div class="entry-builder" [class.compact]="!!lockedType || inSheet">
       <!-- Compact single-purpose layout: arriving from Quick Log with one verb already chosen, the
-           type picker and the builder's framing are noise (frontend.md → Quick Log). -->
-      <h3 *ngIf="!lockedType">Add entry</h3>
+           type picker and the builder's framing are noise (frontend.md → Quick Log). Inside the
+           add-entry sheet the sheet carries the heading and the Save button instead. -->
+      <h3 *ngIf="!lockedType && !inSheet">Add entry</h3>
 
       <label class="field" *ngIf="!lockedType">
         <span>Type</span>
@@ -345,8 +346,10 @@ export function toCm(value: number, unit: LengthUnit): number {
 
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
-      <button type="button" class="secondary" (click)="add()">Add entry</button>
-      <div class="muted small" *ngIf="!lockedType">At least one entry is required.</div>
+      <ng-container *ngIf="!inSheet">
+        <button type="button" class="secondary" (click)="add()">Add entry</button>
+        <div class="muted small" *ngIf="!lockedType">At least one entry is required.</div>
+      </ng-container>
     </div>
   `,
   styles: [
@@ -479,6 +482,13 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
    * the same stickiness the unit toggle already has).
    */
   @Input() initialTempMethod: TemperatureMethod | null = null;
+
+  /**
+   * Set when the composer lives in the observation form's add-entry sheet (frontend.md → "Entry
+   * list and the add-entry sheet"): no heading and no Add button of its own — the sheet's Save
+   * calls add().
+   */
+  @Input() inSheet = false;
 
   @Output() typeChange = new EventEmitter<ObservationType>();
   @Output() entryAdded = new EventEmitter<EntryDraft>();
@@ -748,12 +758,45 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
     });
   }
 
-  add() {
+  /** Emits the entry and clears the fields; false (with `error` set) when the entry is incomplete. */
+  add(): boolean {
     this.error.set(null);
     const metadata = this.buildMetadata();
-    if (!metadata) return;
+    if (!metadata) return false;
     this.entryAdded.emit({ type: this.entryType, metadata });
     this.reset();
+    return true;
+  }
+
+  /**
+   * Everything the caregiver can type or pick, as one comparable string. The add-entry sheet takes
+   * one when it opens and compares on dismiss, so it asks before discarding only when something was
+   * actually filled in or changed. The type and the unit toggle are left out: switching either
+   * loses nothing worth asking about.
+   */
+  draftSnapshot(): string {
+    return JSON.stringify([
+      this.numberValue,
+      this.entryNote,
+      this.tempValue,
+      this.tempMethod,
+      this.painScore,
+      this.lesionLength,
+      this.lesionWidth,
+      this.lesionDepth,
+      this.bodyLocation,
+      this.side,
+      this.symptomTag,
+      this.symptomSeverity,
+      this.tagValue,
+      this.noteText,
+      this.noteSymptom,
+      this.photoSize,
+      this.photoUploadedFileId(),
+      this.documentUploadedFileId(),
+      this.documentExistingFileId,
+      this.documentLabel,
+    ]);
   }
 
   private buildMetadata(): any | null {
@@ -872,7 +915,8 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
     }
   }
 
-  private reset() {
+  reset() {
+    this.error.set(null);
     this.numberValue = null;
     this.entryNote = '';
     this.tempValue = null;
@@ -896,5 +940,6 @@ export class EntryMetadataFormComponent implements OnChanges, OnInit {
     this.documentError.set(null);
     this.documentExistingFileId = null;
     this.documentLabel = '';
+    this.documentMode.set('upload');
   }
 }
