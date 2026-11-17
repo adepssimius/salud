@@ -185,6 +185,115 @@ describe('NewInterventionPage', () => {
     expect(saved[1].amountMg).toBeUndefined();
   }));
 
+  describe('amount boxes by embodiment (frontend.md → "The embodiment decides which amount boxes show")', () => {
+    const kinds = [
+      { id: 'liquid', label: 'Infant 160 mg/5 mL', concentrationMgPerMl: 32, strengthMgPerUnit: null, unitType: 'ml' },
+      { id: 'tablet', label: '80 mg chewable', concentrationMgPerMl: null, strengthMgPerUnit: 80, unitType: 'tablet' },
+      { id: 'capsule', label: '200 mg capsule', concentrationMgPerMl: null, strengthMgPerUnit: 200, unitType: 'capsule' },
+      { id: 'drop', label: 'Eye drops', concentrationMgPerMl: null, strengthMgPerUnit: 0.5, unitType: 'drop' },
+      { id: 'cream', label: '1% cream', concentrationMgPerMl: null, strengthMgPerUnit: null, unitType: 'other', dosageForm: 'cream' },
+      { id: 'chewable', label: '80 mg chewable', concentrationMgPerMl: null, strengthMgPerUnit: 80, unitType: 'tablet', dosageForm: 'chewable' },
+      { id: 'untyped', label: 'Something else', concentrationMgPerMl: null, strengthMgPerUnit: null, unitType: 'other', dosageForm: null },
+    ];
+
+    function renderWithKinds() {
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/embodiments')) return of(kinds);
+        return of([{ id: 'p1', fullName: 'Patient 1' }]);
+      });
+      apiMock.post.mockReturnValue(of({ guidance: { weightBased: null, ageBand: null }, advisories: [], dailyTotalMg: 0 }));
+      const fixture = TestBed.createComponent(NewInterventionPage);
+      fixture.detectChanges();
+      const component = fixture.componentInstance;
+      component.form.patchValue({ patientId: 'p1', type: 'medication_dose' });
+      component.selectMedication({ id: 'med-1', name: 'acetaminophen', brandNames: [] } as any);
+      fixture.detectChanges();
+      return { fixture, component, el: fixture.nativeElement as HTMLElement };
+    }
+
+    function boxes(fixture: any) {
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      return {
+        mg: !!el.querySelector('input[formControlName="amountMg"]'),
+        ml: !!el.querySelector('input[formControlName="amountMl"]'),
+        count: el.querySelector('#pill-count-label')?.textContent?.trim() ?? null,
+        fractions: !!el.querySelector('app-pill-count-input select'),
+      };
+    }
+
+    function pick(component: NewInterventionPage, id: string) {
+      component.form.controls.medicationEmbodimentId.setValue(id);
+    }
+
+    it('shows mg alone until an embodiment is chosen', () => {
+      const { fixture } = renderWithKinds();
+      expect(boxes(fixture)).toEqual({ mg: true, ml: false, count: null, fractions: false });
+    });
+
+    it.each([
+      ['liquid', { mg: true, ml: true, count: null, fractions: false }],
+      ['tablet', { mg: true, ml: false, count: 'Tablets', fractions: true }],
+      ['capsule', { mg: true, ml: false, count: 'Capsules', fractions: true }],
+      ['drop', { mg: true, ml: false, count: 'Drops', fractions: false }],
+      ['chewable', { mg: true, ml: false, count: 'Chewables', fractions: true }],
+      ['cream', { mg: false, ml: false, count: null, fractions: false }],
+      ['untyped', { mg: true, ml: false, count: null, fractions: false }],
+    ])('a %s embodiment shows %o', (id, expected) => {
+      const { fixture, component } = renderWithKinds();
+      pick(component, id);
+      expect(boxes(fixture)).toEqual(expected);
+    });
+
+    it('switching liquid → tablet empties the mL, so the save carries mg and tablets only', () => {
+      const { fixture, component } = renderWithKinds();
+      pick(component, 'liquid');
+      component.form.controls.amountMl.setValue(5);
+      expect(component.form.getRawValue().amountMg).toBe(160);
+      pick(component, 'tablet');
+      expect(boxes(fixture)).toMatchObject({ ml: false, count: 'Tablets' });
+      expect(component.form.getRawValue()).toMatchObject({ amountMl: null, amountMg: 160, pillCount: 2 });
+
+      apiMock.post.mockReturnValue(of({}));
+      component.submit();
+      const saved = apiMock.post.mock.calls.find(([path]: [string]) => path.endsWith('/interventions'));
+      expect(saved[1]).toMatchObject({ amountMg: 160, pillCount: 2, medicationEmbodimentId: 'tablet' });
+      expect(saved[1].amountMl).toBeUndefined();
+    });
+
+    it('a cream shows no amount at all and saves the dose with none', () => {
+      const { fixture, component, el } = renderWithKinds();
+      pick(component, 'tablet');
+      component.form.controls.pillCount.setValue(2);
+      pick(component, 'cream');
+      expect(boxes(fixture)).toEqual({ mg: false, ml: false, count: null, fractions: false });
+      expect(component.form.getRawValue()).toMatchObject({ amountMg: null, amountMl: null, pillCount: null });
+      expect(el.querySelector('.no-amount')?.textContent).toContain('No amount to measure');
+
+      apiMock.post.mockReturnValue(of({}));
+      component.submit();
+      const saved = apiMock.post.mock.calls.find(([path]: [string]) => path.endsWith('/interventions'));
+      expect(saved[1]).toMatchObject({ medicationEmbodimentId: 'cream' });
+      expect(saved[1].amountMg).toBeUndefined();
+      expect(saved[1].amountMl).toBeUndefined();
+      expect(saved[1].pillCount).toBeUndefined();
+    });
+
+    it('switching from a cream back to a tablet brings mg back, empty', () => {
+      const { fixture, component } = renderWithKinds();
+      pick(component, 'cream');
+      pick(component, 'tablet');
+      expect(boxes(fixture)).toMatchObject({ mg: true, count: 'Tablets' });
+    });
+
+    it('keeps a box that holds a value visible even when the kind would hide it', () => {
+      const { fixture, component } = renderWithKinds();
+      // A prefilled volume with no bottle chosen yet is shown, not hidden and silently sent.
+      component.form.controls.amountMl.setValue(5);
+      expect(boxes(fixture)).toMatchObject({ ml: true, count: null });
+    });
+  });
+
   it('searches medications and selects one, loading its embodiments', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path === '/medications') {
@@ -643,6 +752,14 @@ describe('NewInterventionPage', () => {
           render({ ...repeatDose, doseSource: 'vibes' }).componentInstance.form.getRawValue().doseSource,
         ).toBe('override');
       });
+    });
+
+    it('the compact quick-log shows only the boxes its embodiment fits', () => {
+      const fixture = render(repeatDose);
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('input[formControlName="amountMg"]')).not.toBeNull();
+      expect(el.querySelector('input[formControlName="amountMl"]')).not.toBeNull();
+      expect(el.querySelector('app-pill-count-input')).toBeNull();
     });
 
     it('renders the compact layout with the patient pinned and no patient or type picker', () => {

@@ -213,6 +213,13 @@ describe('describeEvent', () => {
     } as any;
     expect(describeEvent(dose)).toBe('medication dose — 160 mg (atypical)');
 
+    // A cream dose has no amount: the line is the medication, not "? mg".
+    const cream = { kind: 'intervention', display: { type: 'medication_dose', metadata: { medicationId: 'm2' } } } as any;
+    expect(describeEvent(cream, CANONICAL_UNITS, { medicationNames: new Map([['m2', 'clotrimazole']]) })).toBe('clotrimazole');
+    expect(describeEvent(cream)).toBe('medication dose');
+    const counted = { kind: 'intervention', display: { type: 'medication_dose', metadata: { pillCount: 1.5 } } } as any;
+    expect(describeEvent(counted)).toBe('medication dose — ×1 ½');
+
     const dressing = { kind: 'intervention', display: { type: 'dressing_change', metadata: { bodyLocation: 'arm' } } } as any;
     expect(describeEvent(dressing)).toBe('dressing change — arm');
   });

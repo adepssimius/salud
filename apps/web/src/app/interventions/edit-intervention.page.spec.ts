@@ -270,6 +270,71 @@ describe('EditInterventionPage', () => {
     });
   });
 
+  describe('which amount boxes show on a correction (frontend.md → "The embodiment decides which amount boxes show")', () => {
+    const liquid = { id: 'emb1', label: 'Infant 160 mg/5 mL', concentrationMgPerMl: 32, strengthMgPerUnit: null, unitType: 'ml', atHome: true, runningLow: false, expiresAt: null };
+    const tablet = { id: 'emb2', label: '80 mg chewable', concentrationMgPerMl: null, strengthMgPerUnit: 80, unitType: 'tablet', atHome: true, runningLow: false, expiresAt: null };
+    const cream = { id: 'emb3', label: '1% cream', concentrationMgPerMl: null, strengthMgPerUnit: null, unitType: 'other', dosageForm: 'cream', atHome: true, runningLow: false, expiresAt: null };
+    function withKinds() {
+      const get = apiMock.get.getMockImplementation();
+      apiMock.get.mockImplementation((path: string) =>
+        path === '/medications/m1/embodiments' ? of([liquid, tablet, cream]) : get(path),
+      );
+    }
+    const shown = (fixture: any) => {
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      return {
+        ml: !!el.querySelector('input[formControlName="amountMl"]'),
+        count: el.querySelector('#pill-count-label')?.textContent?.trim() ?? null,
+      };
+    };
+
+    it('shows mL and no count for a liquid dose', () => {
+      withKinds();
+      const { fixture } = render();
+      expect(shown(fixture)).toEqual({ ml: true, count: null });
+    });
+
+    it('keeps a stored amount the kind would hide visible, and an untouched save sends nothing', () => {
+      // An old dose on a tablet that carries both a volume and a count.
+      intervention = makeDose({}, { medicationEmbodimentId: 'emb2', amountMg: 160, amountMl: 5, pillCount: 2 });
+      withKinds();
+      const { fixture, form } = render();
+      expect(shown(fixture)).toEqual({ ml: true, count: 'Tablets' });
+      expect(form.form.getRawValue()).toMatchObject({ amountMl: 5, pillCount: 2 });
+      save(fixture);
+      expect(patchCalls().length).toBe(0);
+    });
+
+    it('moving a dose onto a cream drops its amounts, sending each as null', () => {
+      withKinds();
+      const { fixture, form, el } = render();
+      form.form.controls.medicationEmbodimentId.setValue('emb3');
+      fixture.detectChanges();
+      expect(el.querySelector('input[formControlName="amountMg"]')).toBeNull();
+      expect(el.querySelector('input[formControlName="amountMl"]')).toBeNull();
+      save(fixture);
+      expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', {
+        medicationEmbodimentId: 'emb3',
+        amountMg: null,
+        amountMl: null,
+      });
+    });
+
+    it('switching the embodiment empties the box it hides and sends it as null', () => {
+      withKinds();
+      const { fixture, form } = render();
+      form.form.controls.medicationEmbodimentId.setValue('emb2');
+      expect(shown(fixture)).toEqual({ ml: false, count: 'Tablets' });
+      save(fixture);
+      expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', {
+        medicationEmbodimentId: 'emb2',
+        amountMl: null,
+        pillCount: 2,
+      });
+    });
+  });
+
   it.each(['FIELD_NOT_CORRECTABLE', 'EPISODE_LAST_ENTRY', 'EPISODE_TIME_ORDER_INVALID'] as const)(
     'shows the %s sentence and keeps the form filled',
     (code) => {

@@ -455,7 +455,7 @@ derives from existing payloads:
     strength`, to 0.01 mg). From mg, the pill count is filled only when it lands within 0.02 of a
     whole number plus one of the offered fractions; otherwise it is cleared rather than rounded to a
     pill count that would misstate the dose.
-  - With neither (a cream, unit type "other"), nothing is calculated: the boxes stay independent
+  - With neither (an "other" form), nothing is calculated: the boxes stay independent
     and optional.
   - The box the caregiver typed in last is the one the others follow. Changing the embodiment
     recalculates from it, and clears a filled box the new embodiment cannot fill.
@@ -465,6 +465,36 @@ derives from existing payloads:
     server-side. When mg was filled from mL or pills, the form leaves `amountMg` out of the request
     and lets the server derive it, so the record says (`amountMgDerived`) that the caregiver gave a
     volume or a pill count. "Use this" on a guidance card counts as typing mg.
+- **The embodiment decides which amount boxes show**, by its `dosageForm` (data-model.md →
+  `MedicationEmbodiment`):
+  - liquid: **Amount (mg)** and **Amount (mL)**. No count.
+  - tablet / chewable / capsule: mg and a count labelled **Tablets** / **Chewables** / **Capsules**
+    (the whole-number box plus the fraction select, "Partial pills" below). No mL.
+  - drops: mg and a count labelled **Drops**, whole numbers only (no fraction select). It fills mg
+    through `strengthMgPerUnit` (mg per drop) when one is recorded. No mL.
+  - cream / ointment / gel (the topical forms): **no amount boxes at all** — no mg, no mL, no
+    count. There is nothing to measure a dose of them in; the form says so in muted text ("No
+    amount to measure for this form — say how much in the notes if it matters"), and the dose is
+    recorded as given, with notes. This is the one exception to mg being shown.
+  - other: mg alone.
+  - An embodiment with no form recorded falls back to its `unitType`: `ml` as liquid, `tablet` /
+    `capsule` / `drop` as tablet / capsule / drops, `other` as mg alone — an untyped `other` is not
+    assumed to be a cream. No embodiment chosen yet: mg alone.
+  - **A box that holds a value is never hidden.** When a stored dose being corrected or a prefill
+    (repeat, schedule) carries an amount in a box the embodiment would hide — an old dose with both
+    mL and pills, a schedule's mL before its bottle has loaded — that box stays visible for as long
+    as it has a value, so nothing is dropped unseen. The caregiver can clear it, and it then hides.
+  - **Switching embodiment clears what the new one hides.** When the caregiver changes from one
+    embodiment to another (directly, or by picking another medication first), a box the new one
+    hides is emptied, so a stale mL can never be saved against a tablet, nor an mg against a cream.
+    If the emptied box was the one the others followed, mg becomes the source when it is still
+    shown, and the newly shown count or volume fills from it. This holds on create, the compact
+    quick-log and a correction alike; on a correction the emptied field is sent as `null`.
+  - This is a form rule only: the API still accepts `amountMg`, `amountMl` and `pillCount` on any
+    dose.
+- **A dose with no amount reads as the medication.** Wherever a dose is described in a line (the
+  journal, the event feed), its amount is mg, else mL, else the count (`×1 ½`), else nothing at
+  all — "clotrimazole", never "? mg".
 - **Partial pills.** The pill count is a whole-number box plus a fraction select: none, ¼, ⅓, ½,
   ⅔, ¾. It is sent as one decimal (⅓ as 0.3333…), and read back everywhere through one formatter
   that prints `1 ½` / `⅓`, falling back to the decimal for anything that is not one of these.
@@ -812,7 +842,8 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
     `lab_result` entries are shown read-only and carried through unchanged: hand-typing lab values
     is the transcription risk the import exists to avoid ("Documents").
   - *Medication dose*: the clinical time, medication, embodiment, dose source (weight-based /
-    age-based / override), amount (mg, mL, pill count), notes, episodes.
+    age-based / override), amount (mg, plus the mL or count the embodiment shows — "Dose entry" →
+    "The embodiment decides which amount boxes show"), notes, episodes.
   - *Dressing change*: the clinical time, body location, side, dressing type, notes, episodes.
 - **Fixed, and why** — shown as plain text, never as a disabled control a caregiver can poke at:
   - the **intervention type** and the **schedule link** (with a scheduled dose's "from schedule"
@@ -1047,7 +1078,10 @@ days cannot tell the two series apart, let alone read either one forwards. This 
     lists.
   - **`embodiment-editor.component.ts`**, one per embodiment row — `label`, `notes`, the
     concentration pair (same *[ mg ] per [ mL ]* input and live derived figure as create),
-    `strengthMgPerUnit`, `unitType`, and the cabinet fields `atHome` ("At home"), `runningLow` and
+    `strengthMgPerUnit`, **Form** (`dosageForm`: Liquid, Tablet, Chewable tablet, Capsule, Drops,
+    Cream, Ointment, Gel, Other — the unit type follows it server-side and is not asked for; a row
+    with no form recorded shows "Not set (⟨its unit⟩)" until one is picked), and the cabinet fields
+    `atHome` ("At home"), `runningLow` and
     **`expiresAt`**. The expiry is a date input ("Expires") on **create as well as edit** — it is
     printed on the bottle in hand, and the expired-embodiment advisory has nothing to fire on
     without it. Clearing it sends `null`.
@@ -1067,11 +1101,11 @@ days cannot tell the two series apart, let alone read either one forwards. This 
   fixing "psuedophedrine". Catalog edits are not revisioned (api.md); there is no history to browse.
 - **The concentration lock.** When the server refuses a dosing-field change with 409
   `EMBODIMENT_CONCENTRATION_IN_USE` (api.md → Embodiments → "Concentration lock"), the form keeps
-  everything else the caregiver typed and re-renders the concentration pair, strength and unit type
+  everything else the caregiver typed and re-renders the concentration pair, strength and form
   **read-only**, reset to the stored values, with the reason in words built from `dependents` — "Used by 3 logged doses and
   1 schedule, so its strength can't change; a bottle with a different strength is a new form" —
   and an **"Add as a new form"** action that opens the add-embodiment form prefilled from this one
-  (label, concentration, strength, unit type, notes; cabinet fields blank). Label, notes and the
+  (label, concentration, strength, form, notes; cabinet fields blank). Label, notes and the
   cabinet fields stay editable on the locked row. The editor submits the concentration as the pair
   when the row has one and as the per-mL figure only when it does not, so an unchanged save on a
   locked row never trips the lock (api.md explains why the per-mL figure alone counts as a change).

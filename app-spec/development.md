@@ -51,9 +51,9 @@
   catalog page (api.md → "Repo catalog"); a dev database through `yarn seed:catalog` below. Adding a
   medication to every instance is adding an entry here and merging to `main`; it reaches an
   instance when a caregiver there previews and confirms it, never by itself.
-  - Shape: `{ "version": 1, "medications": [ … ] }`. Each medication:
+  - Shape: `{ "version": 2, "medications": [ … ] }`. Each medication:
     `{ key, name, brandNames?, description?, tags?, embodiments: [ … ], guidelines?: [ … ] }`; each
-    embodiment: `{ key, label, unitType, concentrationMg?, concentrationVolumeMl?,
+    embodiment: `{ key, label, unitType, dosageForm?, concentrationMg?, concentrationVolumeMl?,
     concentrationMgPerMl?, strengthMgPerUnit?, notes?, guidelines?: [ … ] }` (concentration as the
     pair **or** the per-mL figure, never both, same rule as the API); each guideline:
     `{ key, source, type, …the type's numeric fields, underDose?, notes? }` (`underDose` defaults to
@@ -64,7 +64,9 @@
     not key (api.md), so a key is free to differ from the name.
   - No cabinet fields (`atHome`, `expiresAt`, `runningLow`): those describe one household's bottle.
   - Bump `version` only for a shape change the running code cannot read; an older image refuses a
-    newer version rather than misreading it.
+    newer version rather than misreading it. Version 2 added `dosageForm` (data-model.md →
+    `MedicationEmbodiment`); a version-1 image rejects the unknown key, hence the bump. `dosageForm`,
+    when given, must be one whose unit is the entry's `unitType` (api.md → "Dosage form").
   - The file is validated by the same code the API uses (`catalog-seed.spec.ts` loads the
     checked-in copy), so a malformed entry fails CI before it can reach `main`.
 - Seed a dev database's catalog with: `yarn seed:catalog` (`tools/seed-catalog.ts`)

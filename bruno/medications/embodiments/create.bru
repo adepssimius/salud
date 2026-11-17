@@ -24,7 +24,7 @@ body:json {
   {
     "label": "500 mg tablet",
     "strengthMgPerUnit": 500,
-    "unitType": "tablet",
+    "dosageForm": "tablet",
     "atHome": true,
     "runningLow": false
   }
@@ -37,6 +37,8 @@ script:post-response {
 assert {
   id: isNotEmpty
   atHome: eq true
+  dosageForm: eq tablet
+  unitType: eq tablet
 }
 
 docs {
@@ -44,6 +46,9 @@ docs {
   used to be update-only, so `whitelist: true` silently stripped them here and the caller got a 201
   with both flags false. `runningLow: true` stamps the attribution from the requesting user, same
   as PATCH.
+
+  `dosageForm` is what the caregiver picks; the server sets `unitType` from it (api.md →
+  Embodiments → "Dosage form"). Sending both, disagreeing, is 400 `DOSAGE_FORM_UNIT_TYPE_MISMATCH`.
 }
 
 settings {
