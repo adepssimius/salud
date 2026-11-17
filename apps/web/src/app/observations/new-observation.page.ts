@@ -156,7 +156,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
             [episodes]="correctionEpisodeOptions()"
             [selectedIds]="selectedEpisodeIds()"
             [allowCreateNew]="false"
-            [lockedIds]="correctionLockedIds()"
+            [unresolvableIds]="correctionStartedIds()"
             [resolveSelected]="correctionResolveSelected()"
             (selectedIdsChange)="setEpisodeSelection($event)"
             (resolveSelectedChange)="correctionResolveFlag.set($event)"
@@ -444,7 +444,8 @@ export class NewObservationPage implements OnInit {
   correctionEpisodeOptions = signal<EpisodeOption[]>([]);
   /** The picker's "this resolves…" switch on a correction; null until the caregiver touches it. */
   correctionResolveFlag = signal<boolean | null>(null);
-  correctionLockedIds = computed(() => {
+  /** The episode this entry started: no longer locked (the start moves on unlink), not resolvable. */
+  correctionStartedIds = computed(() => {
     const started = this.correction()?.episodes.startedId;
     return started ? [started] : [];
   });

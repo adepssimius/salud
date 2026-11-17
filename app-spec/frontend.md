@@ -656,9 +656,12 @@ app. They therefore need somewhere to be entered.
   core/event-display.ts); and, when active, its medications' last-dose summary.
 - **Add entries** opens the same entry picker the new-episode form uses, over the patient's
   entries not yet in this episode (`POST /api/episodes/:id/events` with `add`). Each event row
-  carries **Remove** (`remove`), except the entry that started the episode, which is labelled
-  "started this episode" instead. Removing the entry that resolved the episode asks for
-  confirmation first, because it reopens the episode.
+  carries **Remove** (`remove`); the entry that started the episode — always its earliest entry —
+  also carries a "started this episode" pill, and both the pill and the "started …" time in the
+  header follow the start when an earlier entry is added or the start is removed (the page
+  re-renders from the `Episode` the call returns). When only one entry remains it has no Remove
+  (`EPISODE_LAST_ENTRY`). Removing the entry that resolved the episode asks for confirmation
+  first, because it reopens the episode.
 - **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation or
   intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve endpoint. The
   page's "Resolve this episode" action routes to `/observations/new` with this episode pre-selected
@@ -786,9 +789,10 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
     what a correction must not rewrite — the correction gets its own attribution in History;
   - **`unitPreferenceAtEntry`**: it records what the original recorder had on screen, which a later
     correction does not change (api.md → Observations);
-  - **starting a new episode**: the "start a new episode" option is absent; an episode this entry
-    started is shown checked and locked, with "This entry started this episode" — unlinking it is
-    refused by the API (`CANNOT_UNLINK_STARTED_EPISODE`).
+  - **starting a new episode**: the "start a new episode" option is absent. An episode this entry
+    started is no longer locked: unchecking it removes the entry from that episode and the next
+    earliest entry becomes its start, exactly as Remove on the episode page does (refused only for
+    an episode's last entry, `EPISODE_LAST_ENTRY`).
 - **Dose correction keeps the live preview.** On a dose, the form calls `POST .../dose-checks`
   debounced exactly as on create ("Dose entry"), with `occurredAt` set to the corrected time, and
   renders the same guidance cards and advisory banners. The danger interstitial applies as on
@@ -803,7 +807,7 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
   with a link back to the entry — the card is the moment of relevance and must not be navigated
   past. **Cancel** returns to the detail page and sends nothing.
 - **Errors** follow "Errors & failure messages": every code the `PATCH` can return —
-  `FIELD_NOT_CORRECTABLE`, `CANNOT_UNLINK_STARTED_EPISODE`, `EPISODE_TIME_ORDER_INVALID`,
+  `FIELD_NOT_CORRECTABLE`, `EPISODE_LAST_ENTRY`, `EPISODE_TIME_ORDER_INVALID`,
   `EPISODE_ALREADY_RESOLVED`, `DATE_IN_FUTURE`, and create's validation codes — has a sentence in
   `core/error-display.ts`; the call site's fallback is "Could not save the correction." The form
   stays filled after an error. A 404 on load (the entry is gone, or not on this caregiver's care

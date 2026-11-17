@@ -31,9 +31,68 @@ export interface EventEpisodeCorrectionPlan {
   resolveEpisodeIds: string[];
   /** Episodes this event ended whose resolve link the correction drops: back to active. */
   reopenEpisodeIds: string[];
+  /** The event's membership before the correction (non-resolving pivot rows). */
+  previousEpisodeIds: string[];
+  /** The corrected clinical time, epoch seconds; undefined when the time was not sent. */
+  clinicalTime?: number;
+  /**
+   * Start moves for every episode whose membership or member times this correction changes.
+   * Empty when planned with `deferAnchors` — the caller then plans them across several plans with
+   * `planEpisodeAnchors` and writes them with `applyEpisodeAnchors`.
+   */
+  anchors: EpisodeAnchorWrite[];
 }
 
 const uniq = (ids: string[]): string[] => Array.from(new Set(ids));
+
+export interface EpisodeEventAt {
+  type: EpisodeEventType;
+  id: string;
+  /** Clinical time (`observedAt` / `performedAt`), epoch seconds. */
+  time: number;
+}
+
+/** Where an episode's start is moved to; written by `applyEpisodeAnchors`. */
+export interface EpisodeAnchorWrite {
+  episodeId: string;
+  startedAtType: EpisodeEventType;
+  startedAtId: string;
+}
+
+const eventKey = (type: string, id: string) => `${type}:${id}`;
+
+/**
+ * An episode starts at its earliest member (data-model.md → "Data integrity rules" → "An episode
+ * starts at its earliest entry"). Ties on identical times: the resolving entry sorts after any other
+ * entry, then observation before intervention, then id — deterministic, and the order the direct
+ * create always used. Null only for an episode with no members.
+ */
+export function pickEpisodeStart(
+  members: EpisodeEventAt[],
+  resolver: { type: string; id: string } | null,
+): EpisodeEventAt | null {
+  const resolverKey = resolver ? eventKey(resolver.type, resolver.id) : null;
+  const isResolver = (m: EpisodeEventAt) => (eventKey(m.type, m.id) === resolverKey ? 1 : 0);
+  const sorted = [...members].sort(
+    (a, b) =>
+      a.time - b.time ||
+      isResolver(a) - isResolver(b) ||
+      (a.type === b.type ? 0 : a.type === 'observation' ? -1 : 1) ||
+      a.id.localeCompare(b.id),
+  );
+  return sorted[0] ?? null;
+}
+
+/**
+ * The one ordering rule left once the start is the earliest member: a resolved episode may not end
+ * at its own start while it has other members — i.e. its resolving entry may not be strictly
+ * earlier than every other member (data-model.md → "An episode may not end at its start…").
+ */
+export function endsAtItsStart(members: EpisodeEventAt[], resolver: { type: string; id: string } | null): boolean {
+  if (!resolver || members.length < 2) return false;
+  const start = pickEpisodeStart(members, resolver);
+  return !!start && start.type === resolver.type && start.id === resolver.id;
+}
 
 @Injectable()
 export class EpisodesService {
@@ -160,12 +219,12 @@ export class EpisodesService {
    *  - 404 EPISODE_NOT_FOUND — a *sent* `episodeIds` naming another patient's episode (only what
    *    was sent is checked, as before: carried-over ids may predate patient scoping);
    *  - 400 RESOLVES_MUST_BE_SUBSET_OF_EPISODES — against the merged lists;
-   *  - 400 CANNOT_UNLINK_STARTED_EPISODE — a sent `episodeIds` that drops an episode this event
-   *    started (by the pivot's `startsEpisode` flag or the episode's own `startedAtId`);
    *  - 400 EPISODE_ALREADY_RESOLVED — resolving an episode a different event already resolved;
-   *  - 400 EPISODE_TIME_ORDER_INVALID — when a time or the resolve list was sent, any episode this
-   *    event starts that would end before the (corrected) time, or that this event would resolve
-   *    before the episode's start.
+   *  - from `planEpisodeAnchors` (skipped with `deferAnchors`): 400 EPISODE_LAST_ENTRY and
+   *    400 EPISODE_TIME_ORDER_INVALID.
+   *
+   * Dropping the episode this event started is no longer refused: the start moves to the next
+   * earliest member (data-model.md → "An episode starts at its earliest entry").
    */
   async planEventEpisodeCorrection(input: {
     patientId: string;
@@ -175,6 +234,8 @@ export class EpisodesService {
     episodeIds?: string[];
     resolvesEpisodeIds?: string[];
     clinicalTime?: number;
+    /** Leave `anchors` empty; the caller plans them over several plans at once. */
+    deferAnchors?: boolean;
   }): Promise<EventEpisodeCorrectionPlan> {
     const { patientId, userId, eventType, eventId } = input;
     const db = this.db.db as any;
@@ -195,7 +256,7 @@ export class EpisodesService {
     this.assertResolvesSubset(resolvesEpisodeIds, episodeIds);
 
     // Every episode row this correction can touch: current and next links, plus any episode that
-    // names this event as its start or end even if the pivot lost the link (ISSUES #35).
+    // names this event as its end even if the pivot lost the link (ISSUES #35).
     const touchedIds = uniq([...existingEpisodeIds, ...existingResolvesIds, ...episodeIds, ...resolvesEpisodeIds]);
     const linkedRows = touchedIds.length
       ? await db.select().from(episodes).where(and(eq(episodes.patientId, patientId), inArray(episodes.id, touchedIds)))
@@ -203,30 +264,11 @@ export class EpisodesService {
     const anchoredRows = await db
       .select()
       .from(episodes)
-      .where(
-        and(
-          eq(episodes.patientId, patientId),
-          or(
-            and(eq(episodes.startedAtType, eventType), eq(episodes.startedAtId, eventId)),
-            and(eq(episodes.endedAtType, eventType), eq(episodes.endedAtId, eventId)),
-          ),
-        ),
-      );
+      .where(and(eq(episodes.patientId, patientId), eq(episodes.endedAtType, eventType), eq(episodes.endedAtId, eventId)));
     const byId = new Map<string, any>();
     for (const r of [...linkedRows, ...anchoredRows]) byId.set(r.id, r);
 
     const isThisEvent = (type: string | null, id: string | null) => type === eventType && id === eventId;
-    const started = new Set<string>(pivotRows.filter((p: any) => p.startsEpisode).map((p: any) => p.episodeId));
-    for (const r of byId.values()) if (isThisEvent(r.startedAtType, r.startedAtId)) started.add(r.id);
-
-    // (a) An event cannot leave a frame it started. Only a *sent* list can drop one; an omitted
-    // list carries the current links over, and must not fail on a link some earlier bug lost.
-    if (input.episodeIds) {
-      const next = new Set(episodeIds);
-      if ([...started].some((id) => !next.has(id))) {
-        throw new BadRequestException('CANNOT_UNLINK_STARTED_EPISODE');
-      }
-    }
 
     // Rewritten only when the request sent either list, exactly as the PATCHes always have.
     const rewritePivot = input.episodeIds !== undefined || input.resolvesEpisodeIds !== undefined;
@@ -243,48 +285,23 @@ export class EpisodesService {
       if (r.status !== 'resolved' || !isThisEvent(r.endedAtType, r.endedAtId)) resolveEpisodeIds.push(id);
     }
 
-    // (b) Dropping a resolve link reopens the frame — only when this event is the recorded end.
+    // Dropping a resolve link reopens the frame — only when this event is the recorded end.
     const nextResolves = new Set(resolvesEpisodeIds);
     const reopenEpisodeIds = [...byId.values()]
       .filter((r) => r.status === 'resolved' && isThisEvent(r.endedAtType, r.endedAtId) && !nextResolves.has(r.id))
       .map((r) => r.id);
 
-    // (c) An episode may not end before it starts. Checked only when the time or the resolve list
-    // was sent, so an unrelated correction never fails on data that was already inverted.
-    if (input.clinicalTime !== undefined || input.resolvesEpisodeIds) {
-      const eventTime =
-        input.clinicalTime !== undefined ? input.clinicalTime : await this.resolveEventTimestamp(eventType, eventId);
-      if (eventTime !== null) {
-        for (const id of started) {
-          const r = byId.get(id);
-          if (!r) continue;
-          // Ends after this correction: at this event when it (still) resolves the frame, at the
-          // recorded end event when another event closed it, nowhere when it is or becomes open.
-          if (nextResolves.has(id) || reopenEpisodeIds.includes(id)) continue;
-          if (r.status === 'resolved' && r.endedAtId) {
-            const endTime = await this.resolveEventTimestamp(r.endedAtType, r.endedAtId);
-            if (endTime !== null && eventTime > endTime) throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
-          }
-        }
-        for (const id of resolvesEpisodeIds) {
-          const r = byId.get(id);
-          if (!r || started.has(id)) continue; // starting and ending on one event is a zero-length frame
-          const startTime = await this.resolveEventTimestamp(r.startedAtType, r.startedAtId);
-          if (startTime !== null && eventTime < startTime) throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
-        }
-      }
-    }
-
     // The established pivot write pattern (CLAUDE.md → Episode model): one membership row per
-    // episode carrying `startsEpisode`, and a SEPARATE row per resolving link.
+    // episode and a SEPARATE row per resolving link. `startsEpisode` is written false here and set
+    // on the right row by the anchor writes that follow (data-model.md → EpisodeEventPivot).
     const pivotWrites: EventEpisodeCorrectionPlan['pivotRows'] = rewritePivot
       ? [
-          ...episodeIds.map((episodeId) => ({ episodeId, startsEpisode: started.has(episodeId), resolvesEpisode: false })),
+          ...episodeIds.map((episodeId) => ({ episodeId, startsEpisode: false, resolvesEpisode: false })),
           ...resolvesEpisodeIds.map((episodeId) => ({ episodeId, startsEpisode: false, resolvesEpisode: true })),
         ]
       : [];
 
-    return {
+    const plan: EventEpisodeCorrectionPlan = {
       patientId,
       eventType,
       eventId,
@@ -294,7 +311,68 @@ export class EpisodesService {
       pivotRows: pivotWrites,
       resolveEpisodeIds,
       reopenEpisodeIds,
+      previousEpisodeIds: existingEpisodeIds,
+      clinicalTime: input.clinicalTime,
+      anchors: [],
     };
+    if (!input.deferAnchors) plan.anchors = await this.planEpisodeAnchors(patientId, [plan]);
+    return plan;
+  }
+
+  /**
+   * Plans the start of every episode one or more event corrections change, over their combined
+   * result (data-model.md → "An episode starts at its earliest entry"). Reads only. An episode is
+   * affected when an event joins or leaves it, or when a member's clinical time changes. Throws:
+   *  - 400 EPISODE_LAST_ENTRY — the result leaves an episode with no members;
+   *  - 400 EPISODE_TIME_ORDER_INVALID — the result leaves a resolved episode with other members
+   *    whose resolving entry is strictly earlier than all of them, when it did not already.
+   */
+  async planEpisodeAnchors(patientId: string, plans: EventEpisodeCorrectionPlan[]): Promise<EpisodeAnchorWrite[]> {
+    const affected = new Set<string>();
+    for (const p of plans) {
+      if (p.rewritePivot) {
+        for (const id of p.previousEpisodeIds) if (!p.episodeIds.includes(id)) affected.add(id);
+        for (const id of p.episodeIds) if (!p.previousEpisodeIds.includes(id)) affected.add(id);
+        for (const id of [...p.resolveEpisodeIds, ...p.reopenEpisodeIds]) affected.add(id);
+      }
+      if (p.clinicalTime !== undefined) {
+        for (const id of uniq([...p.previousEpisodeIds, ...p.episodeIds])) affected.add(id);
+      }
+    }
+    if (!affected.size) return [];
+
+    const state = await this.loadEpisodeMembers(patientId, [...affected]);
+    const writes: EpisodeAnchorWrite[] = [];
+    for (const [episodeId, before] of state) {
+      const members = new Map(before.members.map((m) => [eventKey(m.type, m.id), { ...m }]));
+      let resolver = before.resolver;
+      for (const p of plans) {
+        const key = eventKey(p.eventType, p.eventId);
+        if (p.rewritePivot) {
+          if (p.episodeIds.includes(episodeId)) {
+            if (!members.has(key)) {
+              const time = p.clinicalTime ?? (await this.resolveEventTimestamp(p.eventType, p.eventId));
+              if (time !== null) members.set(key, { type: p.eventType, id: p.eventId, time });
+            }
+          } else {
+            members.delete(key);
+          }
+          if (p.reopenEpisodeIds.includes(episodeId)) resolver = null;
+          if (p.resolveEpisodeIds.includes(episodeId)) resolver = { type: p.eventType, id: p.eventId };
+        }
+        if (p.clinicalTime !== undefined && members.has(key)) members.get(key)!.time = p.clinicalTime;
+      }
+      const after = [...members.values()];
+      if (!after.length) throw new BadRequestException('EPISODE_LAST_ENTRY');
+      // Only a change can trip the ordering rule: data that was already inverted stays readable and
+      // correctable rather than failing every unrelated edit.
+      if (endsAtItsStart(after, resolver) && !endsAtItsStart(before.members, before.resolver)) {
+        throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
+      }
+      const start = pickEpisodeStart(after, resolver)!;
+      writes.push({ episodeId, startedAtType: start.type, startedAtId: start.id });
+    }
+    return writes;
   }
 
   /**
@@ -340,6 +418,170 @@ export class EpisodesService {
           ),
         );
     }
+    await this.applyEpisodeAnchors(tx, plan.anchors);
+  }
+
+  /**
+   * Writes start moves: `startedAtType`/`startedAtId` on the episode, and `startsEpisode` on that
+   * member's pivot row and no other (data-model.md → EpisodeEventPivot). Writes only; `handle` is a
+   * transaction or the plain db. Runs after the pivot rewrites, so it flags the rows they wrote.
+   */
+  async applyEpisodeAnchors(handle: any, anchors: EpisodeAnchorWrite[]): Promise<void> {
+    for (const a of anchors) {
+      await handle
+        .update(episodes)
+        .set({ startedAtType: a.startedAtType, startedAtId: a.startedAtId })
+        .where(eq(episodes.id, a.episodeId));
+      await handle
+        .update(episodesEventsPivot)
+        .set({ startsEpisode: false })
+        .where(and(eq(episodesEventsPivot.episodeId, a.episodeId), eq(episodesEventsPivot.startsEpisode, true)));
+      await handle
+        .update(episodesEventsPivot)
+        .set({ startsEpisode: true })
+        .where(
+          and(
+            eq(episodesEventsPivot.episodeId, a.episodeId),
+            eq(episodesEventsPivot.eventType, a.startedAtType),
+            eq(episodesEventsPivot.eventId, a.startedAtId),
+            eq(episodesEventsPivot.resolvesEpisode, false),
+          ),
+        );
+    }
+  }
+
+  /**
+   * Current members (non-resolving pivot rows, plus the resolving entry should its membership row
+   * have been lost — ISSUES #35) with their clinical times, and the resolving entry, per episode.
+   * Members whose entry no longer exists are left out. Reads only.
+   */
+  private async loadEpisodeMembers(
+    patientId: string | null,
+    episodeIds: string[],
+    rows?: any[],
+  ): Promise<Map<string, { row: any; members: EpisodeEventAt[]; resolver: { type: EpisodeEventType; id: string } | null; flagged: string[] }>> {
+    const db = this.db.db as any;
+    const out = new Map<string, any>();
+    if (!episodeIds.length) return out;
+    const episodeRows =
+      rows ??
+      (await db
+        .select()
+        .from(episodes)
+        .where(
+          patientId
+            ? and(eq(episodes.patientId, patientId), inArray(episodes.id, episodeIds))
+            : inArray(episodes.id, episodeIds),
+        ));
+    const pivots = await db.select().from(episodesEventsPivot).where(inArray(episodesEventsPivot.episodeId, episodeIds));
+
+    const refsByEpisode = new Map<string, Map<string, { type: EpisodeEventType; id: string }>>();
+    for (const r of episodeRows) refsByEpisode.set(r.id, new Map());
+    for (const p of pivots) {
+      if (p.resolvesEpisode) continue;
+      refsByEpisode.get(p.episodeId)?.set(eventKey(p.eventType, p.eventId), { type: p.eventType, id: p.eventId });
+    }
+    for (const r of episodeRows) {
+      if (r.status === 'resolved' && r.endedAtId) {
+        refsByEpisode.get(r.id)!.set(eventKey(r.endedAtType, r.endedAtId), { type: r.endedAtType, id: r.endedAtId });
+      }
+    }
+    const allRefs = [...refsByEpisode.values()].flatMap((m) => [...m.values()]);
+    const times = await this.eventTimes(allRefs);
+
+    for (const r of episodeRows) {
+      const members: EpisodeEventAt[] = [];
+      for (const ref of refsByEpisode.get(r.id)!.values()) {
+        const time = times.get(eventKey(ref.type, ref.id));
+        if (time !== undefined) members.push({ ...ref, time });
+      }
+      out.set(r.id, {
+        row: r,
+        members,
+        resolver: r.status === 'resolved' && r.endedAtId ? { type: r.endedAtType, id: r.endedAtId } : null,
+        flagged: pivots
+          .filter((p: any) => p.episodeId === r.id && p.startsEpisode)
+          .map((p: any) => eventKey(p.eventType, p.eventId)),
+      });
+    }
+    return out;
+  }
+
+  /** Clinical times for a set of entries, keyed `type:id`. Two queries whatever the count. */
+  private async eventTimes(refs: Array<{ type: EpisodeEventType; id: string }>): Promise<Map<string, number>> {
+    const db = this.db.db as any;
+    const obsIds = uniq(refs.filter((r) => r.type === 'observation').map((r) => r.id));
+    const intIds = uniq(refs.filter((r) => r.type === 'intervention').map((r) => r.id));
+    const out = new Map<string, number>();
+    if (obsIds.length) {
+      const rows = await db
+        .select({ id: observations.id, at: observations.observedAt })
+        .from(observations)
+        .where(inArray(observations.id, obsIds));
+      for (const r of rows) out.set(eventKey('observation', r.id), normalizeTs(r.at)!);
+    }
+    if (intIds.length) {
+      const rows = await db
+        .select({ id: interventions.id, at: interventions.performedAt })
+        .from(interventions)
+        .where(inArray(interventions.id, intIds));
+      for (const r of rows) out.set(eventKey('intervention', r.id), normalizeTs(r.at)!);
+    }
+    return out;
+  }
+
+  /**
+   * Self-healing on read and after an entry create (data-model.md → "An episode starts at its
+   * earliest entry" → Self-healing on read). Recomputes the start of each given episode from its
+   * current members and, where the stored `startedAt*` or the `startsEpisode` flags disagree, writes
+   * the correction. Idempotent: two pods healing the same row write the same values. Returns the
+   * rows with the corrected anchor, so a read answers with it. An episode with no readable members
+   * is left exactly as stored.
+   */
+  async reconcileEpisodeStarts<T extends { id: string; startedAtType: string; startedAtId: string }>(rows: T[]): Promise<T[]> {
+    if (!rows.length) return rows;
+    const state = await this.loadEpisodeMembers(null, rows.map((r) => r.id), rows);
+    const writes: EpisodeAnchorWrite[] = [];
+    const fixed = rows.map((r) => {
+      const s = state.get(r.id);
+      const start = s ? pickEpisodeStart(s.members, s.resolver) : null;
+      if (!start) return r;
+      const key = eventKey(start.type, start.id);
+      const flagsRight = s!.flagged.length === 1 && s!.flagged[0] === key;
+      if (r.startedAtType === start.type && r.startedAtId === start.id && flagsRight) return r;
+      writes.push({ episodeId: r.id, startedAtType: start.type, startedAtId: start.id });
+      return { ...r, startedAtType: start.type, startedAtId: start.id };
+    });
+    if (writes.length) await this.applyEpisodeAnchors(this.db.db as any, writes);
+    return fixed;
+  }
+
+  /** `reconcileEpisodeStarts` for episodes known only by id (the entry create paths). */
+  async reconcileEpisodeStartsById(patientId: string, episodeIds: string[]): Promise<void> {
+    const ids = uniq(episodeIds);
+    if (!ids.length) return;
+    const db = this.db.db as any;
+    const rows = await db
+      .select()
+      .from(episodes)
+      .where(and(eq(episodes.patientId, patientId), inArray(episodes.id, ids)));
+    await this.reconcileEpisodeStarts(rows);
+  }
+
+  /**
+   * Entry create's half of EPISODE_TIME_ORDER_INVALID (data-model.md → "An episode may not end at
+   * its start…"): a new entry at `time` that resolves an episode may not be strictly earlier than
+   * every one of that episode's current members. Reads only — call before the entry is written.
+   * Ids that are not this patient's episodes are skipped; `assertEpisodesBelongToPatient` owns that.
+   */
+  async assertResolvingTimeOrder(patientId: string, resolvesEpisodeIds: string[] | undefined, time: number): Promise<void> {
+    if (!resolvesEpisodeIds?.length) return;
+    const state = await this.loadEpisodeMembers(patientId, uniq(resolvesEpisodeIds));
+    for (const s of state.values()) {
+      if (s.members.length && s.members.every((m) => time < m.time)) {
+        throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
+      }
+    }
   }
 
   // "Derived fields computed at query time: startedAt, resolvedAt from linked events" (data-model.md).
@@ -357,8 +599,8 @@ export class EpisodesService {
     const db = this.db.db as any;
     const rows = await db.select().from(episodes).where(eq(episodes.id, episodeId)).limit(1);
     if (!rows.length) throw new NotFoundException('EPISODE_NOT_FOUND');
-    const row = rows[0];
-    await this.ensurePatientAccess(row.patientId, userId);
+    await this.ensurePatientAccess(rows[0].patientId, userId);
+    const [row]: any[] = await this.reconcileEpisodeStarts(rows);
 
     const pivots = await db
       .select()
@@ -397,7 +639,7 @@ export class EpisodesService {
   async listForPatient(patientId: string, userId: string, status?: 'active' | 'resolved'): Promise<Episode[]> {
     const db = this.db.db as any;
     await this.ensurePatientAccess(patientId, userId);
-    let rows = await db.select().from(episodes).where(eq(episodes.patientId, patientId));
+    let rows: any[] = await this.reconcileEpisodeStarts(await db.select().from(episodes).where(eq(episodes.patientId, patientId)));
     if (status) {
       rows = rows.filter((r: any) => r.status === status);
     }
@@ -440,9 +682,13 @@ export class EpisodesService {
       .from(careTeamMemberships)
       .where(and(inArray(careTeamMemberships.patientId, patientIds), eq(careTeamMemberships.userId, userId)));
     const allowed = new Set(membershipRows.map((m: any) => m.patientId));
+    const visible = rows.filter((r: any) => r.patient && allowed.has(r.patient.id));
+    const healed = new Map(
+      (await this.reconcileEpisodeStarts(visible.map((r: any) => r.episode))).map((e: any) => [e.id, e]),
+    );
 
-    return rows
-      .filter((r: any) => r.patient && allowed.has(r.patient.id))
+    return visible
+      .map((r: any) => ({ ...r, episode: healed.get(r.episode.id) }))
       .map((r: any): ActiveEpisodeSummary => ({
         id: r.episode.id,
         patientId: r.patient.id,

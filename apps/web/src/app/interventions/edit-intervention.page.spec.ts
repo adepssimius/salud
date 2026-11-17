@@ -212,12 +212,13 @@ describe('EditInterventionPage', () => {
     expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', { amountMg: 120 });
   });
 
-  it('shows the episode this dose started checked and locked, with no new-episode option', () => {
+  it('shows the episode this dose started attached but detachable, with no new-episode option', () => {
     const { el } = render();
-    // The only episode, so the picker's single "attached" branch — and no detach button on it.
+    // The only episode, so the picker's single "attached" branch — with its detach button, since
+    // unlinking the start moves it to the next-earliest entry (data-model.md).
     expect(el.querySelector('app-episode-attachment .pill')?.textContent).toContain('Fever');
-    expect(el.querySelector('app-episode-attachment .chip-remove')).toBeNull();
-    expect(el.textContent).toContain('This entry started this episode');
+    expect(el.querySelector('app-episode-attachment .chip-remove')).not.toBeNull();
+    expect(el.textContent).not.toContain('This entry started this episode');
     expect(el.textContent).not.toMatch(/start a new episode/i);
   });
 
@@ -229,7 +230,7 @@ describe('EditInterventionPage', () => {
     expect(el.querySelector('.error')?.textContent).toContain('Enter the amount in mg.');
   });
 
-  it.each(['FIELD_NOT_CORRECTABLE', 'CANNOT_UNLINK_STARTED_EPISODE', 'EPISODE_TIME_ORDER_INVALID'] as const)(
+  it.each(['FIELD_NOT_CORRECTABLE', 'EPISODE_LAST_ENTRY', 'EPISODE_TIME_ORDER_INVALID'] as const)(
     'shows the %s sentence and keeps the form filled',
     (code) => {
       apiMock.patch.mockReturnValue(throwError(() => ({ status: 400, error: { message: code, fields: ['type'] } })));
