@@ -641,6 +641,24 @@ inline pre-save preview and the actual save path on `POST /api/patients/:patient
   - **`nextAllowedAt`**: computed forward from `occurredAt` using the resolved guideline's
     `minIntervalHours` (weight-based) or `24 / frequencyPerDay` hours (age-band, when no
     weight-based interval is available). `null` when neither yields an interval.
+  - **Live availability — `canGiveAt` / `limitedBy`** (served on `GET /api/dashboard`'s dose rows
+    and `GET .../recent-medications`, never stored): the earliest moment a **repeat of the
+    patient's latest dose of that medication** would clear *both* checks a save applies, computed
+    at request time from this patient's doses:
+    - the interval: the latest dose's own frozen `nextAllowedAt` — the same value the save's
+      `interval_too_short` check reads;
+    - the daily maximum: the guideline `maxMgPerDay` (weight-based, else age-band) resolved exactly
+      as a dose-check would — the latest dose's embodiment, the patient's age now — over the same
+      trailing-24h window. The answer is the first moment the doses still inside the window plus
+      the repeat amount (the latest dose's `amountMg`) no longer exceed the max. A latest dose with
+      no `amountMg` counts as a repeat of 0 mg, so it waits only for the window to fall to the max.
+    - `canGiveAt` is the later of the two; `limitedBy` says which one set it (`'interval'` |
+      `'daily_max'`; `'interval'` on a tie). Both are `null` when the guideline supplies neither an
+      interval nor a daily max — *no guidance*, not *cannot give*. A time in the past means both
+      checks are already clear. It is a time, not a boolean, so it stays right as the clock moves
+      until the next dose is logged.
+    - It predicts only what the save's interval and daily-total checks would say about the same
+      amount; max-per-dose, reactions and stale weight remain the dose form's dose-check.
   - **mL derivation**: `weightBased.computedMl` is `computedMg ÷ concentrationMgPerMl` of the
     **selected embodiment**, and `null` when no embodiment was supplied or it has no concentration
     (tablets and capsules). The caregiver is holding a syringe, not a scale — and per the rule at the
@@ -843,7 +861,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     model"); the most common dose of all is the 3 AM one logged with no episode at all, and it must
     still reach the dashboard.
   - Response includes:
-    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource } ] } ]`
+    - `lastDoses`: `[ { patientId, patientName, accentColor, doses: [ { medicationId, medicationName, lastDoseAt, nextAllowedAt, canGiveAt, limitedBy, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource } ] } ]`
       — the most recent dose of each distinct medication **in the last 24 hours**, per patient,
       **episode-agnostic**. This is the direct answer to product.md's founding question ("did I
       already give Tylenol?").
@@ -865,6 +883,10 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - `nextAllowedAt` is the frozen value written into the dose's metadata at log time (see
         "Dosing engine"), not a live recomputation. `null` means "no guideline supplied an
         interval" — that is *no guidance*, not *cannot give*.
+      - `canGiveAt` / `limitedBy` are the live answer to "can I give it now?" — interval **and**
+        daily maximum, computed at request time from the patient's latest dose of that
+        medication (see "Dosing engine" → "Live availability"). This, not `nextAllowedAt`, is what
+        any "can give now" reads; `nextAllowedAt` alone never checked the daily total.
     - `whatsNew`: `[ { patientId, patientName, accentColor, since, eventCount, advisoryCount, nowDueCount } ]`
       — the "While You Were Asleep" diff reduced to counts, so the dashboard card renders from the
       one dashboard request instead of fanning out to `GET .../whats-new` per patient. `since` is the
@@ -891,11 +913,13 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       - The card and the WYWA page are computed at two different request times, so an event landing
         between them can legitimately make the card say 3 and the page show 4. That is staleness, not
         a defect — the definitions are shared in code precisely so a genuine mismatch can't happen.
-    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource }] } ]`
+    - `activeEpisodes`: `[ { patientId, patientName, accentColor, episodeId, name, startedAt, lastObservationSummary, medications: [{ medicationId, medicationName, lastDoseAt, nextAllowedAt, canGiveAt, limitedBy, isAtypicalLastDose, lastEmbodimentId, lastEmbodimentLabel, lastAmountMg, lastAmountMl, lastDoseSource }] } ]`
       — `medications` stays deliberately **episode-scoped**: it answers "what was given inside this
       episode", which the patient-scoped 24h `lastDoses` above deliberately does not. The `last*`
       fields match `lastDoses[].doses` above, same source and same purpose — the sick card merges
       the two arrays and either can win the merge, so both must carry the prefill.
+      `canGiveAt` / `limitedBy` are computed over **all** of the patient's doses of that
+      medication, not just the episode's — the daily window does not stop at an episode boundary.
     - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean } ]`
     - `shoppingList`: `[ { embodimentId, medicationId, medicationName, label, runningLowFlaggedAt } ]`
       — embodiments across all the caregiver's patients' shared catalog currently flagged
@@ -942,11 +966,14 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     [ { "medicationId": "...", "medicationName": "...", "lastDoseAt": 0, "lastAmountMg": 0,
         "lastAmountMl": 0, "lastEmbodimentId": "...", "lastEmbodimentLabel": "...",
         "lastDoseSource": "weight_based|age_based|override|schedule",
-        "nextAllowedAt": 0, "isAtypicalLastDose": false, "onActiveSchedule": false } ]
+        "nextAllowedAt": 0, "canGiveAt": 0, "limitedBy": "interval|daily_max",
+        "isAtypicalLastDose": false, "onActiveSchedule": false } ]
     ```
   - `last*` fields and `nextAllowedAt` come from this patient's most recent dose of that medication
     (`nextAllowedAt` frozen at log time, same as the dashboard's — `null` means no guideline
     supplied an interval); all of them are `null` for a scheduled medication never yet given.
+    `canGiveAt` / `limitedBy` are the live interval-and-daily-max answer, exactly as on the
+    dashboard (see "Dosing engine" → "Live availability"); `null` for a medication never given.
     Ordered most-recent-dose-first, never-given schedule entries last.
   - **Per-patient by construction, never merged across patients.** Two children on the same
     medication at different weight-based amounts is the normal concurrent-illness case; a prefill
