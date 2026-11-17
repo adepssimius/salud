@@ -278,6 +278,7 @@ describe('ScheduleDetailPage', () => {
       expect(text).toContain('Skip it and give the next dose as usual');
       expect(text).toContain('“per the label”');
       expect(text).toContain('Skip this dose and give the next one as usual');
+      expect(fixture.nativeElement.querySelector('[data-testid=missed-dose-help]').textContent).toContain('later doses stay at their usual times');
       const skipButton = Array.from(fixture.nativeElement.querySelectorAll('.missed-actions button') as NodeListOf<HTMLButtonElement>).find((b) =>
         b.textContent!.includes('Skip this dose'),
       )!;

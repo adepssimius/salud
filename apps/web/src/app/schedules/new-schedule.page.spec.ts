@@ -405,6 +405,33 @@ describe('NewSchedulePage', () => {
     expect(body.missedDoseCutoffHours).toBeUndefined();
   });
 
+  it('explains the chosen missed-dose instruction and course effect, changing with the selection', () => {
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    const help = () => fixture.nativeElement.querySelector('[data-testid=missed-dose-help]')?.textContent.trim();
+    const effectHelp = () => fixture.nativeElement.querySelector('[data-testid=course-effect-help]')?.textContent.trim();
+    comp.form.patchValue({ frequencyHours: 6 });
+    fixture.detectChanges();
+    expect(help()).toContain('No advice');
+
+    comp.form.patchValue({ missedDoseAction: 'take_late_restart' });
+    fixture.detectChanges();
+    expect(help()).toContain('the next is due 6 hours after it, so every later dose moves back by however late it was');
+
+    comp.form.patchValue({ missedDoseAction: 'take_late_keep_times' });
+    fixture.detectChanges();
+    expect(help()).toContain('Later doses stay at their usual times');
+    expect(effectHelp()).toBeUndefined();
+
+    comp.form.patchValue({ endAfterOccurrences: 10, missedDoseCourseEffect: 'end_on_date' });
+    fixture.detectChanges();
+    expect(effectHelp()).toContain('after 10 doses means 10 planned times, skipped ones included');
+    comp.form.patchValue({ missedDoseCourseEffect: 'finish_every_dose' });
+    fixture.detectChanges();
+    expect(effectHelp()).toContain('Each skipped dose adds one at the end');
+  });
+
   // ── Editing (frontend.md → Schedule detail → "Editing") ───────────────────────────────────
   describe('editing at /schedules/:id/edit', () => {
     const stored = (over: Record<string, any> = {}) => ({
@@ -467,6 +494,16 @@ describe('NewSchedulePage', () => {
       expect(body.timeZone).toBeUndefined();
       expect(apiMock.post).not.toHaveBeenCalled();
       expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1']);
+    });
+
+    it('explains the stored instruction, and follows a change to it', () => {
+      const { fixture, comp } = open(stored());
+      const help = () => fixture.nativeElement.querySelector('[data-testid=missed-dose-help]').textContent.trim();
+      expect(help()).toContain("Don't give the missed dose; later doses stay at their usual times.");
+      expect(fixture.nativeElement.querySelector('[data-testid=course-effect-help]').textContent).toContain('a course of 10 doses runs until 10 are given');
+      comp.form.patchValue({ missedDoseAction: 'take_late_restart' });
+      fixture.detectChanges();
+      expect(help()).toContain('the next is due 8 hours after it, so every later dose moves back by however late it was. The last dose moves back too.');
     });
 
     it("never overwrites a name the caregiver typed", () => {
