@@ -142,6 +142,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
           [episodes]="activeEpisodes()"
           [selectedIds]="selectedEpisodeIds()"
           [createNew]="createNewEpisode()"
+          [behindMore]="compact()"
           [newEpisodeName]="form.getRawValue().startEpisodeName"
           [resolveSelected]="!!form.getRawValue().resolveSelected"
           (selectedIdsChange)="setEpisodeSelection($event)"

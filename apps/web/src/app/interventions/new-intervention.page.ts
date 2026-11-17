@@ -131,6 +131,7 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
           [episodes]="activeEpisodes()"
           [selectedIds]="selectedEpisodeIds()"
           [createNew]="createNewEpisode()"
+          [behindMore]="compact()"
           [newEpisodeName]="form.getRawValue().startEpisodeName"
           [resolveSelected]="!!form.getRawValue().resolveSelected"
           (selectedIdsChange)="setEpisodeSelection($event)"

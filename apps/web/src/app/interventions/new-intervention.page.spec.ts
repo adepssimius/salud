@@ -105,6 +105,26 @@ describe('NewInterventionPage', () => {
     });
   });
 
+  // frontend.md → Quick Log → "Episode attachment": the full dose form shows the start control
+  // without opening anything, the same as the full observation form.
+  for (const [label, episodes] of [
+    ['no active episode', []],
+    ['one active episode', [{ id: 'ep1', name: 'Fever' }]],
+  ] as const) {
+    it(`shows "Start a new episode" with no More to open on the full form — ${label}`, () => {
+      queryParams = { patientId: 'p1' };
+      apiMock.get.mockImplementation((path: string) => {
+        if (path.includes('/episodes')) return of([...episodes]);
+        return of([{ id: 'p1', fullName: 'Kiddo' }]);
+      });
+      const fixture = TestBed.createComponent(NewInterventionPage);
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.textContent).toContain('Start a new episode');
+      expect(Array.from(el.querySelectorAll('button')).some((b) => b.textContent!.trim() === 'More')).toBe(false);
+    });
+  }
+
   it('loads patients and submits medication dose', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path.includes('/episodes')) {
@@ -760,6 +780,13 @@ describe('NewInterventionPage', () => {
       expect(el.querySelector('input[formControlName="amountMg"]')).not.toBeNull();
       expect(el.querySelector('input[formControlName="amountMl"]')).not.toBeNull();
       expect(el.querySelector('app-pill-count-input')).toBeNull();
+    });
+
+    // The quick tiles stay minimal: the episode options stay behind More there.
+    it('keeps "Start a new episode" behind More on the compact dose form', () => {
+      const el = render(repeatDose).nativeElement as HTMLElement;
+      expect(el.textContent).not.toContain('Start a new episode');
+      expect(Array.from(el.querySelectorAll('button')).some((b) => b.textContent!.trim() === 'More')).toBe(true);
     });
 
     it('renders the compact layout with the patient pinned and no patient or type picker', () => {
