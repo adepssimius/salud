@@ -28,6 +28,16 @@ assert {
   interventionIds: isDefined
   startedAt: isDefined
   endedAt: isDefined
+  schedules: isArray
+  medications: isArray
+}
+
+docs {
+  The single-episode read. Besides the ids it carries `schedules` (every schedule filed under this
+  episode, each with computed `adherence` — `expectedCount` capped at the course's end) and
+  `medications` (`{ id, name, embodiments: [{ id, label, dosageForm }] }` for every medicine a member
+  dose or one of those schedules names). Both are `[]` when there are none. See app-spec/api.md →
+  Episodes.
 }
 
 settings {

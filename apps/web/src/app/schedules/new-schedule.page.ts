@@ -5,12 +5,14 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../core/error-display';
+import { AmountBoxes, amountBoxesFor, boxShown } from '../interventions/dose-amount-sync';
 import {
   CreateScheduleDto,
   InterventionSchedule,
   Medication,
   MedicationEmbodiment,
   Patient,
+  ScheduleDosesResponse,
   ScheduleType,
 } from '@salud/shared/types';
 
@@ -95,20 +97,26 @@ import {
               </select>
             </label>
           </div>
-          <div class="grid">
-            <label class="field">
+          <!-- The embodiment decides which amount boxes show, as on the dose form (frontend.md →
+               "Dose entry"): a cream, ointment or gel has no amount to schedule, and a box holding
+               a value always shows so nothing is sent unseen. -->
+          <div class="grid" *ngIf="!noAmountBoxes(); else noAmount">
+            <label class="field" *ngIf="showBox('mg')">
               <span>Dose (mg)</span>
               <input type="number" step="0.01" formControlName="doseMg" />
             </label>
-            <label class="field">
+            <label class="field" *ngIf="showBox('ml')">
               <span>Dose (mL)</span>
               <input type="number" step="0.01" formControlName="doseMl" />
             </label>
-            <label class="field">
-              <span>Pill count</span>
+            <label class="field" *ngIf="showBox('pills')">
+              <span>{{ amountBoxes().count ?? 'Pill count' }}</span>
               <input type="number" step="0.5" formControlName="pillCount" />
             </label>
           </div>
+          <ng-template #noAmount>
+            <p class="muted small">No amount to measure for this form — say how much in the notes if it matters.</p>
+          </ng-template>
         </ng-container>
 
         <ng-container *ngIf="!isMedication()">
@@ -247,6 +255,8 @@ export class NewSchedulePage implements OnInit {
 
   prefillConditionId: string | null = null;
   prefillPatientId: string | null = null;
+  /** Set when opened from an episode's "Add a schedule" — saved under it, and back out to it. */
+  prefillEpisodeId: string | null = null;
 
   patients = signal<Patient[]>([]);
   activeEpisodes = signal<Array<{ id: string; name: string }>>([]);
@@ -285,8 +295,11 @@ export class NewSchedulePage implements OnInit {
   ngOnInit(): void {
     this.prefillConditionId = this.route.snapshot.queryParamMap.get('conditionId');
     this.prefillPatientId = this.route.snapshot.queryParamMap.get('patientId');
+    this.prefillEpisodeId = this.route.snapshot.queryParamMap.get('episodeId');
     if (this.prefillConditionId) {
       this.form.patchValue({ conditionId: this.prefillConditionId });
+    } else if (this.prefillEpisodeId) {
+      this.form.patchValue({ episodeId: this.prefillEpisodeId });
     }
 
     const user = this.auth.user();
@@ -361,6 +374,20 @@ export class NewSchedulePage implements OnInit {
     });
   }
 
+  amountBoxes(): AmountBoxes {
+    const id = this.form.controls.medicationEmbodimentId.value;
+    return amountBoxesFor(id ? this.embodiments().find((e) => e.id === id) : undefined);
+  }
+
+  showBox(box: 'mg' | 'ml' | 'pills'): boolean {
+    const control = box === 'mg' ? this.form.controls.doseMg : box === 'ml' ? this.form.controls.doseMl : this.form.controls.pillCount;
+    return boxShown(this.amountBoxes(), box) || control.value != null;
+  }
+
+  noAmountBoxes(): boolean {
+    return !this.showBox('mg') && !this.showBox('ml') && !this.showBox('pills');
+  }
+
   clearMedication() {
     this.selectedMedication.set(null);
     this.embodiments.set([]);
@@ -411,13 +438,29 @@ export class NewSchedulePage implements OnInit {
     }
 
     this.api.post<InterventionSchedule, CreateScheduleDto>(`/patients/${val.patientId}/schedules`, body).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.backOut();
-      },
+      next: (created) => this.offerLinkOrBackOut(created),
       error: (err) => {
         this.saving.set(false);
         this.error.set(errorText(err, 'Could not create schedule.'));
+      },
+    });
+  }
+
+  /**
+   * Doses of this medicine already logged since the schedule's start count as missed until they
+   * are linked (frontend.md → Schedule detail → "Linking existing doses"), so when there are any
+   * the form hands over to the schedule page with the link list open rather than backing out.
+   */
+  private offerLinkOrBackOut(created: InterventionSchedule) {
+    this.api.get<ScheduleDosesResponse>(`/schedules/${created.id}/doses`).subscribe({
+      next: (res) => {
+        this.saving.set(false);
+        if (res.candidates.length) this.router.navigate(['/schedules', created.id], { queryParams: { link: '1' } });
+        else this.backOut();
+      },
+      error: () => {
+        this.saving.set(false);
+        this.backOut();
       },
     });
   }
@@ -427,7 +470,9 @@ export class NewSchedulePage implements OnInit {
   }
 
   private backOut() {
-    if (this.prefillConditionId) {
+    if (this.prefillEpisodeId) {
+      this.router.navigate(['/episodes', this.prefillEpisodeId]);
+    } else if (this.prefillConditionId) {
       this.router.navigate(['/conditions', this.prefillConditionId]);
     } else {
       this.router.navigate(['/dashboard']);

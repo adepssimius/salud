@@ -587,6 +587,25 @@ derives from existing payloads:
   - **The ER Brief is the deliberate exception** and keeps wall-clock times: it is a clinical print
     document handed to triage staff, who need the actual time of the last dose, not its age.
 
+## Schedule detail
+- `schedule-detail.page.ts` at `/schedules/:id`: label, type, status, timing and next due, the
+  intended-vs-actual stats (logged, expected by now, missed, remaining), Log now / Pause / Resume /
+  Mark complete, notes. One request, `GET /api/schedules/:id/doses`, which carries the schedule
+  with its adherence alongside its doses.
+- **Doses.** Every dose on the schedule, newest first, each marked "from schedule" (logged with
+  Log now or from a due row) or "linked later". A dose linked later carries **Unlink**; one logged
+  from the schedule does not (api.md → "Linking existing doses").
+- **Linking existing doses.** Adherence counts linked doses only, so doses of this medicine given
+  and logged ad hoc before the schedule existed read as missed. When the API lists candidates, the
+  section says so in a sentence ("19 doses of this medicine were logged without this schedule
+  since it started, so they count as missed") with **Link existing doses**. That opens a checklist
+  of the candidates — date, time and amount — **all preselected**, since the usual case is that
+  they were all for this course; the caregiver unticks any that weren't and confirms
+  "Link N doses". The page then re-renders from the response: adherence and next due move at once.
+- **Offered right after creating a schedule.** When the new-schedule form saves a schedule that
+  already has candidates, it opens this page with the checklist open (`?link=1`) instead of backing
+  out to where it came from; with none it backs out as before.
+
 ## Conditions
 - `new-condition.page.ts`: patient (pre-selected from the entry point), name, diagnosis text,
   status, and editors for `baselines`/`devices`/`contacts` — each a simple add/remove list (plain
@@ -746,23 +765,97 @@ app. They therefore need somewhere to be entered.
 - `episode-detail.page.ts` at `/episodes/:episodeId` (ISSUES.md #9) — the entry point for "what
   happened during this episode", reachable from a timeline band, a patient's active-episode card on
   the dashboard, a condition's nested-episodes list, and the ER Brief's prior-episodes list.
-- Shows the episode name, status, and started/ended times; its events (`GET .../timeline?episodeId=`,
-  rendered with the same `describeEvent`/photo-thumbnail treatment as every other event list —
-  core/event-display.ts); and, when active, its medications' last-dose summary.
-- **Add entries** opens the same entry picker the new-episode form uses, over the patient's
-  entries not yet in this episode (`POST /api/episodes/:id/events` with `add`). Each event row
-  carries **Remove** (`remove`); the entry that started the episode — always its earliest entry —
-  also carries a "started this episode" pill, and both the pill and the "started …" time in the
-  header follow the start when an earlier entry is added or the start is removed (the page
-  re-renders from the `Episode` the call returns). When only one entry remains it has no Remove
-  (`EPISODE_LAST_ENTRY`). Removing the entry that resolved the episode asks for confirmation
-  first, because it reopens the episode.
-- **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation or
-  intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve endpoint. The
-  page's "Resolve this episode" action routes to `/observations/new` with this episode pre-selected
-  for `resolvesEpisodeIds`, the same review-and-confirm flow every other resolution goes through.
-- Links to the ER Brief scoped to this episode (`/patients/:id/er-brief?episodeId=...`, already
-  supported by the API) and back to the patient.
+- **Two requests**: `GET /api/episodes/:id` (which carries the episode's `schedules` with adherence
+  and the `medications` its doses and schedules name — api.md → Episodes) and
+  `GET .../timeline?episodeId=` for the hydrated events. Every dose line names its medicine through
+  `describeEvent`'s `medicationNames` (core/event-display.ts); none reads "medication dose".
+- **Mobile-first, and ordered by the questions a caregiver asks**, top to bottom:
+
+  **Header.** Name, status, **ER Brief** (scoped to this episode,
+  `/patients/:id/er-brief?episodeId=...`), **Resolve** while active, the episode's notes, and a
+  link back to the patient.
+  - **No direct "resolve" action.** Episodes are only resolved as the side effect of an observation
+    or intervention (CLAUDE.md → Episode model) — there is deliberately no `PATCH`/resolve
+    endpoint. **Resolve** routes to `/observations/new` with this episode pre-selected for
+    `resolvesEpisodeIds`, the same review-and-confirm flow every other resolution goes through.
+
+  **1. Where are we** — a summary of facts, each shown only when there is something to show:
+  - **Day N** (local calendar days, the start day being day 1) and the start date; a resolved
+    episode reads "Lasted N days" with both dates.
+  - **Treatment**: the episode's interventions grouped by medicine and embodiment —
+    "clotrimazole (1% cream) · 17 doses" — most-given first.
+  - **Last dose** (or last dressing change): what, when ("yesterday 8:10 PM"), and how long ago.
+  - **Last measurement**: the newest observation entry that is a reading — a vital, a pain score,
+    a lesion size, or a photo's `sizeCm` — with its date and age. When it is
+    **7 or more days old** it carries a "N days old" flag: the caregiver is comparing against a
+    number that may no longer describe the patient. A display nudge about the record's age, not a
+    clinical threshold.
+
+  **2. Are we keeping up** — the episode's schedules (`InterventionSchedule.episodeId`).
+  - Each schedule shows its label (through to `/schedules/:id`), and:
+    - **Compliance**: "12 of 16 due doses given", with "· 4 missed" when short. Doses due are
+      the schedule's slots from `startAt` to now, capped at `endAt` / `endAfterOccurrences`.
+    - **Which doses count: linked doses only**, as everywhere adherence is shown — a dose with
+      this schedule's `scheduleId`, whether logged from the schedule or linked to it afterwards.
+      Matching doses in the episode that are *not* linked (no `scheduleId`, the schedule's medicine
+      and embodiment, inside its window — exactly the schedule page's link candidates) are named,
+      not counted: "16 doses of this medicine in this episode aren't linked to the schedule, so
+      they don't count", with **Link them**, which opens the schedule page with its link checklist
+      open (`/schedules/:id?link=1`; "Schedule detail" → "Linking existing doses").
+    - **Progress through the course**, when it has an end: "Day 9 of 14" for an `endAt`, "17 of
+      28 doses" for `endAfterOccurrences`, both when both are set, with a bar. An open-ended
+      schedule shows compliance only.
+    - **Next due**: the schedule's own `nextDueAt` — "Next due today 8:00 PM · in 2h", or
+      "overdue — was due …" — so this page and the schedule page never disagree. Paused schedules
+      show "paused"; finished ones "course complete" and no next dose.
+  - **Add a schedule** (while active) opens the existing new-schedule form with the patient and
+    this episode pre-filled (`/schedules/new?patientId=&episodeId=`); saving returns here. With no
+    schedule the section says so in a sentence.
+  - **One cell per day of the episode**, start day to today (or the end), each with its day
+    number and dose count. **With no schedule** the cells are plain counts of the episode's
+    interventions — no target and no judgement (P6). **With schedules**, a cell counts the doses
+    linked to the schedules and shows "given/expected" against the slots the schedules planned
+    that day; a day that met its slots is marked met, a day that fell short is marked short, and a
+    day with no slots gets no mark. **Today is never short while a slot is still to come.**
+  - Days are the **browser's local days**, and the page computes the per-day slots itself, on the
+    browser's clock: "did we keep up on Tuesday" is about the viewer's Tuesday. The server reads
+    `explicitTimes` in the schedule's own `timeZone` (data-model.md → InterventionSchedule), so
+    the two agree whenever the viewer is in the schedule's zone — the household's normal case.
+
+  **3. Is it getting better** — shown when any observation in the episode carries a photo or a
+  size. Those observations side by side, **oldest → newest** (a progression is read forwards),
+  scrolling sideways on a phone: date, photo(s) and the size (a `lesion_size` summary, else a
+  photo's `sizeCm`, in the viewer's length unit). One with no photo says "No photo"; one with no
+  size says "No size recorded". With only one, a sentence says the next will sit beside it.
+
+  **4. What exactly happened** — the log.
+  - **Grouped by local day**, newest day first, each headed by a real date ("Sat, Nov 7"), each
+    entry with its clock time; rows link through to the entry's detail page, with photo
+    thumbnails, as before.
+  - **Routine runs collapse.** Two or more consecutive days holding nothing but the same routine
+    dose — an ordinary dose of one medicine and embodiment, not atypical, not the start or end —
+    fold into one line, "Nov 8 – Nov 12 · 10 × clotrimazole (1% cream)", which expands to the days.
+    Any day with anything else on it stays its own day.
+  - The entry that started the episode — always its earliest — carries a "started this episode"
+    pill; the one that ended it "ended it".
+  - **Membership editing sits behind an Edit button** in the log header, so a scrolling thumb
+    can't hit a Remove. Edit reveals **Add entries** (the entry picker the new-episode form uses,
+    over the patient's entries not yet in this episode — `POST /api/episodes/:id/events` with
+    `add`) and a **Remove** on each row (`remove`); runs expand while editing. Both the pill and
+    the start date follow the start when an earlier entry is added or the start is removed (the
+    page re-renders from the `Episode` the call returns). When only one entry remains it has no
+    Remove (`EPISODE_LAST_ENTRY`). Removing the entry that resolved the episode asks for
+    confirmation first, because it reopens the episode.
+- Advisories fired during the episode render as banners between the summary and "Keeping up".
+
+### New schedule form
+- `new-schedule.page.ts` at `/schedules/new`. Query params pre-fill it: `patientId`, and either
+  `conditionId` (from a condition — a standing regimen) or `episodeId` (from an episode's "Add a
+  schedule" — an acute course). It returns to where it came from: the episode, the condition, or
+  the dashboard.
+- **The embodiment decides which amount boxes show**, by the same rule as dose entry (see "Dose
+  entry"): a cream, ointment or gel course shows no mg, mL or count, says "No amount to measure for
+  this form", and is saved with no amount; a box holding a value always shows.
 
 ## Observation & intervention detail
 

@@ -33,13 +33,27 @@ const baseSchedule = {
   adherence: { expectedCount: 2, loggedCount: 1, missed: 1, remainingOccurrences: 9, overdue: false },
 };
 
+const dose = (id: string, linkedLater: boolean, performedAt = 1700001000) => ({
+  interventionId: id,
+  performedAt,
+  medicationEmbodimentId: null,
+  amountMg: 400,
+  amountMl: null,
+  pillCount: null,
+  doseSource: linkedLater ? 'override' : 'schedule',
+  recordedByUserId: 'u1',
+  linkedLater,
+});
+
+let queryParams: Record<string, string> = {};
+
 describe('ScheduleDetailPage', () => {
   let apiMock: any;
   let routerMock: any;
 
   beforeEach(async () => {
     apiMock = {
-      get: jest.fn().mockReturnValue(of(baseSchedule)),
+      get: jest.fn().mockReturnValue(of({ schedule: baseSchedule, linked: [], candidates: [] })),
       post: jest.fn(),
       patch: jest.fn(),
     };
@@ -50,7 +64,17 @@ describe('ScheduleDetailPage', () => {
       providers: [
         { provide: ApiClientService, useValue: apiMock },
         { provide: Router, useValue: routerMock },
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 's1']]) } } },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: new Map([['id', 's1']]),
+              get queryParamMap() {
+                return new Map(Object.entries(queryParams));
+              },
+            },
+          },
+        },
       ],
     }).compileComponents();
   });
@@ -58,7 +82,7 @@ describe('ScheduleDetailPage', () => {
   it('loads the schedule and renders adherence stats', () => {
     const fixture = TestBed.createComponent(ScheduleDetailPage);
     fixture.detectChanges();
-    expect(apiMock.get).toHaveBeenCalledWith('/schedules/s1');
+    expect(apiMock.get).toHaveBeenCalledWith('/schedules/s1/doses');
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Amoxicillin q8h');
     expect(text).toContain('logged');
@@ -74,8 +98,10 @@ describe('ScheduleDetailPage', () => {
     const comp = fixture.componentInstance;
     comp.logNow();
     expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/log', {});
-    expect(comp.schedule()?.adherence.loggedCount).toBe(2);
     expect(comp.logging()).toBe(false);
+    // The schedule's doses list changed too, so the page re-reads it.
+    expect(apiMock.get).toHaveBeenCalledTimes(2);
+    expect(apiMock.get).toHaveBeenLastCalledWith('/schedules/s1/doses');
   });
 
   it('pause/resume/complete PATCH the correct status', () => {
@@ -97,12 +123,16 @@ describe('ScheduleDetailPage', () => {
   it('names the stored zone beside fixed times only when it differs from the browser', () => {
     const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const other = browserZone === 'Pacific/Auckland' ? 'America/Chicago' : 'Pacific/Auckland';
-    apiMock.get.mockReturnValue(of({ ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00', '20:00'], timeZone: other }));
+    apiMock.get.mockReturnValue(
+      of({ schedule: { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00', '20:00'], timeZone: other }, linked: [], candidates: [] }),
+    );
     let fixture = TestBed.createComponent(ScheduleDetailPage);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain(`${other} time`);
 
-    apiMock.get.mockReturnValue(of({ ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00'], timeZone: browserZone }));
+    apiMock.get.mockReturnValue(
+      of({ schedule: { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00'], timeZone: browserZone }, linked: [], candidates: [] }),
+    );
     fixture = TestBed.createComponent(ScheduleDetailPage);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).not.toContain(`${browserZone} time`);
@@ -112,7 +142,7 @@ describe('ScheduleDetailPage', () => {
   it('offers to set the browser zone on a fixed-time schedule that has none, and PATCHes it', () => {
     const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const legacy = { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00'], timeZone: null };
-    apiMock.get.mockReturnValue(of(legacy));
+    apiMock.get.mockReturnValue(of({ schedule: legacy, linked: [], candidates: [] }));
     apiMock.patch.mockReturnValue(of({ ...legacy, timeZone: browserZone }));
     const fixture = TestBed.createComponent(ScheduleDetailPage);
     fixture.detectChanges();
@@ -128,5 +158,47 @@ describe('ScheduleDetailPage', () => {
     fixture.detectChanges();
     fixture.componentInstance.backToDashboard();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/dashboard']);
+  });
+
+  describe('linking existing doses', () => {
+    afterEach(() => (queryParams = {}));
+
+    it('offers the unlinked doses, all preselected, and links the ones left ticked', () => {
+      apiMock.get.mockReturnValue(of({ schedule: baseSchedule, linked: [], candidates: [dose('a', false), dose('b', false)] }));
+      apiMock.post.mockReturnValue(
+        of({ schedule: { ...baseSchedule, adherence: { ...baseSchedule.adherence, loggedCount: 1 } }, linked: [dose('a', true)], candidates: [dose('b', false)] }),
+      );
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('2 doses of this medicine were logged without this schedule');
+      const comp = fixture.componentInstance;
+      comp.startLinking();
+      fixture.detectChanges();
+      expect([...comp.picked()]).toEqual(['a', 'b']);
+      comp.togglePick('b');
+      comp.linkPicked();
+      expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/doses', { link: ['a'] });
+      expect(comp.linking()).toBe(false);
+      expect(comp.linked()[0].linkedLater).toBe(true);
+    });
+
+    it('opens the link list straight away when sent from the new-schedule form', () => {
+      queryParams = { link: '1' };
+      apiMock.get.mockReturnValue(of({ schedule: baseSchedule, linked: [], candidates: [dose('a', false)] }));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      expect(fixture.componentInstance.linking()).toBe(true);
+    });
+
+    it('offers Unlink only on a dose linked later', () => {
+      apiMock.get.mockReturnValue(of({ schedule: baseSchedule, linked: [dose('a', true), dose('b', false)], candidates: [] }));
+      apiMock.post.mockReturnValue(of({ schedule: baseSchedule, linked: [dose('b', false)], candidates: [dose('a', false)] }));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      const buttons = fixture.nativeElement.querySelectorAll('button.unlink');
+      expect(buttons).toHaveLength(1);
+      buttons[0].click();
+      expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/doses', { unlink: ['a'] });
+    });
   });
 });

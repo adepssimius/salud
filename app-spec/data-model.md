@@ -459,6 +459,8 @@ episodes.
   - `amountMgDerived: boolean` — `true` when `amountMg` was derived as above rather than entered.
     Reserved (server-written). A later correction that changes only the volume or pill count
     re-derives a derived `amountMg`; an entered one is never touched.
+  - `scheduleLinked: boolean` — `true` when the dose was linked to its schedule after it was
+    logged (see InterventionSchedule → Linking). Reserved (server-written); absent otherwise.
   - `amountMl: decimal | null`
   - `pillCount: decimal | null` — partial pills allowed (¼, ⅓, ½, ⅔, ¾ in the form; any positive
     decimal on the wire, so ⅓ is stored as 0.3333…).
@@ -577,8 +579,9 @@ episodes.
     see "Data integrity rules"): a standing regimen belongs to a Condition directly, while an
     acute course belongs to the Episode it was prescribed for.
   - `label: string` (e.g., "Amoxicillin q8h", "Nightly dressing")
-  - Medication fields:
-    - `doseMg: decimal`
+  - Medication fields — all optional; a cream, ointment or gel course has no amount to schedule
+    (`MedicationEmbodiment.dosageForm`), so a schedule may carry none of them:
+    - `doseMg: decimal | null`
     - `doseMl: decimal | null`
     - `pillCount: decimal | null`
   - Dressing change fields:
@@ -608,6 +611,11 @@ episodes.
   - `createdAt`, `updatedAt`
 - Linking:
   - When an intervention is logged from a schedule, `interventionScheduleId` is stored on the intervention.
+  - A dose logged ad hoc can be linked to a schedule afterwards, and unlinked again, only through the
+    schedule's explicit "Linking existing doses" action (api.md → Intervention schedules) — never a
+    dose correction. Such a dose carries the reserved `metadata.scheduleLinked: true`, keeps its
+    own `doseSource`, and gets a `Revision` per change. Only these can be unlinked; a dose logged
+    from the schedule stays linked.
 
 
 ### FileAsset
@@ -774,7 +782,11 @@ the snapshot's contents do.
   (advisories.md → "Stale weight").
 - `ScheduleAdherence` (per `InterventionSchedule`, computed on read — intended-vs-actual, F-4.3):
   - `expectedCount`: how many occurrences should have happened between `startAt` and now, derived
-    from `frequencyHours` or `explicitTimes`.
+    from `frequencyHours` or `explicitTimes` — **capped at the course's end**: slots after `endAt`
+    do not count, and the count never exceeds `endAfterOccurrences`. Without the cap a finished
+    course would keep accruing missed doses forever. Fixed `explicitTimes` slots are read in the
+    schedule's `timeZone` (`InterventionSchedule.timeZone`); only a row with no stored zone falls
+    back to the server's clock.
   - `loggedCount`: doses actually logged against this schedule (`intervention.scheduleId` match).
   - `missed`: `max(0, expectedCount - loggedCount)`.
   - `remainingOccurrences`: `endAfterOccurrences - loggedCount` when `endAfterOccurrences` is set

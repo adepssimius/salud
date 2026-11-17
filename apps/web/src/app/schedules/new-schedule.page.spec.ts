@@ -14,7 +14,9 @@ describe('NewSchedulePage', () => {
   beforeEach(async () => {
     queryParams = {};
     apiMock = {
-      get: jest.fn().mockReturnValue(of([{ id: 'p1', fullName: 'Patient 1' }])),
+      get: jest.fn((path: string) =>
+        path.endsWith('/doses') ? of({ schedule: {}, linked: [], candidates: [] }) : of([{ id: 'p1', fullName: 'Patient 1' }]),
+      ),
       post: jest.fn(),
     };
     authMock = {
@@ -169,5 +171,70 @@ describe('NewSchedulePage', () => {
     expect(body.conditionId).toBe('cond-1');
     expect(body.episodeId).toBeUndefined();
     expect(routerMock.navigate).toHaveBeenCalledWith(['/conditions', 'cond-1']);
+  });
+
+  // frontend.md → Schedule detail → "Linking existing doses": doses already logged since the
+  // schedule's start would read as missed, so the form hands over to the link list.
+  it('opens the new schedule with its link list when matching doses were already logged', () => {
+    apiMock.get.mockImplementation((path: string) =>
+      path.endsWith('/doses')
+        ? of({ schedule: {}, linked: [], candidates: [{ interventionId: 'i1' }] })
+        : of([{ id: 'p1', fullName: 'Patient 1' }]),
+    );
+    apiMock.post.mockReturnValue(of({ id: 'sched-9' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.form.patchValue({ patientId: 'p1', label: 'Cream q12h', medicationId: 'med-1', frequencyHours: 12 });
+    comp.submit();
+    expect(apiMock.get).toHaveBeenCalledWith('/schedules/sched-9/doses');
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 'sched-9'], { queryParams: { link: '1' } });
+  });
+
+  // frontend.md → Episode detail → "Add a schedule": opened with the episode filled in, saved
+  // under it, and back to the episode afterwards.
+  it('prefills the episode from query params, saves under it, and returns to the episode', () => {
+    queryParams = { patientId: 'p1', episodeId: 'ep1' };
+    apiMock.post.mockReturnValue(of({ id: 'sched-3' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    expect(comp.form.getRawValue().episodeId).toBe('ep1');
+
+    comp.form.patchValue({ label: 'Clotrimazole twice daily', medicationId: 'med-1', explicitTimesRaw: '08:00, 20:00' });
+    comp.submit();
+    expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/schedules', expect.objectContaining({ episodeId: 'ep1' }));
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
+  });
+
+  it('shows no amount boxes for a cream, and sends no amount', () => {
+    apiMock.post.mockReturnValue(of({ id: 'sched-4' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.embodiments.set([{ id: 'emb-cream', label: '1% cream', dosageForm: 'cream', unitType: 'other' } as any]);
+    comp.form.patchValue({ patientId: 'p1', label: 'Cream', medicationId: 'med-1', medicationEmbodimentId: 'emb-cream', frequencyHours: 12 });
+    fixture.detectChanges();
+
+    expect(comp.noAmountBoxes()).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('No amount to measure for this form');
+    expect(fixture.nativeElement.querySelector('input[formcontrolname=doseMg]')).toBeNull();
+
+    comp.submit();
+    const body = apiMock.post.mock.calls[0][1];
+    expect(body.doseMg).toBeUndefined();
+    expect(body.doseMl).toBeUndefined();
+    expect(body.pillCount).toBeUndefined();
+  });
+
+  it('keeps the mg box for a tablet', () => {
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.embodiments.set([{ id: 'emb-tab', label: '200 mg tablet', dosageForm: 'tablet', unitType: 'tablet' } as any]);
+    comp.form.patchValue({ medicationEmbodimentId: 'emb-tab' });
+    expect(comp.showBox('mg')).toBe(true);
+    expect(comp.showBox('ml')).toBe(false);
+    expect(comp.amountBoxes().count).toBe('Tablets');
   });
 });

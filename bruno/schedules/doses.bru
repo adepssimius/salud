@@ -1,0 +1,34 @@
+meta {
+  name: List Schedule Doses And Link Candidates
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/doses
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  const first = res.body?.candidates?.[0];
+  if (first) bru.setVar('linkCandidateId', first.interventionId);
+}
+
+assert {
+  schedule: isDefined
+  linked: isArray
+  candidates: isArray
+}
+
+docs {
+  The schedule (with adherence), every dose linked to it (`linkedLater` marks the ones attached
+  after the fact), and the patient's unlinked doses of the same medicine/embodiment in the
+  schedule's window. Stores the first candidate as `linkCandidateId` for "Link Doses".
+  See app-spec/api.md → Intervention schedules → Linking existing doses.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

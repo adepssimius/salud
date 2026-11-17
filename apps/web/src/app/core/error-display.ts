@@ -136,6 +136,11 @@ export const ERROR_SENTENCES = {
   REACTION_NOT_FOUND: 'That reaction is no longer recorded — someone may have removed it already. Reload this patient.',
   RESOLVES_MUST_BE_SUBSET_OF_EPISODES:
     'You can only resolve an episode this entry belongs to. Add the episode first, then mark it resolved.',
+  SCHEDULE_DOSES_INVALID: 'Choose at least one dose to link or unlink.',
+  DOSE_NOT_LINKABLE:
+    "One of those doses can't be linked to this schedule — it's already on a schedule, is a different medicine or bottle, or falls outside the schedule's dates. Reload the list and try again.",
+  DOSE_NOT_UNLINKABLE:
+    'Only doses linked to this schedule after they were logged can be unlinked. A dose logged from the schedule stays with it.',
   SCHEDULE_EPISODE_CONDITION_CONFLICT:
     'A schedule can be linked to an episode or a condition, not both. Clear one of them.',
   SCHEDULE_NOT_FOUND: 'That schedule is no longer available. It may have been deleted.',

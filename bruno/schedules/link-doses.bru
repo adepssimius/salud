@@ -1,0 +1,35 @@
+meta {
+  name: Link Doses To Schedule
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/doses
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "link": ["{{linkCandidateId}}"]
+  }
+}
+
+assert {
+  res.status: eq 201
+  schedule: isDefined
+  linked: isArray
+  candidates: isArray
+}
+
+docs {
+  Attach ad hoc doses to the schedule (`link`) or detach doses linked earlier (`unlink`). Run
+  "List Schedule Doses And Link Candidates" first to set `linkCandidateId`. Errors:
+  SCHEDULE_DOSES_INVALID, DOSE_NOT_LINKABLE, DOSE_NOT_UNLINKABLE, INTERVENTION_NOT_FOUND.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

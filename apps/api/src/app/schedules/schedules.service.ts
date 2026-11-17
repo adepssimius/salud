@@ -6,10 +6,14 @@ import { careTeamMemberships, interventionSchedules, interventions } from '../..
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
+import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
+import { RevisionsService } from '../revisions/revisions.service';
+import { ScheduleDose, ScheduleDosesResponse } from '@salud/shared/types';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs, toDate } from '../persistence/time';
-import { isValidTimeZone, serverTimeZone, zonedDate, zonedWallTimeToInstant } from './zoned-time';
+import { nextExplicitTime, scheduleLoggedCount, toScheduleView } from './schedule-view';
+import { isValidTimeZone } from './zoned-time';
 
 interface TimingConfig {
   frequencyHours: number | null;
@@ -24,6 +28,7 @@ export class SchedulesService {
   constructor(
     private readonly db: DatabaseService,
     private readonly interventionsService: InterventionsService,
+    private readonly revisionsService: RevisionsService,
   ) {}
 
   private async ensurePatientAccess(patientId: string, userId: string) {
@@ -38,35 +43,6 @@ export class SchedulesService {
     }
   }
 
-  // Finds the next occurrence of any HH:MM in `times`, at-or-after `from` (or strictly after,
-  // when advancing past a just-logged dose). The times are wall-clock times in `timeZone`.
-  private nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean, timeZone: string | null): Date {
-    const zone = timeZone ?? serverTimeZone();
-    const sorted = [...times].sort();
-    const fromMs = from.getTime();
-    const start = zonedDate(fromMs, zone);
-    // Walk calendar days in the schedule's zone, starting on `from`'s own local date: no slot on
-    // an earlier local date can fall at or after `from`.
-    for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
-      const day = new Date(Date.UTC(start.year, start.month - 1, start.day + dayOffset));
-      for (const t of sorted) {
-        const [h, m] = t.split(':').map(Number);
-        const candidateMs = zonedWallTimeToInstant(
-          day.getUTCFullYear(),
-          day.getUTCMonth() + 1,
-          day.getUTCDate(),
-          h,
-          m,
-          zone,
-        );
-        const ok = strictlyAfter ? candidateMs > fromMs : candidateMs >= fromMs;
-        if (ok) return new Date(candidateMs);
-      }
-    }
-    // Unreachable with valid HH:MM input; fail safe rather than throw mid-schedule-math.
-    return new Date(fromMs + 24 * 60 * 60 * 1000);
-  }
-
   private computeNextDueAt(timing: TimingConfig, from: Date, strictlyAfter: boolean): Date | null {
     if (timing.frequencyHours) {
       const base = strictlyAfter ? from.getTime() : from.getTime();
@@ -74,7 +50,7 @@ export class SchedulesService {
       return new Date(base + offsetMs);
     }
     if (timing.explicitTimes && timing.explicitTimes.length) {
-      return this.nextExplicitTime(timing.explicitTimes, from, strictlyAfter, timing.timeZone);
+      return nextExplicitTime(timing.explicitTimes, from, strictlyAfter, timing.timeZone);
     }
     return null;
   }
@@ -95,75 +71,11 @@ export class SchedulesService {
   }
 
   private async loggedCount(scheduleId: string): Promise<number> {
-    const db = this.db.db as any;
-    const rows = await db.select().from(interventions).where(eq(interventions.scheduleId, scheduleId));
-    return rows.length;
-  }
-
-  private async computeAdherence(row: any) {
-    const loggedCount = await this.loggedCount(row.id);
-    const startAt = toDate(row.startAt)!;
-    const now = new Date();
-    let expectedCount = 0;
-    if (now > startAt) {
-      if (row.frequencyHours) {
-        const elapsedHours = (now.getTime() - startAt.getTime()) / 3600_000;
-        expectedCount = Math.floor(elapsedHours / row.frequencyHours) + 1;
-      } else if (row.explicitTimes) {
-        const times: string[] = JSON.parse(row.explicitTimes);
-        const zone: string | null = row.timeZone ?? null;
-        let cursor = this.nextExplicitTime(times, startAt, false, zone);
-        let guard = 0;
-        while (cursor.getTime() <= now.getTime() && guard < 2000) {
-          expectedCount++;
-          cursor = this.nextExplicitTime(times, cursor, true, zone);
-          guard++;
-        }
-      }
-    }
-    const remainingOccurrences =
-      row.endAfterOccurrences != null ? Math.max(0, row.endAfterOccurrences - loggedCount) : null;
-    const nextDueTs = normalizeTs(row.nextDueAt);
-    const overdue = row.status === 'active' && nextDueTs != null && nextDueTs < Math.floor(Date.now() / 1000);
-    return {
-      expectedCount,
-      loggedCount,
-      missed: Math.max(0, expectedCount - loggedCount),
-      remainingOccurrences,
-      overdue,
-    };
+    return scheduleLoggedCount(this.db.db as any, scheduleId);
   }
 
   private async pickSchedule(row: any) {
-    return {
-      id: row.id,
-      patientId: row.patientId,
-      type: row.type,
-      medicationId: row.medicationId ?? null,
-      medicationEmbodimentId: row.medicationEmbodimentId ?? null,
-      episodeId: row.episodeId ?? null,
-      conditionId: row.conditionId ?? null,
-      label: row.label,
-      doseMg: row.doseMg ?? null,
-      doseMl: row.doseMl ?? null,
-      pillCount: row.pillCount ?? null,
-      bodyLocation: row.bodyLocation ?? null,
-      side: row.side ?? null,
-      dressingType: row.dressingType ?? null,
-      frequencyHours: row.frequencyHours ?? null,
-      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
-      timeZone: row.timeZone ?? null,
-      startAt: normalizeTs(row.startAt),
-      endAfterOccurrences: row.endAfterOccurrences ?? null,
-      endAt: normalizeTs(row.endAt),
-      notes: row.notes ?? null,
-      status: row.status,
-      nextDueAt: normalizeTs(row.nextDueAt),
-      createdByUserId: row.createdByUserId,
-      createdAt: normalizeTs(row.createdAt),
-      updatedAt: normalizeTs(row.updatedAt),
-      adherence: await this.computeAdherence(row),
-    };
+    return toScheduleView(this.db.db as any, row);
   }
 
   async create(patientId: string, userId: string, dto: CreateScheduleDto) {
@@ -398,5 +310,144 @@ export class SchedulesService {
       .where(eq(interventionSchedules.id, id));
 
     return { intervention: created, schedule: await this.get(id, userId) };
+  }
+
+  // ── Linking existing doses (api.md → Intervention schedules → "Linking existing doses") ──────
+
+  private toScheduleDose(row: any): ScheduleDose {
+    const m = row.metadata ? JSON.parse(row.metadata) : {};
+    return {
+      interventionId: row.id,
+      performedAt: normalizeTs(row.performedAt)!,
+      medicationEmbodimentId: m.medicationEmbodimentId ?? null,
+      amountMg: m.amountMg ?? null,
+      amountMl: m.amountMl ?? null,
+      pillCount: m.pillCount ?? null,
+      doseSource: m.doseSource ?? null,
+      recordedByUserId: row.recordedByUserId,
+      linkedLater: m.scheduleLinked === true,
+    };
+  }
+
+  /**
+   * Whether an intervention row could be linked to this schedule: no schedule yet, the schedule's
+   * type, its medicine (and its embodiment, when the schedule names one), and performed inside the
+   * schedule's window — `startAt` to `endAt`, or open-ended.
+   */
+  private isCandidate(schedule: any, row: any): boolean {
+    if (row.patientId !== schedule.patientId || row.scheduleId || row.type !== schedule.type) return false;
+    const m = row.metadata ? JSON.parse(row.metadata) : {};
+    if (schedule.type === 'medication_dose') {
+      if (m.medicationId !== schedule.medicationId) return false;
+      if (schedule.medicationEmbodimentId && m.medicationEmbodimentId !== schedule.medicationEmbodimentId) return false;
+    }
+    const at = normalizeTs(row.performedAt)!;
+    const start = normalizeTs(schedule.startAt)!;
+    const end = normalizeTs(schedule.endAt);
+    return at >= start && (end == null || at <= end);
+  }
+
+  private async dosesFor(schedule: any): Promise<{ linked: ScheduleDose[]; candidates: ScheduleDose[] }> {
+    const db = this.db.db as any;
+    const rows: any[] = await db.select().from(interventions).where(eq(interventions.patientId, schedule.patientId));
+    const newestFirst = (a: ScheduleDose, b: ScheduleDose) => b.performedAt - a.performedAt;
+    return {
+      linked: rows.filter((r) => r.scheduleId === schedule.id).map((r) => this.toScheduleDose(r)).sort(newestFirst),
+      candidates: rows.filter((r) => this.isCandidate(schedule, r)).map((r) => this.toScheduleDose(r)).sort(newestFirst),
+    };
+  }
+
+  async doses(id: string, userId: string): Promise<ScheduleDosesResponse> {
+    const row = await this.getRow(id, userId);
+    return { schedule: await this.pickSchedule(row), ...(await this.dosesFor(row)) };
+  }
+
+  /**
+   * Attach doses logged ad hoc to this schedule, or detach ones attached that way. Each changed
+   * dose gets a Revision (its prior state), `doseSource` is left as it was, and a service-owned
+   * `scheduleLinked` flag marks the link as made after the fact — the only links that can be
+   * undone; a dose logged *from* the schedule stays its own. Then `nextDueAt` and status are
+   * recomputed exactly as a timing PATCH does: from the schedule's latest dose. All in one
+   * transaction — a request that fails any check writes nothing.
+   */
+  async updateDoses(id: string, userId: string, dto: UpdateScheduleDosesDto): Promise<ScheduleDosesResponse> {
+    const row = await this.getRow(id, userId);
+    const db = this.db.db as any;
+    const link = [...new Set(dto.link ?? [])];
+    const unlink = [...new Set(dto.unlink ?? [])];
+    // Nothing to do, or the same dose asked to be both linked and unlinked.
+    if ((!link.length && !unlink.length) || link.some((i) => unlink.includes(i))) {
+      throw new BadRequestException('SCHEDULE_DOSES_INVALID');
+    }
+
+    const ids = [...link, ...unlink];
+    const found: any[] = await db.select().from(interventions).where(inArray(interventions.id, ids));
+    const byId = new Map(found.map((r) => [r.id, r]));
+    // Another patient's dose is reported as not found, never as "not linkable" (no existence leak).
+    const missing = ids.filter((i) => !byId.has(i) || byId.get(i).patientId !== row.patientId);
+    if (missing.length) throw new NotFoundException({ message: 'INTERVENTION_NOT_FOUND', interventionIds: missing });
+
+    const toLink = link.filter((i) => byId.get(i).scheduleId !== id); // already linked: no-op
+    const notLinkable = toLink.filter((i) => !this.isCandidate(row, byId.get(i)));
+    if (notLinkable.length) throw new BadRequestException({ message: 'DOSE_NOT_LINKABLE', interventionIds: notLinkable });
+
+    const toUnlink = unlink.filter((i) => byId.get(i).scheduleId === id); // not linked here: no-op
+    const notUnlinkable = toUnlink.filter((i) => {
+      const m = byId.get(i).metadata ? JSON.parse(byId.get(i).metadata) : {};
+      return m.scheduleLinked !== true;
+    });
+    if (notUnlinkable.length) throw new BadRequestException({ message: 'DOSE_NOT_UNLINKABLE', interventionIds: notUnlinkable });
+
+    // Snapshots before the transaction opens (RevisionsService.capture's contract).
+    const changed = [...toLink, ...toUnlink];
+    const snapshots = new Map<string, any>();
+    for (const i of changed) snapshots.set(i, await this.interventionsService.get(i, userId));
+
+    await this.db.withTransaction(async (tx: any) => {
+      for (const i of changed) {
+        const r = byId.get(i);
+        const m = r.metadata ? JSON.parse(r.metadata) : {};
+        const linking = toLink.includes(i);
+        if (linking) {
+          m.interventionScheduleId = id;
+          m.scheduleLinked = true;
+        } else {
+          m.interventionScheduleId = null;
+          delete m.scheduleLinked;
+        }
+        await this.revisionsService.capture('intervention', i, snapshots.get(i), userId, tx);
+        await tx
+          .update(interventions)
+          .set({ scheduleId: linking ? id : null, metadata: JSON.stringify(m), updatedAt: new Date() })
+          .where(eq(interventions.id, i));
+      }
+      if (changed.length) await this.recomputeAfterDoseChange(tx, row);
+    });
+
+    return this.doses(id, userId);
+  }
+
+  /**
+   * After the set of doses on a schedule changes: an active schedule's `nextDueAt` follows its
+   * latest dose (or `startAt` with none), and reaching `endAfterOccurrences` / passing `endAt`
+   * completes it — the same rules as a timing PATCH. A paused or completed schedule is left as
+   * the caregiver set it.
+   */
+  private async recomputeAfterDoseChange(tx: any, row: any) {
+    if (row.status !== 'active') return;
+    const doses: any[] = await tx.select().from(interventions).where(eq(interventions.scheduleId, row.id));
+    const timing: TimingConfig = {
+      frequencyHours: row.frequencyHours,
+      explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+      timeZone: row.timeZone ?? null,
+    };
+    const next = doses.length
+      ? this.computeNextDueAt(timing, new Date(Math.max(...doses.map((d) => normalizeTs(d.performedAt) ?? 0)) * 1000), true)
+      : this.computeNextDueAt(timing, toDate(row.startAt)!, false);
+    const { nextDueAt, completed } = this.applyEndConditions(row, next, doses.length);
+    await tx
+      .update(interventionSchedules)
+      .set({ nextDueAt, status: completed ? 'completed' : row.status })
+      .where(eq(interventionSchedules.id, row.id));
   }
 }

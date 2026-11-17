@@ -45,6 +45,8 @@ export const SERVICE_OWNED_METADATA_KEYS = [
   'atypicalReason',
   // Set when amountMg was derived from amountMl / pillCount rather than entered.
   'amountMgDerived',
+  // Set when the dose was linked to a schedule after it was logged (POST /schedules/:id/doses).
+  'scheduleLinked',
 ] as const;
 
 const RESERVED = new Set<string>(SERVICE_OWNED_METADATA_KEYS);
