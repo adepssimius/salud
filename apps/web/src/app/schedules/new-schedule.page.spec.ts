@@ -73,7 +73,7 @@ describe('NewSchedulePage', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/dashboard']);
   });
 
-  it('parses comma-separated explicitTimes and omits frequencyHours', () => {
+  it('sends "N times a day" as its times of day and omits frequencyHours', () => {
     apiMock.post.mockReturnValue(of({ id: 'sched-2' }));
     const fixture = TestBed.createComponent(NewSchedulePage);
     fixture.detectChanges();
@@ -84,7 +84,7 @@ describe('NewSchedulePage', () => {
       label: 'Nightly dressing',
       type: 'dressing_change',
       bodyLocation: 'Left knee',
-      explicitTimesRaw: '08:00, 20:00',
+      timesPerDay: 2,
       startAt: '2026-01-01T08:00',
     });
     comp.submit();
@@ -199,7 +199,7 @@ describe('NewSchedulePage', () => {
     const comp = fixture.componentInstance;
     expect(comp.form.getRawValue().episodeId).toBe('ep1');
 
-    comp.form.patchValue({ label: 'Clotrimazole twice daily', medicationId: 'med-1', explicitTimesRaw: '08:00, 20:00' });
+    comp.form.patchValue({ label: 'Clotrimazole twice daily', medicationId: 'med-1', timesPerDay: 2 });
     comp.submit();
     expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/schedules', expect.objectContaining({ episodeId: 'ep1' }));
     expect(routerMock.navigate).toHaveBeenCalledWith(['/episodes', 'ep1']);
@@ -234,5 +234,132 @@ describe('NewSchedulePage', () => {
     expect(comp.showBox('mg')).toBe(true);
     expect(comp.showBox('ml')).toBe(false);
     expect(comp.amountBoxes().count).toBe('Tablets');
+  });
+
+  // frontend.md → New schedule form → "The name": prefilled the way a nurse would say it, following
+  // the form until the caregiver types their own, and handed back when they empty it.
+  describe('the generated name', () => {
+    const tablet = { id: 'emb-tab', medicationId: 'med-1', label: '500 mg tablet', dosageForm: 'tablet', unitType: 'tablet', strengthMgPerUnit: 500 };
+
+    const build = () => {
+      const fixture = TestBed.createComponent(NewSchedulePage);
+      fixture.detectChanges();
+      const comp = fixture.componentInstance;
+      comp.selectedMedication.set({ id: 'med-1', name: 'acetaminophen', brandNames: [] } as any);
+      comp.embodiments.set([tablet as any]);
+      return { fixture, comp };
+    };
+
+    it('follows the choices above until the caregiver types a name', () => {
+      const { comp } = build();
+      comp.form.patchValue({ medicationId: 'med-1', medicationEmbodimentId: 'emb-tab', doseMg: 500, frequencyHours: 6 });
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen q6h');
+      comp.form.patchValue({ frequencyHours: 8 });
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen q8h');
+
+      comp.form.controls.label.setValue('Tylenol for the fever');
+      comp.form.patchValue({ frequencyHours: 4 });
+      expect(comp.form.controls.label.value).toBe('Tylenol for the fever');
+
+      comp.form.controls.label.setValue('');
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen q4h');
+    });
+
+    it('fills the tablet count from the mg through the strength, as the dose form does', () => {
+      const { comp } = build();
+      comp.form.patchValue({ medicationId: 'med-1', medicationEmbodimentId: 'emb-tab' });
+      comp.form.controls.doseMg.setValue(1000);
+      expect(comp.form.controls.pillCount.value).toBe(2);
+      expect(comp.showBox('ml')).toBe(false);
+      expect(comp.countLabel()).toBe('Tablets');
+    });
+
+    it("shows the patient's dose guidance and fills the amounts from Use this", () => {
+      jest.useFakeTimers();
+      const { fixture, comp } = build();
+      apiMock.post.mockReturnValue(
+        of({ guidance: { weightBased: null, ageBand: { doseMg: 480, doseMl: null, pillCount: null, source: 'label', frequencyPerDay: 4, maxMgPerDay: 2000, doseMlSource: null } }, advisories: [], nextAllowedAt: null, dailyTotalMg: 0 }),
+      );
+      comp.form.patchValue({ patientId: 'p1', medicationId: 'med-1', medicationEmbodimentId: 'emb-tab', frequencyHours: 6 });
+      jest.advanceTimersByTime(450);
+      fixture.detectChanges();
+      expect(apiMock.post).toHaveBeenCalledWith('/patients/p1/dose-checks', expect.objectContaining({ medicationId: 'med-1' }));
+      expect(fixture.nativeElement.querySelector('app-dose-guidance').textContent).toContain('Age-band');
+      comp.useAgeBandAmount();
+      expect(comp.form.controls.doseMg.value).toBe(480);
+      expect(comp.form.controls.label.value).toBe('480 mg Acetaminophen q6h');
+      jest.useRealTimers();
+    });
+
+    it('switches to the dressing fields when the type changes', () => {
+      const { fixture, comp } = build();
+      comp.form.patchValue({ type: 'dressing_change', bodyLocation: 'knee', side: 'left', frequencyHours: 24 });
+      fixture.detectChanges();
+      expect(comp.isMedication()).toBe(false);
+      expect(fixture.nativeElement.querySelector('input[formcontrolname=bodyLocation]')).not.toBeNull();
+      expect(comp.form.controls.label.value).toBe('Dressing change, left knee daily');
+    });
+  });
+
+  // frontend.md → New schedule form → "How often": q6h and QID are different instructions.
+  describe('how often', () => {
+    it('keeps a strict interval apart from times a day', () => {
+      apiMock.post.mockReturnValue(of({ id: 's' }));
+      const fixture = TestBed.createComponent(NewSchedulePage);
+      fixture.detectChanges();
+      const comp = fixture.componentInstance;
+      comp.selectedMedication.set({ id: 'med-1', name: 'acetaminophen', brandNames: [] } as any);
+
+      comp.form.patchValue({ patientId: 'p1', medicationId: 'med-1', doseMg: 500, frequencyHours: 6 });
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen q6h');
+
+      comp.form.controls.timesPerDay.setValue(4);
+      fixture.detectChanges();
+      expect(comp.isDaily()).toBe(true);
+      expect(comp.dailyTimes.value).toEqual(['08:00', '12:00', '16:00', '20:00']);
+      expect(fixture.nativeElement.querySelectorAll('.daily-times input[type=time]')).toHaveLength(4);
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen QID (08:00, 12:00, 16:00, 20:00)');
+
+      comp.dailyTimes.at(0).setValue('09:00');
+      expect(comp.form.controls.label.value).toBe('500 mg Acetaminophen QID (09:00, 12:00, 16:00, 20:00)');
+
+      comp.submit();
+      const body = apiMock.post.mock.calls[0][1];
+      expect(body.explicitTimes).toEqual(['09:00', '12:00', '16:00', '20:00']);
+      expect(body.frequencyHours).toBeUndefined();
+    });
+
+    it('marks the interval strict, with the explanation in a tooltip rather than on the page', () => {
+      const fixture = TestBed.createComponent(NewSchedulePage);
+      fixture.detectChanges();
+      const comp = fixture.componentInstance;
+      comp.form.controls.frequencyHours.setValue(6);
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      expect(el.querySelector('.how-often')!.textContent).toContain('(strict)');
+      const tips = el.querySelectorAll('app-info-tip');
+      expect(tips).toHaveLength(2);
+      const tipText = tips[0].querySelector('.info-tip-text') as HTMLElement;
+      expect(tipText.classList.contains('open')).toBe(false);
+      (tips[0].querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(tipText.classList.contains('open')).toBe(true);
+      // The clock, never a count per day — "4 a day" is the other instruction.
+      expect(comp.intervalExample()).toBe('Every 6 hours: 08:00 → 14:00 → 20:00 → 02:00 → 08:00 → … around the clock.');
+      expect(tipText.textContent).not.toMatch(/a day/);
+      comp.form.controls.frequencyHours.setValue(5);
+      expect(comp.intervalExample()).toBe('Every 5 hours: 08:00 → 13:00 → 18:00 → 23:00 → 04:00 → … around the clock.');
+      comp.form.controls.frequencyHours.setValue(24);
+      expect(comp.intervalExample()).toBeNull();
+    });
+
+    it('goes back to the strict interval when hours are typed', () => {
+      const fixture = TestBed.createComponent(NewSchedulePage);
+      fixture.detectChanges();
+      const comp = fixture.componentInstance;
+      comp.form.controls.timesPerDay.setValue(3);
+      comp.form.controls.frequencyHours.setValue(8);
+      expect(comp.isDaily()).toBe(false);
+    });
   });
 });
