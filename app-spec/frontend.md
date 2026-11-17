@@ -381,8 +381,23 @@ derives from existing payloads:
   - On save the observation is stamped with `unitPreferenceAtEntry` (the caregiver's three unit
     preferences at the moment of entry) so a later reader can tell what was on screen when the
     value was recorded.
-  - The pending-entries list shows a human-readable summary per entry ("38.1 °F · oral", "120 bpm",
+  - The entry list shows a human-readable summary per entry ("38.1 °F · oral", "120 bpm",
     "Pain 7/10", "11.34 kg"), with photo entries shown as a thumbnail.
+- **Entry list and the add-entry sheet (full form only).** The full observation form opens with an
+  empty entry list and an "Add entry" button. There is no always-open inline sub-form. "Add entry"
+  opens a modal sheet holding the typed mini-form above, with its own Save and Cancel. The sheet's
+  Save adds the entry to the list and closes the sheet. The observation's own Save submits the
+  whole list, and at least one entry is still required.
+  - **Phone and desktop.** At phone width the sheet rises from the bottom at full width and
+    scrolls inside, with Cancel and Save pinned at its foot. On wider screens it is a centred
+    dialog.
+  - **Each listed entry** shows its summary, plus **Edit**, which reopens the sheet prefilled so
+    Save writes the entry back in place, and **Remove**.
+  - **Closing without saving.** Cancel, Esc or a tap outside closes the sheet. If anything has been
+    filled in, it first asks "Discard this entry?", so a stray tap never silently loses a
+    half-typed reading.
+  - **Quick Log is unchanged.** The compact layout keeps one locked entry type with its mini-form
+    inline: no list and no sheet.
 - **Protocol card (F-4.10, §4.10)**: when the observation create response includes
   `firedAdvisories` (a `protocol_fired` advisory tripped by this save), render each as a prominent
   card immediately on the success state — the protocol's `instructionText` verbatim, its
@@ -719,7 +734,8 @@ api.md → "Corrections"); this is the form that sends the `PATCH`.
   selectable.
 - **Editable, per kind:**
   - *Observation*: the clinical time, the free text, the episode memberships and resolutions, and
-    the entries — change any entry's values, remove an entry, or add one, as on create. At least
+    the entries — change any entry's values (Edit reopens the add-entry sheet prefilled with the
+    stored values, in the reader's units), remove an entry, or add one, as on create. At least
     one entry must remain; removing the last one is not a correction (see Voiding below).
     `lab_result` entries are shown read-only and carried through unchanged: hand-typing lab values
     is the transcription risk the import exists to avoid ("Documents").
