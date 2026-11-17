@@ -20,7 +20,16 @@ import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesRespo
       </div>
 
       <div class="timing muted" *ngIf="s.frequencyHours">Every {{ s.frequencyHours }} hours</div>
-      <div class="timing muted" *ngIf="s.explicitTimes?.length">At {{ s.explicitTimes!.join(', ') }}</div>
+      <div class="timing muted" *ngIf="s.explicitTimes?.length">
+        At {{ s.explicitTimes!.join(', ') }}<ng-container *ngIf="s.timeZone && s.timeZone !== browserZone">
+          · {{ s.timeZone }} time</ng-container>
+      </div>
+      <div class="timing muted small" *ngIf="s.explicitTimes?.length && !s.timeZone">
+        These times follow the server's clock, not yours.
+        <button type="button" class="link" (click)="useMyTimeZone()" [disabled]="settingZone()">
+          Use my time zone ({{ browserZone }})
+        </button>
+      </div>
       <div class="timing muted" *ngIf="s.nextDueAt">Next due {{ s.nextDueAt * 1000 | date: 'medium' }}</div>
       <div class="timing muted" *ngIf="!s.nextDueAt && s.status !== 'active'">No upcoming due date ({{ s.status }})</div>
 
@@ -237,7 +246,11 @@ export class ScheduleDetailPage implements OnInit {
   scheduleId = this.route.snapshot.paramMap.get('id')!;
   schedule = signal<InterventionSchedule | null>(null);
   logging = signal(false);
+  settingZone = signal(false);
   error = signal<string | null>(null);
+  // The viewing browser's IANA zone: what a fixed-time schedule's times are captured in
+  // (data-model.md → InterventionSchedule.timeZone).
+  readonly browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   linked = signal<ScheduleDose[]>([]);
   candidates = signal<ScheduleDose[]>([]);
   linking = signal(false);
@@ -348,6 +361,22 @@ export class ScheduleDetailPage implements OnInit {
       next: (s) => this.schedule.set(s),
       error: (err) => this.error.set(errorText(err, 'Could not update schedule.')),
     });
+  }
+
+  useMyTimeZone() {
+    this.settingZone.set(true);
+    this.api
+      .patch<InterventionSchedule, { timeZone: string }>(`/schedules/${this.scheduleId}`, { timeZone: this.browserZone })
+      .subscribe({
+        next: (s) => {
+          this.settingZone.set(false);
+          this.schedule.set(s);
+        },
+        error: (err) => {
+          this.settingZone.set(false);
+          this.error.set(errorText(err, 'Could not update schedule.'));
+        },
+      });
   }
 
   backToDashboard() {

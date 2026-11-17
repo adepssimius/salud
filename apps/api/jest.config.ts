@@ -16,4 +16,6 @@ export default {
   // Must run before a test file's own imports so `DB_CLIENT` is set before anything reaches
   // db/schema.ts's dialect resolver — see that file's header comment.
   setupFiles: ['<rootDir>/src/testing/jest-env-setup.ts'],
+  // Pins TZ=UTC for the whole run, matching the deployed pods — see the file's header.
+  globalSetup: '<rootDir>/src/testing/jest-global-setup.ts',
 };

@@ -6,9 +6,10 @@ import { InterventionSchedule, TimelineEntry } from '@salud/shared/types';
 // with `now` passed in, so every rule here is testable without a clock or a component.
 //
 // Days are the *browser's* local days. That is deliberate: "did we keep up on Tuesday" is a
-// question about the household's Tuesday, and the server reads fixed-time slots ("08:00") on its
-// own clock, which on the cluster is not the household's (a known gap, tracked separately). So
-// this page computes its own expected counts rather than reading `adherence.expectedCount`.
+// question about the viewer's Tuesday, so this page computes its own per-day expected counts on
+// the browser's clock rather than reading `adherence.expectedCount`. The server reads fixed-time
+// slots ("08:00") in the schedule's own `timeZone` (data-model.md → InterventionSchedule), so the
+// two agree whenever the viewer is in the schedule's zone.
 
 const HOUR = 3600;
 

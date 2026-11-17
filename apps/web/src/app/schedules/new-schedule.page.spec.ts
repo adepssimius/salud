@@ -91,6 +91,8 @@ describe('NewSchedulePage', () => {
 
     const body = apiMock.post.mock.calls[0][1];
     expect(body.explicitTimes).toEqual(['08:00', '20:00']);
+    // The household's zone, from the browser — never left to the server's clock.
+    expect(body.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(body.frequencyHours).toBeUndefined();
     expect(body.bodyLocation).toBe('Left knee');
   });

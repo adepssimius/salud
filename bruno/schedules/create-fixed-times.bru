@@ -1,0 +1,55 @@
+meta {
+  name: Create Fixed-Time Schedule (zoned)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}patients/{{patientId}}/schedules
+  body: json
+  auth: inherit
+}
+
+docs {
+  `explicitTimes` are wall-clock times in `timeZone` (an IANA zone), not the API server's clock —
+  app-spec/data-model.md → InterventionSchedule.timeZone. Starting at 09:00 CST, the next slot is
+  20:00 CST, i.e. 02:00Z the following day, whatever zone the server runs in.
+}
+
+script:pre-request {
+  let pid = bru.getVar('patientId') || bru.getVar('randPatientId');
+  if (!pid) {
+    const patientsReq = await bru.runRequest('patients/list');
+    const patients = patientsReq.data;
+    if (patients.length) pid = patients[0].id;
+  }
+  bru.setVar('patientId', pid);
+}
+
+body:json {
+  {
+    "type": "dressing_change",
+    "label": "Knee dressing 08:00/20:00",
+    "bodyLocation": "Left knee",
+    "side": "left",
+    "dressingType": "sterile gauze",
+    "explicitTimes": ["08:00", "20:00"],
+    "timeZone": "America/Chicago",
+    "startAt": "2026-11-10T15:00:00.000Z"
+  }
+}
+
+script:post-response {
+  bru.setVar('zonedScheduleId', res.body.id);
+}
+
+assert {
+  res.status: eq 201
+  timeZone: eq America/Chicago
+  nextDueAt: eq 1794362400
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

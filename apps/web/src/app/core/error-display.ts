@@ -82,6 +82,7 @@ export const ERROR_SENTENCES = {
   FILE_NOT_FOUND: 'That photo is no longer available.',
   FILE_REQUIRED: 'Choose a photo to upload.',
   FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED: 'Set how often this repeats, or list the specific times of day.',
+  INVALID_TIME_ZONE: "This device reported a time zone the server doesn't recognize, so the times of day can't be placed.",
   GUIDELINE_NOT_FOUND: 'No dosing guidance is available for this medication yet.',
   INTERVENTION_NOT_FOUND: 'That dose or treatment is no longer available. It may have been deleted.',
   INVALID_CREDENTIALS: 'That email and password do not match an account. Check both and try again.',

@@ -622,6 +622,7 @@ describe('NewInterventionPage', () => {
       dressingType: null,
       frequencyHours: 8,
       explicitTimes: null,
+      timeZone: null,
       startAt: 1700000000,
       endAfterOccurrences: null,
       endAt: null,

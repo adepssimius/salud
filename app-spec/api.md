@@ -767,6 +767,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
       "dressingType": null,
       "frequencyHours": 8,
       "explicitTimes": ["08:00", "16:00", "00:00"],
+      "timeZone": "America/Chicago",
       "startAt": "ISO datetime",
       "endAfterOccurrences": 10,
       "endAt": null,
@@ -777,6 +778,10 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     `frequencyHours` / `explicitTimes` is required — without one, `nextDueAt` has nothing to
     compute from. `episodeId` and `conditionId` are mutually exclusive — 400
     `SCHEDULE_EPISODE_CONDITION_CONFLICT` if both are set.
+  - `timeZone` is the IANA zone the `explicitTimes` are read in (data-model.md →
+    `InterventionSchedule.timeZone`); the web always sends the browser's zone. Optional — omitted,
+    it is stored as `null` and the times fall back to the server's zone. An unknown zone is 400
+    `INVALID_TIME_ZONE`.
   - `nextDueAt` on creation is the schedule's first due moment: `startAt` itself for
     `frequencyHours` schedules; the next `explicitTimes` slot at-or-after `startAt` for
     fixed-time schedules.
@@ -795,7 +800,8 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
 - `PATCH /api/schedules/:scheduleId`
   - Update status (`active`, `paused`, `completed`), timing, or metadata; recompute `nextDueAt`
     from the schedule's most recent logged dose (or `startAt` if none yet) whenever timing fields
-    or `status` change.
+    (`frequencyHours`, `explicitTimes`, `timeZone`) or `status` change. `timeZone` is validated
+    as on create.
 - `POST /api/schedules/:scheduleId/log`
   - Creates the corresponding intervention pre-filled from the schedule (medication/embodiment/
     dose amounts, or dressing fields) with `interventionScheduleId` set, **through the same
@@ -1715,6 +1721,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |
 | `RESERVED_METADATA_KEY` | 400 | intervention create/update whose `metadata` names a key the service owns (the dosing engine's resolved fields, or a validated top-level field); body carries `keys` |
 | `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED` | 400 | schedule create with neither a frequency nor explicit times |
+| `INVALID_TIME_ZONE` | 400 | schedule create/update whose `timeZone` is not an IANA zone the server knows |
 | `FILE_REQUIRED` | 400 | `POST /api/files` with no file part |
 | `PATIENT_ID_REQUIRED` | 400 | `POST /api/files` with no `patientId` field |
 | `NOT_PATIENT_OWNER` | 403 | `DELETE /api/patients/:patientId` by a care team member who is not `ownedById` |

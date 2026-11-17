@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { InterventionSchedule, ScheduleAdherence } from '@salud/shared/types';
 import { interventions } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
+import { serverTimeZone, zonedDate, zonedWallTimeToInstant } from './zoned-time';
 
 // The read model of an `intervention_schedules` row — the mapping and the computed adherence —
 // as plain functions over a db handle rather than SchedulesService methods. The episode read
@@ -10,20 +11,24 @@ import { normalizeTs } from '../persistence/time';
 
 /**
  * The next `HH:MM` slot of `times` at-or-after `from` (or strictly after, when advancing past a
- * just-logged dose). Slots are read on the server's clock, not the household's — a known gap; the
- * episode page computes its per-day expectations in the browser's local time instead.
+ * just-logged dose). Slots are wall-clock times in `timeZone`, the schedule's own zone
+ * (data-model.md → InterventionSchedule.timeZone) — never the API server's clock, which is UTC on
+ * the cluster. `null` (a row that predates the column) falls back to the server's zone.
  */
-export function nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean): Date {
+export function nextExplicitTime(times: string[], from: Date, strictlyAfter: boolean, timeZone: string | null): Date {
+  const zone = timeZone ?? serverTimeZone();
   const sorted = [...times].sort();
   const fromMs = from.getTime();
+  const start = zonedDate(fromMs, zone);
+  // Walk calendar days in the schedule's zone, starting on `from`'s own local date: no slot on an
+  // earlier local date can fall at or after `from`.
   for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+    const day = new Date(Date.UTC(start.year, start.month - 1, start.day + dayOffset));
     for (const t of sorted) {
       const [h, m] = t.split(':').map(Number);
-      const candidate = new Date(from);
-      candidate.setDate(from.getDate() + dayOffset);
-      candidate.setHours(h, m, 0, 0);
-      const ok = strictlyAfter ? candidate.getTime() > fromMs : candidate.getTime() >= fromMs;
-      if (ok) return candidate;
+      const candidateMs = zonedWallTimeToInstant(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), h, m, zone);
+      const ok = strictlyAfter ? candidateMs > fromMs : candidateMs >= fromMs;
+      if (ok) return new Date(candidateMs);
     }
   }
   // Unreachable with valid HH:MM input; fail safe rather than throw mid-schedule-math.
@@ -48,10 +53,11 @@ export function expectedOccurrences(row: any, now: Date = new Date()): number {
       expected = Math.floor((limitSec - startSec) / (row.frequencyHours * 3600)) + 1;
     } else if (row.explicitTimes) {
       const times: string[] = typeof row.explicitTimes === 'string' ? JSON.parse(row.explicitTimes) : row.explicitTimes;
-      let cursor = nextExplicitTime(times, new Date(startSec * 1000), false);
+      const zone: string | null = row.timeZone ?? null;
+      let cursor = nextExplicitTime(times, new Date(startSec * 1000), false, zone);
       while (cursor.getTime() <= limitSec * 1000 && expected < cap && expected < 2000) {
         expected++;
-        cursor = nextExplicitTime(times, cursor, true);
+        cursor = nextExplicitTime(times, cursor, true, zone);
       }
     }
   }
@@ -97,6 +103,7 @@ export async function toScheduleView(db: any, row: any): Promise<InterventionSch
     dressingType: row.dressingType ?? null,
     frequencyHours: row.frequencyHours ?? null,
     explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+    timeZone: row.timeZone ?? null,
     startAt: normalizeTs(row.startAt)!,
     endAfterOccurrences: row.endAfterOccurrences ?? null,
     endAt: normalizeTs(row.endAt),

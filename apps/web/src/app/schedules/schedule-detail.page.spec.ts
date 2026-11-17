@@ -19,7 +19,8 @@ const baseSchedule = {
   side: null,
   dressingType: null,
   frequencyHours: 8,
-  explicitTimes: null,
+  explicitTimes: null as string[] | null,
+  timeZone: null as string | null,
   startAt: 1700000000,
   endAfterOccurrences: 10,
   endAt: null,
@@ -117,6 +118,39 @@ describe('ScheduleDetailPage', () => {
 
     comp.complete();
     expect(apiMock.patch).toHaveBeenLastCalledWith('/schedules/s1', { status: 'completed' });
+  });
+
+  it('names the stored zone beside fixed times only when it differs from the browser', () => {
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const other = browserZone === 'Pacific/Auckland' ? 'America/Chicago' : 'Pacific/Auckland';
+    apiMock.get.mockReturnValue(
+      of({ schedule: { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00', '20:00'], timeZone: other }, linked: [], candidates: [] }),
+    );
+    let fixture = TestBed.createComponent(ScheduleDetailPage);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain(`${other} time`);
+
+    apiMock.get.mockReturnValue(
+      of({ schedule: { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00'], timeZone: browserZone }, linked: [], candidates: [] }),
+    );
+    fixture = TestBed.createComponent(ScheduleDetailPage);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain(`${browserZone} time`);
+    expect(fixture.nativeElement.textContent).not.toContain('Use my time zone');
+  });
+
+  it('offers to set the browser zone on a fixed-time schedule that has none, and PATCHes it', () => {
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const legacy = { ...baseSchedule, frequencyHours: null, explicitTimes: ['08:00'], timeZone: null };
+    apiMock.get.mockReturnValue(of({ schedule: legacy, linked: [], candidates: [] }));
+    apiMock.patch.mockReturnValue(of({ ...legacy, timeZone: browserZone }));
+    const fixture = TestBed.createComponent(ScheduleDetailPage);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain("follow the server's clock");
+    fixture.componentInstance.useMyTimeZone();
+    expect(apiMock.patch).toHaveBeenCalledWith('/schedules/s1', { timeZone: browserZone });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('Use my time zone');
   });
 
   it('backToDashboard navigates to /dashboard', () => {

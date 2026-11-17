@@ -13,10 +13,14 @@ import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs, toDate } from '../persistence/time';
 import { nextExplicitTime, scheduleLoggedCount, toScheduleView } from './schedule-view';
+import { isValidTimeZone } from './zoned-time';
 
 interface TimingConfig {
   frequencyHours: number | null;
   explicitTimes: string[] | null;
+  // The zone explicitTimes are wall-clock times in. Null only on rows that predate the column,
+  // which keep the server-clock reading they always had (data-model.md → InterventionSchedule).
+  timeZone: string | null;
 }
 
 @Injectable()
@@ -46,7 +50,7 @@ export class SchedulesService {
       return new Date(base + offsetMs);
     }
     if (timing.explicitTimes && timing.explicitTimes.length) {
-      return nextExplicitTime(timing.explicitTimes, from, strictlyAfter);
+      return nextExplicitTime(timing.explicitTimes, from, strictlyAfter, timing.timeZone);
     }
     return null;
   }
@@ -89,6 +93,9 @@ export class SchedulesService {
     if (dto.episodeId && dto.conditionId) {
       throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
     }
+    if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
+      throw new BadRequestException('INVALID_TIME_ZONE');
+    }
 
     const db = this.db.db as any;
     const id = randomUUID();
@@ -96,6 +103,7 @@ export class SchedulesService {
     const timing: TimingConfig = {
       frequencyHours: dto.frequencyHours ?? null,
       explicitTimes: dto.explicitTimes ?? null,
+      timeZone: dto.timeZone ?? null,
     };
     const initialNextDueAt = this.computeNextDueAt(timing, startAtDate, false);
 
@@ -116,6 +124,7 @@ export class SchedulesService {
       dressingType: dto.dressingType ?? null,
       frequencyHours: dto.frequencyHours ?? null,
       explicitTimes: dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null,
+      timeZone: dto.timeZone ?? null,
       startAt: startAtDate,
       endAfterOccurrences: dto.endAfterOccurrences ?? null,
       endAt: dto.endAt ? new Date(dto.endAt) : null,
@@ -170,6 +179,9 @@ export class SchedulesService {
     if (resolvedEpisodeId && resolvedConditionId) {
       throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
     }
+    if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
+      throw new BadRequestException('INVALID_TIME_ZONE');
+    }
 
     const updates: Record<string, any> = {};
     const directFields = [
@@ -193,10 +205,14 @@ export class SchedulesService {
     if (dto.conditionId !== undefined) updates.conditionId = dto.conditionId;
     if (dto.frequencyHours !== undefined) updates.frequencyHours = dto.frequencyHours;
     if (dto.explicitTimes !== undefined) updates.explicitTimes = JSON.stringify(dto.explicitTimes);
+    if (dto.timeZone !== undefined) updates.timeZone = dto.timeZone;
     if (dto.endAt !== undefined) updates.endAt = dto.endAt ? new Date(dto.endAt) : null;
 
     const timingChanged =
-      dto.frequencyHours !== undefined || dto.explicitTimes !== undefined || dto.status !== undefined;
+      dto.frequencyHours !== undefined ||
+      dto.explicitTimes !== undefined ||
+      dto.timeZone !== undefined ||
+      dto.status !== undefined;
 
     if (timingChanged) {
       const newStatus = dto.status ?? row.status;
@@ -207,6 +223,7 @@ export class SchedulesService {
           frequencyHours: dto.frequencyHours !== undefined ? dto.frequencyHours : row.frequencyHours,
           explicitTimes:
             dto.explicitTimes !== undefined ? dto.explicitTimes : row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+          timeZone: dto.timeZone !== undefined ? dto.timeZone : row.timeZone ?? null,
         };
         const loggedCount = await this.loggedCount(id);
         let base: Date;
@@ -281,6 +298,7 @@ export class SchedulesService {
     const timing: TimingConfig = {
       frequencyHours: row.frequencyHours,
       explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+      timeZone: row.timeZone ?? null,
     };
     const loggedCount = await this.loggedCount(id);
     const next = this.computeNextDueAt(timing, performedAtDate, true);
@@ -421,6 +439,7 @@ export class SchedulesService {
     const timing: TimingConfig = {
       frequencyHours: row.frequencyHours,
       explicitTimes: row.explicitTimes ? JSON.parse(row.explicitTimes) : null,
+      timeZone: row.timeZone ?? null,
     };
     const next = doses.length
       ? this.computeNextDueAt(timing, new Date(Math.max(...doses.map((d) => normalizeTs(d.performedAt) ?? 0)) * 1000), true)

@@ -1,0 +1,34 @@
+meta {
+  name: Set Schedule Time Zone
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{zonedScheduleId}}
+  body: json
+  auth: inherit
+}
+
+docs {
+  What the schedule page's "Use my time zone" sends. Changing the zone recomputes `nextDueAt`
+  like any other timing change; an unknown zone is 400 INVALID_TIME_ZONE. From the create
+  request's start (20:30 IST), the next slot is 08:00 IST on 11-11 — 02:30Z.
+}
+
+body:json {
+  {
+    "timeZone": "Asia/Kolkata"
+  }
+}
+
+assert {
+  res.status: eq 200
+  timeZone: eq Asia/Kolkata
+  nextDueAt: eq 1794364200
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

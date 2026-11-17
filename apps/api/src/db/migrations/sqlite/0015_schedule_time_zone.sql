@@ -1,0 +1,1 @@
+ALTER TABLE `intervention_schedules` ADD `time_zone` text;
