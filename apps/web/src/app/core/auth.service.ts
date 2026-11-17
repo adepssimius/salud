@@ -15,6 +15,19 @@ import { ApiClientService } from './api-client.service';
 
 const TOKEN_KEY = 'salud_jwt';
 
+/** The JWT's `exp` (epoch seconds), or null when the token doesn't decode or carries none. */
+function readExp(token: string): number | null {
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+  try {
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = JSON.parse(json)?.exp;
+    return typeof exp === 'number' ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly api = inject(ApiClientService);
@@ -23,6 +36,26 @@ export class AuthService {
 
   get token(): string | null {
     return localStorage.getItem(TOKEN_KEY);
+  }
+
+  /**
+   * Whether there is a session worth routing on: a stored token whose `exp` claim (if it carries
+   * one) has not passed. Synchronous on purpose — the route guards run before any request could
+   * answer, and waiting on `/users/me` would show a blank page on every signed-in load. An expired
+   * token is dropped here, so a stale session goes to `/login` once instead of reaching a guarded
+   * page, firing a 401 and bouncing back. A token the server rejects for any other reason (bad
+   * signature, deleted user) still ends through the interceptor's 401 → logout().
+   */
+  hasSession(nowMs: number = Date.now()): boolean {
+    const token = this.token;
+    if (!token) return false;
+    const exp = readExp(token);
+    if (exp !== null && exp * 1000 <= nowMs) {
+      localStorage.removeItem(TOKEN_KEY);
+      this.userSignal.set(null);
+      return false;
+    }
+    return true;
   }
 
   get user() {

@@ -1,14 +1,14 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, UrlTree } from '@angular/router';
-import { authGuard } from './auth.guard';
+import { authGuard, guestGuard } from './auth.guard';
 import { AuthService } from './auth.service';
 
-describe('authGuard', () => {
-  let authMock: { token: string | null };
+describe('auth guards', () => {
+  let authMock: { hasSession: jest.Mock };
   let routerMock: { parseUrl: jest.Mock };
 
   beforeEach(() => {
-    authMock = { token: null };
+    authMock = { hasSession: jest.fn(() => false) };
     routerMock = { parseUrl: jest.fn((url: string) => `urlTree:${url}` as unknown as UrlTree) };
 
     TestBed.configureTestingModule({
@@ -19,20 +19,29 @@ describe('authGuard', () => {
     });
   });
 
-  function runGuard() {
-    return TestBed.runInInjectionContext(() => authGuard({} as any, {} as any));
-  }
+  const run = (guard: typeof authGuard) =>
+    TestBed.runInInjectionContext(() => guard({} as any, {} as any));
 
-  it('allows navigation when a token is present', () => {
-    authMock.token = 'jwt-token';
-    expect(runGuard()).toBe(true);
-    expect(routerMock.parseUrl).not.toHaveBeenCalled();
+  describe('authGuard', () => {
+    it('allows navigation with a live session', () => {
+      authMock.hasSession.mockReturnValue(true);
+      expect(run(authGuard)).toBe(true);
+      expect(routerMock.parseUrl).not.toHaveBeenCalled();
+    });
+
+    it('redirects to login without one', () => {
+      expect(run(authGuard)).toBe('urlTree:/login');
+    });
   });
 
-  it('redirects to login when there is no token', () => {
-    authMock.token = null;
-    const result = runGuard();
-    expect(routerMock.parseUrl).toHaveBeenCalledWith('/login');
-    expect(result).toBe('urlTree:/login');
+  describe('guestGuard', () => {
+    it('sends a signed-in caregiver to the dashboard', () => {
+      authMock.hasSession.mockReturnValue(true);
+      expect(run(guestGuard)).toBe('urlTree:/dashboard');
+    });
+
+    it('lets a signed-out visitor through', () => {
+      expect(run(guestGuard)).toBe(true);
+    });
   });
 });

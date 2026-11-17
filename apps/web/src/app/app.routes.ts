@@ -1,22 +1,26 @@
 import { Route } from '@angular/router';
-import { authGuard } from './core/auth.guard';
+import { authGuard, guestGuard } from './core/auth.guard';
 import { PatientHubStore } from './patients/patient-hub.store';
 
 // Every page is loaded lazily, including login. Importing them statically put all 21 pages — and
 // @angular/forms, which only pages use — into the initial bundle, which is what pushed it 72 kB past
 // the 500 kB budget. Keeping login eager to save one round-trip would drag forms back in on its own.
 export const appRoutes: Route[] = [
-  { path: '', pathMatch: 'full', redirectTo: 'login' },
+  // The bare domain is Home. A signed-out visitor is sent on to /login by authGuard; sending
+  // everyone to /login (as this once did) put a signed-in caregiver on the sign-in form.
+  { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
   {
     path: 'login',
     loadComponent: () => import('./auth/login.page').then((m) => m.LoginPage),
     title: 'Sign in',
+    canActivate: [guestGuard],
   },
   {
     path: 'register',
     loadComponent: () =>
       import('./auth/register.page').then((m) => m.RegisterPage),
     title: 'Create account',
+    canActivate: [guestGuard],
   },
   {
     path: 'logout',
