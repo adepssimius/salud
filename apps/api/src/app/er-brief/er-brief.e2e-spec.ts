@@ -150,7 +150,14 @@ describe('ER Brief (e2e)', () => {
       .expect(201);
     episodeId = obs.body.episodeIds[0];
 
-    // A same-episode, off-guideline dose to populate atypicalAdvisories.
+    // A same-episode dose over the per-dose maximum, to populate atypicalAdvisories. The guideline
+    // is added only now, after the scheduled dose above was logged, so that dose keeps its null
+    // nextAllowedAt. (A hand-typed amount is no longer atypical by itself.)
+    await request(app.getHttpServer())
+      .post(`/api/medications/${medicationId}/guidelines`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ source: 'Test', type: 'weight_based', mgPerKg: 10, maxMgPerDose: 500, maxMgPerDay: 2000, minIntervalHours: 4 })
+      .expect(201);
     await request(app.getHttpServer())
       .post(`/api/patients/${patientId}/interventions`)
       .set('Authorization', `Bearer ${token}`)
@@ -221,7 +228,7 @@ describe('ER Brief (e2e)', () => {
     expect(res.body.body.priorEpisodes[0].name).toBe('Neutropenic fever #2');
     expect(res.body.body.priorEpisodes[0].status).toBe('resolved');
     expect(res.body.body.atypicalAdvisories.length).toBe(1);
-    expect(res.body.body.atypicalAdvisories[0].payload.reasons).toContain('override');
+    expect(res.body.body.atypicalAdvisories[0].payload.reasons).toContain('exceeds_max_per_dose');
     expect(
       res.body.body.events.some((e: any) => e.kind === 'advisory' && e.type === 'protocol_fired'),
     ).toBe(true);

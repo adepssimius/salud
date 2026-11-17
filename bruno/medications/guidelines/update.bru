@@ -14,12 +14,17 @@ docs {
   Any field except `type`. The age-range rule is checked against the merged row, so
   `{ "ageMinMonths": 200 }` against a band whose max is 60 is 400 `GUIDELINE_AGE_RANGE_INVALID`.
   Catalog edits are not revisioned (app-spec/api.md -> Medications, embodiments & guidelines).
+
+  `underDose` ('allowed' | 'flagged', default 'allowed') decides whether a dose more than 10% below
+  this guideline's dose is atypical (`below_full_dose`) — see app-spec/data-model.md ->
+  MedicationGuideline.
 }
 
 body:json {
   {
     "source": "AAP Clinical Report — Fever and Antipyretic Use in Children (2011)",
     "maxMgPerDose": 1000,
+    "underDose": "allowed",
     "notes": "Corrected source citation"
   }
 }

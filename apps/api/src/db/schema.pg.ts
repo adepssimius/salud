@@ -325,6 +325,9 @@ export const medicationGuidelines = pgTable('medication_guidelines', {
   doseMl: doublePrecision('dose_ml'),
   pillCount: doublePrecision('pill_count'),
   frequencyPerDay: integer('frequency_per_day'),
+  // 'allowed': the guideline is a ceiling, less is normal. 'flagged': a dose more than 10% under
+  // the guideline's dose is atypical (below_full_dose). data-model.md -> MedicationGuideline.
+  underDose: text('under_dose', { enum: ['allowed', 'flagged'] }).default('allowed').notNull(),
   notes: text('notes'),
 });
 

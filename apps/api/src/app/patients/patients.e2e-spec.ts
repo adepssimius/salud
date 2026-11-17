@@ -522,6 +522,12 @@ describe('Patients (e2e)', () => {
           .send({ name: `Cascadamol ${Date.now()}` }),
       ).expect(201)
     ).body.id;
+    // A per-dose maximum the dose below exceeds, so it writes an atypical_dose advisory too.
+    await auth(
+      request(app.getHttpServer())
+        .post(`/api/medications/${medicationId}/guidelines`)
+        .send({ source: 'test', type: 'weight_based', mgPerKg: 1, maxMgPerDose: 50, maxMgPerDay: 1000, minIntervalHours: 4 }),
+    ).expect(201);
 
     await auth(
       request(app.getHttpServer())

@@ -168,6 +168,10 @@ function guidelineDifferences(row: any, g: CatalogFileGuideline): CatalogSeedDif
       diffs.push({ field, database: numberValue(row[field]), file: numberValue(g[field]) });
     }
   }
+  // Absent in the file means the default, so a household that never touched it shows no drift.
+  const fileUnderDose = g.underDose ?? 'allowed';
+  const dbUnderDose = row.underDose ?? 'allowed';
+  if (fileUnderDose !== dbUnderDose) diffs.push({ field: 'underDose', database: dbUnderDose, file: fileUnderDose });
   if (!sameText(row.notes, g.notes)) diffs.push({ field: 'notes', database: textValue(row.notes), file: textValue(g.notes) });
   return diffs;
 }
@@ -323,6 +327,7 @@ function guidelineValues(medicationId: string, embodimentId: string | null, g: C
     doseMl: g.doseMl ?? null,
     pillCount: g.pillCount ?? null,
     frequencyPerDay: g.frequencyPerDay ?? null,
+    underDose: g.underDose ?? 'allowed',
     notes: g.notes ?? null,
   };
 }

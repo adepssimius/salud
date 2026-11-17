@@ -10,6 +10,7 @@ import {
   Medication,
   MedicationEmbodiment,
   MedicationGuideline,
+  formatPillCount,
 } from '@salud/shared/types';
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
@@ -275,9 +276,19 @@ export class InterventionDetailPage implements OnInit {
     const facts: Fact[] = [];
 
     if (iv.type === 'medication_dose') {
-      if (m.amountMg != null) facts.push({ label: 'Amount', value: `${m.amountMg} mg` });
+      if (m.amountMg != null) {
+        // A derived mg says what it was worked out from, so it never reads as a typed figure.
+        const from = !m.amountMgDerived
+          ? ''
+          : m.amountMl != null
+            ? ` (from ${m.amountMl} mL)`
+            : m.pillCount != null
+              ? ` (from ${formatPillCount(m.pillCount)} ${m.pillCount === 1 ? 'pill' : 'pills'})`
+              : '';
+        facts.push({ label: 'Amount', value: `${m.amountMg} mg${from}` });
+      }
       if (m.amountMl != null) facts.push({ label: 'Volume', value: `${m.amountMl} mL` });
-      if (m.pillCount != null) facts.push({ label: 'Pills', value: `${m.pillCount}` });
+      if (m.pillCount != null) facts.push({ label: 'Pills', value: formatPillCount(m.pillCount) });
       if (m.doseSource) {
         facts.push({ label: 'Dose source', value: DOSE_SOURCE_LABELS[m.doseSource as DoseSource] ?? m.doseSource });
       }

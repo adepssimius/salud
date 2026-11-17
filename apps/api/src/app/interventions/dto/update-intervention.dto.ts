@@ -61,7 +61,8 @@ export class UpdateInterventionDto implements UpdateInterventionContract {
   @IsNumber()
   @Min(0.01)
   @Max(100000)
-  amountMg?: number;
+  // null: no entered mg — derive it from amountMl / pillCount (api.md → PATCH).
+  amountMg?: number | null;
 
   @IsOptional()
   @IsNumber()

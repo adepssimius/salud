@@ -13,7 +13,7 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
-import { GuidelineType } from '@salud/shared/types';
+import type { GuidelineType, GuidelineUnderDose } from '@salud/shared/types';
 
 const GUIDELINE_TYPES: GuidelineType[] = ['weight_based', 'age_band'];
 
@@ -118,6 +118,14 @@ export class CreateGuidelineDto {
   @Min(0.25)
   @Max(100)
   pillCount?: number;
+
+  // Whether a dose below this guideline's dose is fine or atypical (data-model.md ->
+  // MedicationGuideline). Defaults to 'allowed' on create. The values are inlined, not imported:
+  // tools/seed-catalog.ts loads this DTO under plain ts-node, where @salud/shared/types only
+  // resolves for type-only imports.
+  @IsOptional()
+  @IsIn(['allowed', 'flagged'] satisfies GuidelineUnderDose[])
+  underDose?: GuidelineUnderDose;
 
   @IsOptional()
   @IsString()

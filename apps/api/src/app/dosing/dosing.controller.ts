@@ -21,23 +21,22 @@ export class DosingController {
       medicationId: dto.medicationId,
       embodimentId: dto.medicationEmbodimentId,
       amountMg: dto.amountMg,
+      amountMl: dto.amountMl,
+      pillCount: dto.pillCount,
       occurredAt,
       excludeInterventionId: dto.excludeInterventionId,
     });
 
-    const reasons: string[] = [];
-    if (evaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
-    if (evaluation.exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
-    if (evaluation.intervalTooShort) reasons.push('interval_too_short');
-
+    // The same verdict and payload the save writes (DosingService.atypicalPayload).
     const advisories: AdvisoryCandidate[] = [...evaluation.advisories];
-    if (reasons.length) {
+    const payload = DosingService.atypicalPayload(evaluation);
+    if (payload) {
       const guidelineId = evaluation.guidance.weightBased?.guidelineId ?? evaluation.guidance.ageBand?.guidelineId;
       advisories.push({
         type: 'atypical_dose',
         severity: 'warning',
         ...(guidelineId ? { sourceType: 'guideline', sourceId: guidelineId } : {}),
-        payload: { reasons, amountMg: dto.amountMg ?? null, dailyTotalMg: evaluation.dailyTotalMg },
+        payload,
       });
     }
 
