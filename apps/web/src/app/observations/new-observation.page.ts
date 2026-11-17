@@ -112,8 +112,8 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-        <!-- Pinned identity: which chart this lands on is never off-screen, and the save button
-             names it again at the point of commitment (frontend.md → "Patient identity"). -->
+        <!-- Pinned identity: with no patient select on screen, which chart this lands on is
+             still never off-screen (frontend.md → "Patient identity"). -->
         <div class="for-patient" *ngIf="(compact() || correction()) && patientName()">
           <span class="muted small">For</span>
           <span class="for-patient-name">{{ patientName() }}</span>
@@ -211,7 +211,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
         <div class="actions">
           <button type="button" class="secondary" (click)="cancel()">Cancel</button>
           <button type="submit" class="primary" [disabled]="form.invalid || entries().length === 0 || changingIndex() !== null || saving()">
-            {{ saving() ? 'Saving…' : saveLabel() }}
+            {{ saving() ? 'Saving…' : correction() ? 'Save correction' : 'Save' }}
           </button>
         </div>
       </form>
@@ -331,18 +331,16 @@ export class NewObservationPage implements OnInit {
   selectedEpisodeIds = computed(() => this.formEpisodeIds());
   private formEpisodeIds = signal<string[]>([]);
 
+  /**
+   * Only for the pinned "For ⟨name⟩" line, shown when the patient is fixed (compact, correction).
+   * It reads the form control, which is not a signal, so it does not follow the patient select —
+   * never render it beside one.
+   */
   patientName = computed(
     () =>
       this.correction()?.patientName ||
       (this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null),
   );
-
-  /** Every write names its patient at the point of commitment — never a bare "Save" (P3). */
-  saveLabel = computed(() => {
-    const name = this.patientName();
-    if (this.correction()) return name ? `Save correction for ${name}` : 'Save correction';
-    return name ? `Save for ${name}` : 'Save observation';
-  });
 
   heading = computed(() =>
     this.correction() ? 'Correct observation' : VERB_HEADINGS[this.lockedEntryType() ?? ''] ?? 'New Observation',

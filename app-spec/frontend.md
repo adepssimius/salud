@@ -85,8 +85,12 @@ rules follow:
   server-side at creation and editable in the hub's Settings tab (data-model.md → Patient) — used
   everywhere the patient appears: patient chips, sick cards, journal headers, night-board rows,
   dose confirmation. Color encodes identity and nothing else.
-- **Every write names its patient at the point of commitment.** The quick-log save button reads
-  "Save for ⟨name⟩" (name + color), never a bare "Save". Recents, dose guidance, and next-allowed
+- **Every write shows its patient on the entry surface.** The full entry forms carry the Patient
+  select; the compact quick-log and correction layouts, which have no select, pin "For ⟨name⟩" at
+  the top of the form. The save button itself is a plain "Save" ("Save correction" on a
+  correction) and does not repeat the name — the entry is saved to the patient the form shows,
+  and a second, separately derived name on the button is one more thing that can disagree with
+  it. Recents, dose guidance, and next-allowed
   arithmetic are always computed per patient; a "same as last time" affordance must never surface
   another patient's last dose, precisely because two children on the same medication at different
   amounts is the normal concurrent-illness case. Logging onto the wrong child's record is the most
@@ -158,7 +162,7 @@ dark room — and a repeat dose in at most four taps.** The `+` opens a sheet, n
   with cards for medications recently given or scheduled: name, embodiment, amount last given,
   last-dose age, and the next-allowed countdown. Tapping a card prefills medication + embodiment
   + amount ("same as last time"); dose-checks still run, guidance cards, advisory banners, and
-  the danger interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩".
+  the danger interstitial still render, and the caregiver still reviews before saving.
   The typeahead search remains below for anything new. This inverts v1, where every repeat dose
   pays the general-case search cost. Backed by `GET /api/patients/:id/recent-medications`
   (api.md → Timeline & dashboard), which carries the last amount/embodiment for the prefill and is
@@ -189,7 +193,7 @@ follows the household's state instead of rendering one fixed stack of sections:
   compact dose form with medication, embodiment and amount prefilled from **this patient's** most
   recent dose of that medication — the same handoff Quick Log's recents cards make, so it is a
   prefill and nothing more: dose-checks still run, guidance cards, advisory banners and the danger
-  interstitial still render, and the caregiver still reviews before "Save for ⟨name⟩". The prefill
+  interstitial still render, and the caregiver still reviews before saving. The prefill
   comes from the dashboard payload itself (`lastDoses[].doses` and `activeEpisodes[].medications`
   carry `lastEmbodimentId`/`lastEmbodimentLabel`/`lastAmountMg`/`lastAmountMl`/`lastDoseSource` —
   api.md → `GET /api/dashboard`), so Home stays a single request, and it is per-patient by

@@ -421,7 +421,7 @@ export class QuickLogSheetComponent implements OnInit {
    * "Same as last time" — medication, embodiment and amount, handed to the dose form as a prefill.
    * It is a prefill and nothing more: dose-checks still run there, guidance cards still render
    * side by side, advisory banners and the danger interstitial still fire, and the caregiver still
-   * reviews before "Save for ⟨name⟩" (P1 — guardrails, no gates).
+   * reviews before saving (P1 — guardrails, no gates).
    */
   chooseRecent(recent: RecentMedication) {
     const params: Record<string, string> = {
