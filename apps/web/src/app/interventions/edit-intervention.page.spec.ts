@@ -183,6 +183,8 @@ describe('EditInterventionPage', () => {
       medicationId: 'm1',
       medicationEmbodimentId: 'emb1',
       amountMg: 200,
+      // The volume rides along: without an mg, the server derives one from it (api.md → dose-checks).
+      amountMl: 5,
       occurredAt: new Date('2023-11-14T21:30').toISOString(),
       // The dose being corrected is not its own prior dose.
       excludeInterventionId: 'iv-1',
@@ -228,6 +230,44 @@ describe('EditInterventionPage', () => {
     save(fixture);
     expect(patchCalls().length).toBe(0);
     expect(el.querySelector('.error')?.textContent).toContain('Enter the amount in mg.');
+  });
+
+  describe('amounts that fill each other (frontend.md → Dose entry)', () => {
+    function withConcentration() {
+      const get = apiMock.get.getMockImplementation();
+      apiMock.get.mockImplementation((path: string) =>
+        path === '/medications/m1/embodiments'
+          ? of([{ id: 'emb1', label: 'Infant 160 mg/5 mL', concentrationMgPerMl: 32, strengthMgPerUnit: null, atHome: true, runningLow: false, expiresAt: null }])
+          : get(path),
+      );
+    }
+
+    it('fills the mg of a dose stored with only mL, and Save hands it to the server to derive', () => {
+      intervention = makeDose({}, { doseSource: 'override', amountMg: null, amountMl: 10, guidelineId: null });
+      withConcentration();
+      const { fixture, form } = render();
+      expect(form.form.getRawValue().amountMg).toBe(320);
+      save(fixture);
+      expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', { amountMg: null });
+    });
+
+    it('a changed volume moves a typed mg back to derivation', () => {
+      withConcentration();
+      const { fixture, form } = render();
+      form.form.controls.amountMl.setValue(7.5);
+      expect(form.form.getRawValue().amountMg).toBe(240);
+      save(fixture);
+      expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', { amountMg: null, amountMl: 7.5 });
+    });
+
+    it('typing mg on a correction fills mL and sends both as typed', () => {
+      withConcentration();
+      const { fixture, form } = render();
+      form.form.controls.amountMg.setValue(320);
+      expect(form.form.getRawValue().amountMl).toBe(10);
+      save(fixture);
+      expect(apiMock.patch).toHaveBeenCalledWith('/interventions/iv-1', { amountMg: 320, amountMl: 10 });
+    });
   });
 
   it.each(['FIELD_NOT_CORRECTABLE', 'EPISODE_LAST_ENTRY', 'EPISODE_TIME_ORDER_INVALID'] as const)(

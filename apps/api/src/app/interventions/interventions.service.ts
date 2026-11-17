@@ -105,11 +105,10 @@ export class InterventionsService {
     interventionId: string,
     userId: string,
     evaluation: DoseEvaluation,
-    reasons: string[],
     guidelineId: string | null,
-    amountMg: number | null | undefined,
   ) {
-    if (reasons.length) {
+    const atypical = DosingService.atypicalPayload(evaluation);
+    if (atypical) {
       await this.advisoriesService.create({
         patientId,
         type: 'atypical_dose',
@@ -117,7 +116,7 @@ export class InterventionsService {
         ...(guidelineId ? { sourceType: 'guideline' as const, sourceId: guidelineId } : {}),
         contextType: 'intervention',
         contextId: interventionId,
-        payload: { reasons, amountMg: amountMg ?? null, dailyTotalMg: evaluation.dailyTotalMg },
+        payload: atypical,
         acknowledgedByUserId: userId,
       });
     }
@@ -169,6 +168,8 @@ export class InterventionsService {
         medicationId: dto.medicationId,
         embodimentId: dto.medicationEmbodimentId,
         amountMg: dto.amountMg,
+        amountMl: dto.amountMl,
+        pillCount: dto.pillCount,
         occurredAt: performedAtDate,
       });
     }
@@ -177,7 +178,7 @@ export class InterventionsService {
     let resolvedWeightKgUsed: number | null = dto.weightKgUsed ?? null;
     let resolvedAgeMonthsUsed: number | null = dto.ageMonthsUsed ?? null;
     let resolvedNextAllowedAt: number | null = null;
-    const reasons: string[] = [];
+    const reasons: string[] = doseEvaluation?.reasons ?? [];
 
     if (doseEvaluation) {
       resolvedAgeMonthsUsed = doseEvaluation.ageMonthsUsed;
@@ -190,24 +191,21 @@ export class InterventionsService {
         resolvedWeightKgUsed = doseEvaluation.weightKgUsed ?? null;
       } else {
         // override / schedule: no guideline to resolve — honor whatever the client sent
-        // (data-model.md).
+        // (data-model.md). How the amount was arrived at is provenance, never itself a reason to
+        // flag the dose: `reasons` is the engine's verdict on amount and time alone.
         resolvedWeightKgUsed = dto.weightKgUsed ?? doseEvaluation.weightKgUsed ?? null;
-        // A dose logged from a standing schedule is executing a plan, not an ad-hoc deviation.
-        // The exemption keys on the scheduleId rather than on doseSource, deliberately: rows
-        // written before doseSource: 'schedule' existed carry 'override' with a scheduleId set,
-        // and must stay exempt (data-model.md -> Data integrity rules).
-        if (!dto.interventionScheduleId) reasons.push('override');
       }
-      if (doseEvaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
-      if (doseEvaluation.exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
-      if (doseEvaluation.intervalTooShort) reasons.push('interval_too_short');
     }
+    // A dose given as a volume or a pill count is stored with the mg the engine judged.
+    const amountMgDerived = !!doseEvaluation?.amountMgDerived;
+    const storedAmountMg = amountMgDerived ? doseEvaluation!.amountMg : dto.amountMg;
 
     const metadata = {
       medicationId: dto.medicationId,
       medicationEmbodimentId: dto.medicationEmbodimentId,
       doseSource: dto.doseSource,
-      amountMg: dto.amountMg,
+      amountMg: storedAmountMg,
+      ...(amountMgDerived ? { amountMgDerived: true } : {}),
       amountMl: dto.amountMl,
       pillCount: dto.pillCount,
       weightKgUsed: resolvedWeightKgUsed,
@@ -290,9 +288,7 @@ export class InterventionsService {
         id,
         userId,
         doseEvaluation,
-        reasons,
         resolvedGuidelineId,
-        dto.amountMg,
       );
     }
 
@@ -429,27 +425,39 @@ export class InterventionsService {
     const honored = (key: 'guidelineId' | 'weightKgUsed' | 'ageMonthsUsed') =>
       dto[key] !== undefined ? dto[key] : carryStored ? stored[key] : undefined;
 
+    // The mg the caregiver entered, if any. A derived amountMg is not an entry: it follows the
+    // volume / pill count it came from (api.md → PATCH /api/interventions/:id).
+    const enteredMg: number | null =
+      dto.amountMg !== undefined ? dto.amountMg : stored.amountMgDerived ? null : (stored.amountMg ?? null);
+
     // Re-evaluation is scoped to a dose change (ISSUES #33): only these fields re-run the engine.
-    // Anything else leaves every engine-resolved field exactly as logged (N-2).
+    // Anything else leaves every engine-resolved field exactly as logged (N-2). A volume or pill
+    // count counts as a dose change only when the mg is derived from it (or missing).
     const doseChanged =
       dto.performedAt !== undefined ||
       dto.medicationId !== undefined ||
       dto.medicationEmbodimentId !== undefined ||
       dto.doseSource !== undefined ||
-      dto.amountMg !== undefined;
+      dto.amountMg !== undefined ||
+      (enteredMg == null && (dto.amountMl !== undefined || dto.pillCount !== undefined));
 
     const advisoryWrites: Array<Parameters<AdvisoriesService['create']>[0]> = [];
     if (row.type === 'medication_dose' && doseChanged && metadata.medicationId) {
       const evaluation = await this.dosingService.evaluate(patientId, userId, {
         medicationId: metadata.medicationId,
         embodimentId: metadata.medicationEmbodimentId,
-        amountMg: metadata.amountMg,
+        amountMg: enteredMg,
+        amountMl: metadata.amountMl,
+        pillCount: metadata.pillCount,
         occurredAt: performedAtDate,
         excludeInterventionId: id,
       });
 
       // Exactly create's resolution, at the corrected time.
-      const reasons: string[] = [];
+      const reasons: string[] = evaluation.reasons;
+      metadata.amountMg = evaluation.amountMgDerived ? evaluation.amountMg : (enteredMg ?? undefined);
+      if (evaluation.amountMgDerived) metadata.amountMgDerived = true;
+      else delete metadata.amountMgDerived;
       metadata.ageMonthsUsed = evaluation.ageMonthsUsed;
       metadata.nextAllowedAt = evaluation.nextAllowedAt;
       if (metadata.doseSource === 'weight_based') {
@@ -461,11 +469,7 @@ export class InterventionsService {
       } else {
         metadata.guidelineId = isOverride ? honored('guidelineId') ?? null : null;
         metadata.weightKgUsed = (isOverride ? honored('weightKgUsed') : undefined) ?? evaluation.weightKgUsed ?? null;
-        if (!row.scheduleId) reasons.push('override');
       }
-      if (evaluation.exceedsMaxPerDose) reasons.push('exceeds_max_per_dose');
-      if (evaluation.exceedsMaxPerDay) reasons.push('exceeds_max_per_day');
-      if (evaluation.intervalTooShort) reasons.push('interval_too_short');
       const atypicalReason = reasons.length ? reasons.join(',') : null;
       metadata.isAtypical = reasons.length > 0;
 
@@ -480,7 +484,7 @@ export class InterventionsService {
           ...(metadata.guidelineId ? { sourceType: 'guideline' as const, sourceId: metadata.guidelineId } : {}),
           contextType: 'intervention',
           contextId: id,
-          payload: { reasons, amountMg: metadata.amountMg ?? null, dailyTotalMg: evaluation.dailyTotalMg },
+          payload: DosingService.atypicalPayload(evaluation)!,
           acknowledgedByUserId: userId,
         });
       }

@@ -362,7 +362,8 @@ export type CorrectableDoseSource = Exclude<DoseSource, 'schedule'>;
  * as it is. Not correctable, and rejected with FIELD_NOT_CORRECTABLE if sent: `type`,
  * `interventionScheduleId`, `recordedByUserId`, `createdAt`, `startEpisodeName`,
  * `startEpisodeConditionId`, and `doseSource: 'schedule'`. The dosing engine re-runs only when
- * `performedAt`, `medicationId`, `medicationEmbodimentId`, `doseSource` or `amountMg` is sent.
+ * `performedAt`, `medicationId`, `medicationEmbodimentId`, `doseSource` or `amountMg` is sent — or
+ * `amountMl`/`pillCount`, when the dose's `amountMg` is derived or missing (it is re-derived).
  */
 export interface UpdateInterventionDto {
   performedAt?: string; // ISO datetime — the clinical time
@@ -374,7 +375,8 @@ export interface UpdateInterventionDto {
   medicationId?: string;
   medicationEmbodimentId?: string;
   doseSource?: CorrectableDoseSource;
-  amountMg?: number;
+  // null hands the mg back to derivation from amountMl / pillCount (api.md → PATCH).
+  amountMg?: number | null;
   amountMl?: number | null;
   pillCount?: number | null;
   // honored under `doseSource: 'override'` only, as on create
@@ -401,6 +403,23 @@ export interface FieldNotCorrectableError {
 // Medication catalog — not patient-scoped (shared by the whole household, P4)
 export type MedicationUnitType = 'tablet' | 'capsule' | 'ml' | 'drop' | 'other';
 export type GuidelineType = 'weight_based' | 'age_band';
+/**
+ * What a dose below a guideline's dose means (data-model.md → MedicationGuideline). `allowed`: the
+ * guideline is a ceiling and less is normal. `flagged`: the full dose should be given, and a dose
+ * more than 10% under it is atypical (`below_full_dose`).
+ */
+export type GuidelineUnderDose = 'allowed' | 'flagged';
+export const GUIDELINE_UNDER_DOSE: readonly GuidelineUnderDose[] = ['allowed', 'flagged'];
+
+/**
+ * The reasons an `atypical_dose` can carry (data-model.md → "Data integrity rules"). `override` is
+ * legacy: rows written before 2026-11 may carry it; it is never produced now.
+ */
+export type AtypicalDoseReason =
+  | 'exceeds_max_per_dose'
+  | 'exceeds_max_per_day'
+  | 'interval_too_short'
+  | 'below_full_dose';
 
 export interface Medication {
   id: string;
@@ -574,6 +593,7 @@ export interface MedicationGuideline {
   doseMl: number | null;
   pillCount: number | null;
   frequencyPerDay: number | null;
+  underDose: GuidelineUnderDose;
   notes: string | null;
 }
 
@@ -591,6 +611,7 @@ export interface CreateGuidelineDto {
   doseMl?: number;
   pillCount?: number;
   frequencyPerDay?: number;
+  underDose?: GuidelineUnderDose;
   notes?: string;
 }
 
@@ -607,6 +628,7 @@ export interface UpdateGuidelineDto {
   doseMl?: number;
   pillCount?: number;
   frequencyPerDay?: number;
+  underDose?: GuidelineUnderDose;
   notes?: string;
 }
 
@@ -653,7 +675,11 @@ export interface AdvisoryCandidate {
 export interface DoseCheckDto {
   medicationId: string;
   medicationEmbodimentId?: string;
+  // Any of the three; with no amountMg, it is derived from amountMl/pillCount and the embodiment
+  // exactly as the save path derives it (api.md → dose-checks).
   amountMg?: number;
+  amountMl?: number;
+  pillCount?: number;
   occurredAt?: string; // ISO datetime; defaults to now
   excludeInterventionId?: string;
 }

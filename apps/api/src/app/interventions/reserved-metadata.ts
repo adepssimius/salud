@@ -43,6 +43,8 @@ export const SERVICE_OWNED_METADATA_KEYS = [
   'nextAllowedAt',
   'isAtypical',
   'atypicalReason',
+  // Set when amountMg was derived from amountMl / pillCount rather than entered.
+  'amountMgDerived',
 ] as const;
 
 const RESERVED = new Set<string>(SERVICE_OWNED_METADATA_KEYS);

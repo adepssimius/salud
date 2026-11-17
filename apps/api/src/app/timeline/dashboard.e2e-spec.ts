@@ -349,8 +349,8 @@ describe('Dashboard (e2e)', () => {
         .expect(201);
     }
 
-    // doseSource: 'override' is flagged atypical, which writes an advisory — that's how these tests
-    // get an advisoryCount without needing a protocol producer that doesn't exist yet.
+    // A dose for a patient with no weight on file writes a stale_weight advisory — that's how these
+    // tests get an advisoryCount without needing a protocol producer that doesn't exist yet.
     async function logDose(pid: string, hoursAgo = 0, asToken = author.token) {
       return request(app.getHttpServer())
         .post(`/api/patients/${pid}/interventions`)

@@ -124,6 +124,7 @@ import { GuidelineEditorComponent } from './guideline-editor.component';
               <div class="row-head">
                 <div class="guideline-header">
                   <span class="pill">{{ g.type === 'weight_based' ? 'Weight-based' : 'Age-band' }}</span>
+                  <span class="pill pill-neutral" *ngIf="g.underDose === 'flagged'">full dose</span>
                   <span class="muted small">{{ g.source }}</span>
                 </div>
                 <button type="button" class="secondary edit" (click)="editGuideline(g.id)">Edit</button>

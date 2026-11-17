@@ -27,7 +27,7 @@ free-form `payload` for type-specific detail, and `acknowledgedByUserId`/`acknow
 
 | Type | Severity | Fires when | `source` | Milestone |
 | --- | --- | --- | --- | --- |
-| `atypical_dose` | `warning` | A logged dose exceeds `maxMgPerDose`, the prospective daily total exceeds `maxMgPerDay`, lands before the prior dose's `nextAllowedAt`, or was entered as `doseSource: override` | `guideline` (the guideline evaluated against, if any) | M2 |
+| `atypical_dose` | `warning` | A logged dose's amount exceeds `maxMgPerDose`, the prospective daily total exceeds `maxMgPerDay`, it lands before the prior dose's `nextAllowedAt`, or it is more than 10% below the dose of a guideline set to `underDose: flagged` (`below_full_dose`). How the amount was entered (`doseSource`) is never a reason — data-model.md → "Data integrity rules" | `guideline` (the guideline evaluated against, if any) | M2 |
 | `stale_weight` | `warning` | No weight on file, or the latest weight is >60 days old, at the moment a dose is being logged (F-3.2) | — | M2 |
 | `expired_embodiment` | `warning` | The selected embodiment's `expiresAt` has passed (F-9.2) | `embodiment` | M2 |
 | `running_low` | `info` | Surfaced on the dashboard shopping list from embodiments flagged `runningLow` (F-9.3) | `embodiment` | M3 |

@@ -79,6 +79,20 @@ describe('GuidelineEditorComponent', () => {
       );
     });
 
+    it('defaults Smaller doses to fine, and sends a full-dose choice', () => {
+      apiMock.post.mockReturnValue(of({ id: 'g2' }));
+      const fixture = build();
+      const comp = fixture.componentInstance;
+      const select = fixture.nativeElement.querySelector('select[formControlName="underDose"]') as HTMLSelectElement;
+      expect(select.value).toBe('allowed');
+      expect(select.textContent).toContain('Fine — it’s a maximum');
+      comp.form.patchValue({ source: 'Rx', mgPerKg: 15, maxMgPerDose: 500, minIntervalHours: 8, maxMgPerDay: 1500, underDose: 'flagged' });
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('more than 10% below');
+      comp.save();
+      expect(apiMock.post).toHaveBeenCalledWith('/medications/m1/guidelines', expect.objectContaining({ underDose: 'flagged' }));
+    });
+
     it('reports a failed create instead of doing nothing, and keeps the form', () => {
       apiMock.post.mockReturnValue(throwError(() => ({ status: 400, error: { message: ['maxMgPerDay must be a number'] } })));
       const comp = build().componentInstance;
@@ -95,7 +109,7 @@ describe('GuidelineEditorComponent', () => {
     it('shows the type as text with how to change it, not a select', () => {
       const fixture = build(AGE_BAND);
       const text = fixture.nativeElement.textContent;
-      expect(fixture.nativeElement.querySelector('select')).toBeNull();
+      expect(fixture.nativeElement.querySelector('select[formControlName="type"]')).toBeNull();
       expect(text).toContain('Age-band');
       expect(text).toContain('delete this guideline and add a new one');
       expect(fixture.componentInstance.isWeightBased()).toBe(false);
@@ -120,6 +134,13 @@ describe('GuidelineEditorComponent', () => {
       const comp = build(AGE_BAND).componentInstance;
       comp.form.patchValue({ frequencyPerDay: 4 });
       expect(comp.changes()).not.toHaveProperty('type');
+    });
+
+    it('reads, and PATCHes, the Smaller doses setting', () => {
+      const comp = build({ ...AGE_BAND, underDose: 'allowed' }).componentInstance;
+      expect(comp.form.getRawValue().underDose).toBe('allowed');
+      comp.form.patchValue({ underDose: 'flagged' });
+      expect(comp.changes()).toEqual({ underDose: 'flagged' });
     });
 
     it('treats an unchanged form as a cancel', () => {

@@ -9,6 +9,8 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { DangerInterstitialComponent } from '../core/danger-interstitial.component';
 import { ERROR_SENTENCES, errorText } from '../core/error-display';
+import { DoseAmountSync } from './dose-amount-sync';
+import { PillCountInputComponent } from './pill-count-input.component';
 import {
   CorrectionEpisodeState,
   correctionResolves,
@@ -61,6 +63,7 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
     AdvisoryBannerComponent,
     DangerInterstitialComponent,
     EpisodeAttachmentComponent,
+    PillCountInputComponent,
   ],
   template: `
     <app-danger-interstitial
@@ -278,10 +281,10 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
               <span>Amount (mL)</span>
               <input type="number" step="0.01" formControlName="amountMl" />
             </label>
-            <label class="field">
-              <span>Pill count</span>
-              <input type="number" step="0.5" formControlName="pillCount" />
-            </label>
+            <div class="field" role="group" aria-labelledby="pill-count-label">
+              <span id="pill-count-label">Pill count</span>
+              <app-pill-count-input formControlName="pillCount" />
+            </div>
           </div>
           <p class="muted small" *ngIf="correction()">
             Doses logged after this one keep the checks they were given at the time — correcting this
@@ -573,6 +576,13 @@ export class NewInterventionPage implements OnInit {
     notes: [''],
   });
 
+  /** mg, mL and pill count fill each other from the selected embodiment (frontend.md → Dose entry). */
+  private readonly amountSync = new DoseAmountSync(
+    { mg: this.form.controls.amountMg, ml: this.form.controls.amountMl, pills: this.form.controls.pillCount },
+    this.form.controls.medicationEmbodimentId,
+    (id) => this.embodiments().find((e) => e.id === id),
+  );
+
   ngOnInit(): void {
     const correction = this.correction();
     if (correction) {
@@ -635,14 +645,13 @@ export class NewInterventionPage implements OnInit {
     if (!prefill?.medicationId) return;
     this.form.patchValue({
       type: 'medication_dose',
-      amountMg: prefill.amountMg ?? null,
-      amountMl: prefill.amountMl ?? null,
       // The source travels with the amount. Repeating a weight-based dose is still arriving at it
       // from the weight-based guideline, and leaving the form's `override` default in place would
-      // record every repeat as an ad-hoc deviation and flag it atypical for it — a false signal
-      // manufactured by the shortcut (frontend.md → Home). Absent param keeps the default.
+      // record every repeat as a hand-typed amount — a false provenance manufactured by the
+      // shortcut (frontend.md → Home). Absent param keeps the default.
       ...(prefill.doseSource ? { doseSource: prefill.doseSource } : {}),
     });
+    this.amountSync.set({ mg: prefill.amountMg ?? null, ml: prefill.amountMl ?? null }, this.firstGiven(prefill.amountMg, prefill.amountMl));
     this.loadMedicationForSchedule(prefill.medicationId, prefill.embodimentId ?? null);
   }
 
@@ -651,8 +660,8 @@ export class NewInterventionPage implements OnInit {
    *
    * `'schedule'` deliberately degrades to `'override'`: this dose is not executing the standing
    * schedule (no `interventionScheduleId` rides along with a repeat), and recording it as one
-   * would misstate its provenance in the ER Brief. The atypical exemption keys on the scheduleId
-   * rather than on this value, so the degradation costs nothing but honesty (api.md → Interventions).
+   * would misstate its provenance in the ER Brief. No atypical check reads this value, so the
+   * degradation costs nothing but honesty (api.md → Interventions).
    */
   private readDoseSourceParam(raw: string | null): DoseSource | undefined {
     if (!raw || !DOSE_SOURCES.includes(raw as DoseSource)) return undefined;
@@ -667,13 +676,14 @@ export class NewInterventionPage implements OnInit {
           type: schedule.type,
           interventionScheduleId: schedule.id,
           doseSource: 'override',
-          amountMg: schedule.doseMg,
-          amountMl: schedule.doseMl,
-          pillCount: schedule.pillCount,
           bodyLocation: schedule.bodyLocation ?? '',
           side: schedule.side ?? 'n/a',
           dressingType: schedule.dressingType ?? '',
         });
+        this.amountSync.set(
+          { mg: schedule.doseMg, ml: schedule.doseMl, pills: schedule.pillCount },
+          this.firstGiven(schedule.doseMg, schedule.doseMl, schedule.pillCount),
+        );
         this.loadEpisodes(schedule.patientId);
         if (schedule.medicationId) {
           this.loadMedicationForSchedule(schedule.medicationId, schedule.medicationEmbodimentId);
@@ -694,6 +704,7 @@ export class NewInterventionPage implements OnInit {
             if (embodimentId) {
               this.form.patchValue({ medicationEmbodimentId: embodimentId });
             }
+            this.amountSync.refresh();
           },
           error: () => this.embodiments.set([]),
         });
@@ -801,7 +812,9 @@ export class NewInterventionPage implements OnInit {
         medicationId: val.medicationId || undefined,
         medicationEmbodimentId: val.medicationEmbodimentId || undefined,
         doseSource: val.doseSource as any,
-        amountMg: val.amountMg ?? undefined,
+        // Filled from mL / pills: left to the server, which derives the same figure and records
+        // that it was derived (api.md → Interventions).
+        amountMg: this.amountSync.mgDerived() ? undefined : (val.amountMg ?? undefined),
         amountMl: val.amountMl ?? undefined,
         pillCount: val.pillCount ?? undefined,
         weightKgUsed: val.weightKgUsed ?? undefined,
@@ -867,7 +880,10 @@ export class NewInterventionPage implements OnInit {
     this.form.patchValue({ medicationId: medication.id, medicationEmbodimentId: '' });
     this.embodiments.set([]);
     this.api.get<MedicationEmbodiment[]>(`/medications/${medication.id}/embodiments`).subscribe({
-      next: (res) => this.embodiments.set(res),
+      next: (res) => {
+        this.embodiments.set(res);
+        this.amountSync.refresh();
+      },
       error: () => this.embodiments.set([]),
     });
   }
@@ -893,7 +909,10 @@ export class NewInterventionPage implements OnInit {
     const body: DoseCheckDto = {
       medicationId: val.medicationId,
       medicationEmbodimentId: val.medicationEmbodimentId || undefined,
-      amountMg: val.amountMg ?? undefined,
+      // Exactly what a save would send, so the preview judges the same mg the save stores.
+      amountMg: this.amountSync.mgDerived() ? undefined : (val.amountMg ?? undefined),
+      amountMl: val.amountMl ?? undefined,
+      pillCount: val.pillCount ?? undefined,
       occurredAt: val.performedAt ? new Date(val.performedAt).toISOString() : undefined,
       // A correction's preview must not count the dose being corrected as its own prior dose —
       // that reads as "too soon since the last dose" against itself. Create sends no such key.
@@ -918,27 +937,32 @@ export class NewInterventionPage implements OnInit {
     return !!this.doseCheckResult()?.advisories.some((a) => a.type === 'stale_weight');
   }
 
+  /** The box a set of given amounts follows: mg first, then mL, then pills; null when none. */
+  private firstGiven(mg?: number | null, ml?: number | null, pills?: number | null) {
+    return mg != null ? ('mg' as const) : ml != null ? ('ml' as const) : pills != null ? ('pills' as const) : null;
+  }
+
   useWeightBasedAmount() {
     const guidance = this.doseCheckResult()?.guidance.weightBased;
     if (!guidance) return;
-    this.form.patchValue({
-      amountMg: Math.round(guidance.computedMg * 100) / 100,
-      // The engine already rounded this to a drawable syringe volume; don't round it again here.
-      // No pillCount: a weight-based guideline has none to offer.
-      amountMl: guidance.computedMl,
-      doseSource: 'weight_based',
-    });
+    // "Use this" counts as typing mg; the engine's mL is kept as given, not re-derived.
+    this.amountSync.set(
+      {
+        mg: Math.round(guidance.computedMg * 100) / 100,
+        // The engine already rounded this to a drawable syringe volume; don't round it again here.
+        // No pillCount: a weight-based guideline has none to offer.
+        ml: guidance.computedMl,
+      },
+      'mg',
+    );
+    this.form.patchValue({ doseSource: 'weight_based' });
   }
 
   useAgeBandAmount() {
     const guidance = this.doseCheckResult()?.guidance.ageBand;
     if (!guidance) return;
-    this.form.patchValue({
-      amountMg: guidance.doseMg,
-      amountMl: guidance.doseMl,
-      pillCount: guidance.pillCount,
-      doseSource: 'age_based',
-    });
+    this.amountSync.set({ mg: guidance.doseMg, ml: guidance.doseMl, pills: guidance.pillCount }, 'mg');
+    this.form.patchValue({ doseSource: 'age_based' });
   }
 
   // ── Correcting an entry (frontend.md → "Correcting an entry") ──────────────────────────────
@@ -978,12 +1002,21 @@ export class NewInterventionPage implements OnInit {
     const stored = this.storedFormValues(iv);
     this.correctionEpisodeOptions.set(c.episodes.options);
     this.formEpisodeIds.set([...c.episodes.selectedIds]);
+    const { amountMg, amountMl, pillCount, ...rest } = stored;
     this.form.patchValue({
-      ...stored,
+      ...rest,
       patientId: iv.patientId,
       type: iv.type,
       episodeSelection: [...c.episodes.selectedIds],
     });
+    // A derived mg follows the volume / pill count it came from; a dose stored with only mL gets
+    // its mg filled once the embodiment loads (refresh()), so Save repairs it.
+    const mgWasDerived = !!(iv.metadata as any)?.amountMgDerived;
+    this.amountSync.set(
+      { mg: amountMg, ml: amountMl, pills: pillCount },
+      mgWasDerived || amountMg == null ? this.firstGiven(null, amountMl, pillCount) : 'mg',
+      mgWasDerived ? ['mg'] : [],
+    );
     if (stored.medicationId) {
       this.loadMedicationForSchedule(stored.medicationId, stored.medicationEmbodimentId || null);
     }
@@ -1021,7 +1054,12 @@ export class NewInterventionPage implements OnInit {
         body.doseSource = val.doseSource as CorrectableDoseSource;
       }
       const amountMg = num(val.amountMg);
-      if (amountMg !== stored.amountMg) {
+      if (this.amountSync.mgDerived()) {
+        // Worked out from mL / pills: `null` hands the mg back to the server's derivation, which
+        // gets the same figure and records it as derived. Unneeded when it already is, unchanged.
+        const storedDerived = !!(iv.metadata as any)?.amountMgDerived;
+        if (!storedDerived || amountMg !== stored.amountMg) body.amountMg = null;
+      } else if (amountMg !== stored.amountMg) {
         if (amountMg === null) return { problem: 'Enter the amount in mg.' };
         body.amountMg = amountMg;
       }
