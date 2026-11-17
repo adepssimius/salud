@@ -191,3 +191,97 @@ describe('EpisodeDetailPage', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/dashboard']);
   });
 });
+
+describe('EpisodeDetailPage membership editing', () => {
+  const resolvedEpisode = {
+    ...baseEpisode,
+    status: 'resolved',
+    endedAtType: 'observation',
+    endedAtId: 'obs2',
+    endedAt: 1700100000,
+    observationIds: ['obs1', 'obs2'],
+  };
+  const timeline = (ids: string[]) => ({
+    patient: { id: 'p1' },
+    weightPrompt: { needsUpdate: false, lastRecordedAt: null, daysSince: null },
+    entries: ids.map((id, i) => ({
+      id,
+      kind: 'observation',
+      type: 'temperature',
+      timestamp: 1700000000 + i * 100000,
+      display: { entries: [{ type: 'temperature', metadata: { value: 38.5, unit: 'C', method: 'oral' } }] },
+    })),
+  });
+  let apiMock: any;
+
+  const build = async (episode: any, ids: string[]) => {
+    apiMock = {
+      get: jest.fn((path: string, params?: any) => {
+        if (path === '/episodes/ep1') return of(episode);
+        if (path.includes('/timeline') && params?.episodeId) return of(timeline(ids));
+        if (path.includes('/timeline')) return of(timeline(['obs1', 'obs2', 'obs3']));
+        if (path === '/medications') return of([]);
+        return of(null);
+      }),
+      post: jest.fn(() => of({ ...episode })),
+    };
+    await TestBed.configureTestingModule({
+      imports: [EpisodeDetailPage],
+      providers: [
+        { provide: ApiClientService, useValue: apiMock },
+        { provide: AuthService, useValue: { user: () => null } },
+        { provide: Router, useValue: { navigate: jest.fn() } },
+        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: new Map([['id', 'ep1']]) } } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(EpisodeDetailPage);
+    fixture.detectChanges();
+    return fixture;
+  };
+
+  const removeButtons = (fixture: any) =>
+    Array.from(fixture.nativeElement.querySelectorAll('button.remove')) as HTMLButtonElement[];
+
+  it('offers Remove on every entry except the one that started the episode', async () => {
+    const fixture = await build(resolvedEpisode, ['obs1', 'obs2']);
+    expect(fixture.nativeElement.textContent).toContain('started this episode');
+    expect(removeButtons(fixture)).toHaveLength(1);
+  });
+
+  it('confirms before removing the entry that ended the episode, then posts the removal', async () => {
+    const fixture = await build(resolvedEpisode, ['obs1', 'obs2']);
+    const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    removeButtons(fixture)[0].click();
+    expect(confirm).toHaveBeenCalled();
+    expect(apiMock.post).not.toHaveBeenCalled();
+
+    removeButtons(fixture)[0].click();
+    expect(apiMock.post).toHaveBeenCalledWith('/episodes/ep1/events', {
+      remove: [{ type: 'observation', id: 'obs2' }],
+    });
+    confirm.mockRestore();
+  });
+
+  it('adds picked entries, offering only those not already in the episode', async () => {
+    const fixture = await build(baseEpisode, ['obs1']);
+    const comp = fixture.componentInstance;
+    comp.startAdding();
+    fixture.detectChanges();
+
+    const boxes = Array.from(fixture.nativeElement.querySelectorAll('app-episode-entry-picker input[type=checkbox]')) as HTMLInputElement[];
+    expect(boxes).toHaveLength(2); // obs3 and obs2, newest first; obs1 is already a member
+    boxes[0].click();
+    fixture.detectChanges();
+    comp.addSelected();
+    expect(apiMock.post).toHaveBeenCalledWith('/episodes/ep1/events', { add: [{ type: 'observation', id: 'obs3' }] });
+    expect(comp.adding()).toBe(false);
+  });
+
+  it('shows the API error sentence when a change is rejected', async () => {
+    const fixture = await build(baseEpisode, ['obs1', 'obs2']);
+    apiMock.post.mockReturnValue(throwError(() => ({ error: { message: 'EPISODE_EVENT_NOT_FOUND' } })));
+    removeButtons(fixture)[0].click();
+    expect(fixture.componentInstance.error()).toContain('no longer available');
+  });
+});

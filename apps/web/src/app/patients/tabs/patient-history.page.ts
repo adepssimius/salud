@@ -8,7 +8,8 @@ import { PatientHubStore } from '../patient-hub.store';
 
 /**
  * The long view of one patient: the standing frames (conditions), the episodes drawn over the
- * timeline, and the way documents get in (lab import).
+ * timeline (and the way to draw a new one from existing entries), and the way documents get in
+ * (lab import).
  */
 @Component({
   selector: 'app-patient-history-page',
@@ -39,10 +40,11 @@ import { PatientHubStore } from '../patient-hub.store';
         <div class="card-header">
           <div>
             <h2>Episodes</h2>
-            <!-- No "new episode" action, deliberately: episodes only ever start as a side effect of
-                 logging an observation or intervention (P5, CLAUDE.md -> Episode model). -->
             <p class="muted">Frames drawn around stretches of the timeline.</p>
           </div>
+          <!-- Drawn afterward from entries already logged; the earliest chosen entry is the start
+               (frontend.md -> History). Always shown, empty state included. -->
+          <button class="secondary" type="button" (click)="goToNewEpisode()">New episode</button>
         </div>
         <div class="error" *ngIf="episodesError()">{{ episodesError() }}</div>
         <ul class="row-list" *ngIf="episodes().length">
@@ -51,7 +53,8 @@ import { PatientHubStore } from '../patient-hub.store';
               <span class="name">{{ ep.name }}</span>
               <span class="meta">
                 <span class="muted small" *ngIf="ep.startedAt">
-                  {{ ep.startedAt! * 1000 | date: 'mediumDate' }}
+                  {{ ep.startedAt! * 1000 | date: 'mediumDate'
+                  }}<ng-container *ngIf="ep.endedAt"> – {{ ep.endedAt! * 1000 | date: 'mediumDate' }}</ng-container>
                 </span>
                 <span class="pill" [class.pill-success]="ep.status === 'active'">{{ ep.status }}</span>
               </span>
@@ -157,6 +160,10 @@ export class PatientHistoryPage implements OnInit {
 
   goToCondition(id: string) {
     this.router.navigate(['/conditions', id]);
+  }
+
+  goToNewEpisode() {
+    this.router.navigate(['/patients', this.patientId, 'episodes', 'new']);
   }
 
   goToEpisode(id: string) {

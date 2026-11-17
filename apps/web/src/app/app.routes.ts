@@ -64,6 +64,14 @@ export const appRoutes: Route[] = [
     canActivate: [authGuard],
   },
   {
+    path: 'patients/:id/episodes/new',
+    loadComponent: () =>
+      import('./episodes/new-episode.page').then((m) => m.NewEpisodePage),
+    title: 'New episode',
+    data: { patientTitle: true },
+    canActivate: [authGuard],
+  },
+  {
     path: 'patients/:id/reactions/new',
     loadComponent: () =>
       import('./reactions/new-reaction.page').then((m) => m.NewReactionPage),

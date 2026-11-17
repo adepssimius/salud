@@ -151,7 +151,45 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
   - Removing a user who is not on the team is a no-op returning `{ deleted: false }`.
 
 ## Episodes
-- Created/resolved only as a result of an observation or intervention (no direct POST).
+- Created either while logging (`startEpisodeName` on an observation/intervention) or directly from
+  existing entries (`POST /api/patients/:patientId/episodes`, below). Resolved only by an entry —
+  there is still no direct resolve or reopen endpoint.
+- `POST /api/patients/:patientId/episodes` — draw a frame around entries already logged
+  (data-model.md → "Data integrity rules" → Episodes drawn afterward).
+  - Body:
+    ```json
+    {
+      "name": "Flu Oct 2026",
+      "conditionId": "uuid",                                   // optional
+      "notes": "text",                                         // optional
+      "events": [{ "type": "observation|intervention", "id": "uuid" }],
+      "resolvedBy": { "type": "observation|intervention", "id": "uuid" }  // optional; must be in events
+    }
+    ```
+  - The start is the earliest entry in `events` by clinical time (ties: observation before
+    intervention, then id). With `resolvedBy` the episode is created `resolved`, ended by that
+    entry; otherwise `active`.
+  - Errors: 400 `EPISODE_EVENTS_REQUIRED` when `events` is empty; 404 `EPISODE_EVENT_NOT_FOUND` when
+    an entry does not exist or belongs to another patient; 400
+    `RESOLVES_MUST_BE_SUBSET_OF_EPISODES` when `resolvedBy` is not one of `events`; 404
+    `CONDITION_NOT_FOUND` when `conditionId` is not this patient's condition; 404
+    `PATIENT_NOT_FOUND` for a caller not on the care team.
+  - **Atomic**: the episode, its pivot rows (one membership row per entry, the start's carrying
+    `startsEpisode`, plus a separate resolving row for `resolvedBy` — the established write
+    pattern) and one `Revision` per selected entry, capturing its prior state as for a correction.
+  - Response: `Episode` (201), shaped as `GET /api/episodes/:episodeId`.
+- `POST /api/episodes/:episodeId/events` — add existing entries to, or remove them from, an episode.
+  - Body: `{ "add": [{ "type", "id" }], "remove": [{ "type", "id" }] }` — both optional, not both
+    empty (400 `EPISODE_EVENTS_REQUIRED`). Adding an entry that is already a member, or removing one
+    that is not, is a no-op for that entry.
+  - Each changed entry goes through the same plan as `PATCH .../observations|interventions/:id`
+    with a new `episodeIds` (and, when it resolved this episode, `resolvesEpisodeIds`): removing the
+    entry that started the episode is 400 `CANNOT_UNLINK_STARTED_EPISODE`; removing the entry that
+    resolved it reopens the episode. Entries must belong to the episode's patient (404
+    `EPISODE_EVENT_NOT_FOUND`).
+  - **Atomic**: every entry's pivot rows, episode state and one `Revision` per entry whose links
+    change, in one transaction; a request that fails any check writes nothing.
+  - Response: `Episode` (200), shaped as `GET /api/episodes/:episodeId`.
 - Every id in an event's `episodeIds`/`resolvesEpisodeIds` must belong to the **same patient as the
   event** — 404 `EPISODE_NOT_FOUND` otherwise. Without this an observation on one child can be
   attached to another child's episode and will render inside that child's episode view, timeline and
@@ -1459,7 +1497,9 @@ sentence silently falls back to that call site's generic message rather than rea
 | `DATE_IN_FUTURE` | 400 (array form) | a past-event datetime (`dateOfBirth`, `observedAt`, `performedAt`, `occurredAt`) later than the server's clock |
 | `PHOTO_FILE_NOT_FOUND` | 400 (array form) | a `photo` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
 | `EPISODE_ALREADY_RESOLVED` | 400 | a second, different event attempting to resolve an already-resolved episode |
-| `CANNOT_UNLINK_STARTED_EPISODE` | 400 | an observation/intervention `PATCH` whose `episodeIds` drops an episode that event started |
+| `CANNOT_UNLINK_STARTED_EPISODE` | 400 | an observation/intervention `PATCH` whose `episodeIds` drops an episode that event started, or `POST /api/episodes/:id/events` removing the entry that started the episode |
+| `EPISODE_EVENTS_REQUIRED` | 400 | `POST /api/patients/:id/episodes` with no `events`, or `POST /api/episodes/:id/events` with neither `add` nor `remove` |
+| `EPISODE_EVENT_NOT_FOUND` | 404 | an entry named in `POST /api/patients/:id/episodes` or `POST /api/episodes/:id/events` that does not exist or belongs to another patient |
 | `EPISODE_TIME_ORDER_INVALID` | 400 | an observation/intervention `PATCH` whose corrected `observedAt`/`performedAt` would put an episode's resolving event before its starting event |
 | `FIELD_NOT_CORRECTABLE` | 400 | an observation/intervention `PATCH` naming a field a correction may not change (type, schedule link, `doseSource: 'schedule'`, `unitPreferenceAtEntry`, attribution, `createdAt`, episode-start fields); body carries `fields` |
 | `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |

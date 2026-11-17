@@ -8,6 +8,7 @@ import { PatientsModule } from './patients/patients.module';
 import { ObservationsModule } from './observations/observations.module';
 import { InterventionsModule } from './interventions/interventions.module';
 import { EpisodesModule } from './episodes/episodes.module';
+import { EpisodeFramingModule } from './episodes/episode-framing.module';
 import { MedicationsModule } from './medications/medications.module';
 import { DosingModule } from './dosing/dosing.module';
 import { AdvisoriesModule } from './advisories/advisories.module';
@@ -33,6 +34,7 @@ import { HealthModule } from './health/health.module';
     ObservationsModule,
     InterventionsModule,
     EpisodesModule,
+    EpisodeFramingModule,
     MedicationsModule,
     DosingModule,
     AdvisoriesModule,
