@@ -91,8 +91,8 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
       </div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-        <!-- Pinned identity: which chart this dose lands on is never off-screen, and the save
-             button names it again at the point of commitment (frontend.md → "Patient identity"). -->
+        <!-- Pinned identity: with no patient select on screen, which chart this dose lands on is
+             still never off-screen (frontend.md → "Patient identity"). -->
         <div class="for-patient" *ngIf="(compact() || correction()) && patientName()">
           <span class="muted small">For</span>
           <span class="for-patient-name">{{ patientName() }}</span>
@@ -325,7 +325,7 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
         <div class="actions">
           <button class="secondary" type="button" (click)="cancel()">Cancel</button>
           <button class="primary" type="submit" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Saving…' : saveLabel() }}
+            {{ saving() ? 'Saving…' : correction() ? 'Save correction' : 'Save' }}
           </button>
         </div>
         <p class="error" *ngIf="error()">{{ error() }}</p>
@@ -521,18 +521,16 @@ export class NewInterventionPage implements OnInit {
   private formEpisodeIds = signal<string[]>([]);
   selectedEpisodeIds = computed(() => this.formEpisodeIds());
 
+  /**
+   * Only for the pinned "For ⟨name⟩" line, shown when the patient is fixed (compact, correction).
+   * It reads the form control, which is not a signal, so it does not follow the patient select —
+   * never render it beside one.
+   */
   patientName = computed(
     () =>
       this.correction()?.patientName ||
       (this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null),
   );
-
-  /** Every write names its patient at the point of commitment — never a bare "Save" (P3). */
-  saveLabel = computed(() => {
-    const name = this.patientName();
-    if (this.correction()) return name ? `Save correction for ${name}` : 'Save correction';
-    return name ? `Save for ${name}` : 'Save intervention';
-  });
 
   heading = computed(() => {
     const c = this.correction();
@@ -629,7 +627,7 @@ export class NewInterventionPage implements OnInit {
    * of it (`GET /patients/:id/recent-medications`). It fills fields and nothing else: the dose
    * check still runs on the patched values, both guidance cards still render side by side, the
    * advisory banners and the `reaction_danger` interstitial still fire, and the caregiver still
-   * reviews before "Save for ⟨name⟩" (P1 — guardrails, not gates).
+   * reviews before saving (P1 — guardrails, not gates).
    */
   private applyRecentPrefill(): void {
     const prefill = this.prefill;

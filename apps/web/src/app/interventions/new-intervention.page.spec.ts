@@ -50,6 +50,61 @@ describe('NewInterventionPage', () => {
     }).compileComponents();
   });
 
+  // The button once read "Save for ⟨name⟩" from a value that did not follow the select, so it could
+  // name one patient while the form saved to another (frontend.md → "Patient identity").
+  describe('patient select', () => {
+    function renderFromPatientPage() {
+      queryParams = { patientId: 'p1' };
+      apiMock.get.mockImplementation((path: string) => {
+        if (path === '/patients') {
+          return of([
+            { id: 'p1', fullName: 'Isla' },
+            { id: 'p2', fullName: 'Sierra' },
+          ]);
+        }
+        return of([]);
+      });
+      const fixture = TestBed.createComponent(NewInterventionPage);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    function choosePatient(fixture: ReturnType<typeof renderFromPatientPage>, id: string) {
+      const select = (fixture.nativeElement as HTMLElement).querySelector(
+        'select[formControlName="patientId"]',
+      ) as HTMLSelectElement;
+      select.value = id;
+      select.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+    }
+
+    it('labels the save button plainly, before and after the patient is changed', () => {
+      const fixture = renderFromPatientPage();
+      const save = () =>
+        (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]')?.textContent?.trim();
+      expect(save()).toBe('Save');
+      choosePatient(fixture, 'p2');
+      expect(save()).toBe('Save');
+      expect((fixture.nativeElement as HTMLElement).querySelector('.actions')?.textContent).not.toMatch(
+        /Isla|Sierra/,
+      );
+    });
+
+    it('saves to the patient chosen in the select, not the one the form was opened for', () => {
+      apiMock.post.mockReturnValue(of({}));
+      const fixture = renderFromPatientPage();
+      choosePatient(fixture, 'p2');
+      fixture.componentInstance.form.patchValue({
+        type: 'medication_dose',
+        medicationId: 'med-1',
+        doseSource: 'override',
+        amountMg: 100,
+      });
+      fixture.componentInstance.submit();
+      expect(apiMock.post).toHaveBeenCalledWith('/patients/p2/interventions', expect.anything());
+    });
+  });
+
   it('loads patients and submits medication dose', () => {
     apiMock.get.mockImplementation((path: string) => {
       if (path.includes('/episodes')) {
@@ -572,10 +627,11 @@ describe('NewInterventionPage', () => {
       expect(el.querySelector('select[formControlName="type"]')).toBeNull();
     });
 
-    it('names the patient on the save button, never a bare "Save"', () => {
+    // The pinned "For Kiddo" line names the patient; the button does not repeat it.
+    it('labels the save button plainly, with no patient name', () => {
       const fixture = render(repeatDose);
       const save = (fixture.nativeElement as HTMLElement).querySelector('button[type="submit"]');
-      expect(save?.textContent?.trim()).toBe('Save for Kiddo');
+      expect(save?.textContent?.trim()).toBe('Save');
     });
 
     // The prefill fills fields; it does not skip a single guardrail (P1).

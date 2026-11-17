@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, input, signal, viewChild } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, input, signal, viewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -62,6 +62,7 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
 @Component({
   selector: 'app-new-observation-page',
   standalone: true,
+  host: { '(document:keydown.escape)': 'onEscape()' },
   imports: [
     CommonModule,
     ReactiveFormsModule,
@@ -112,8 +113,8 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
       <div class="error" *ngIf="error()">{{ error() }}</div>
 
       <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-        <!-- Pinned identity: which chart this lands on is never off-screen, and the save button
-             names it again at the point of commitment (frontend.md → "Patient identity"). -->
+        <!-- Pinned identity: with no patient select on screen, which chart this lands on is
+             still never off-screen (frontend.md → "Patient identity"). -->
         <div class="for-patient" *ngIf="(compact() || correction()) && patientName()">
           <span class="muted small">For</span>
           <span class="for-patient-name">{{ patientName() }}</span>
@@ -162,13 +163,11 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
           ></app-episode-attachment>
         </ng-template>
 
-        <p class="muted small" *ngIf="changingIndex() !== null">
-          Changing the {{ entries()[changingIndex()!].type }} entry below — edit it here, then tap
-          "Add entry" to put it back.
-          <button type="button" class="link" (click)="stopChanging()">Keep it as it was</button>
-        </p>
-
+        <!-- Quick Log's single verb keeps its inline composer (frontend.md → Quick Log). Every
+             other layout lists the entries and adds or edits them in the add-entry sheet below
+             (frontend.md → "Entry list and the add-entry sheet"). -->
         <app-entry-metadata-form
+          *ngIf="lockedEntryType()"
           [patientId]="form.getRawValue().patientId"
           [referenceGroups]="framingReferences()"
           [lockedType]="lockedEntryType()"
@@ -177,8 +176,9 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
           (entryAdded)="addEntry($event)"
         ></app-entry-metadata-form>
 
-        <ul class="entries">
-          <li *ngFor="let e of entries(); let i = index" [class.changing]="changingIndex() === i">
+        <h3 class="entries-title" *ngIf="!lockedEntryType()">Entries</h3>
+        <ul class="entries" [class.listed]="!lockedEntryType()" *ngIf="entries().length">
+          <li *ngFor="let e of entries(); let i = index">
             <span class="pill">{{ e.type }}</span>
             <app-photo-thumbnail *ngIf="e.type === 'photo'; else entryText" [fileId]="e.metadata?.fileId"></app-photo-thumbnail>
             <ng-template #entryText><span class="summary">{{ entrySummary(e) }}</span></ng-template>
@@ -187,34 +187,78 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
             <span class="muted small" *ngIf="correction() && e.type === 'lab_result'">from the report — read-only</span>
             <button
               type="button"
-              class="link change-entry"
-              *ngIf="correction() && e.type !== 'lab_result' && e.type !== 'document'"
+              class="link edit-entry"
+              *ngIf="!lockedEntryType() && canEditEntry(e)"
               (click)="changeEntry(i)"
             >
-              Change
+              Edit
             </button>
             <button
               type="button"
               class="icon-button"
               *ngIf="!correction() || (e.type !== 'lab_result' && entries().length > 1)"
-              [attr.aria-label]="correction() ? 'Remove this entry' : null"
+              aria-label="Remove this entry"
               (click)="removeEntry(i)"
             >
               ✕
             </button>
           </li>
         </ul>
-        <p class="muted small" *ngIf="correction() && entries().length === 1">
-          An observation keeps at least one entry.
-        </p>
+        <ng-container *ngIf="!lockedEntryType()">
+          <p class="muted small" *ngIf="!entries().length">No entries yet. At least one is required.</p>
+          <p class="muted small" *ngIf="correction() && entries().length === 1">
+            An observation keeps at least one entry.
+          </p>
+          <button type="button" class="secondary add-entry" (click)="openAddEntry()">Add entry</button>
+        </ng-container>
 
         <div class="actions">
           <button type="button" class="secondary" (click)="cancel()">Cancel</button>
           <button type="submit" class="primary" [disabled]="form.invalid || entries().length === 0 || changingIndex() !== null || saving()">
-            {{ saving() ? 'Saving…' : saveLabel() }}
+            {{ saving() ? 'Saving…' : correction() ? 'Save correction' : 'Save' }}
           </button>
         </div>
       </form>
+
+      <!-- The add-entry sheet. Kept rendered and shown by class, so the composer (and its sticky
+           temperature unit) lives for the whole visit rather than being rebuilt per entry. -->
+      <div class="entry-sheet" *ngIf="!lockedEntryType()" [class.open]="sheetOpen()">
+        <button type="button" class="entry-sheet-scrim" tabindex="-1" aria-label="Close" (click)="requestCloseSheet()"></button>
+        <div
+          #sheetPanel
+          class="entry-sheet-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="entry-sheet-title"
+          tabindex="-1"
+          (keydown.enter)="onSheetEnter($event)"
+        >
+          <h2 id="entry-sheet-title">{{ sheetTitle() }}</h2>
+          <div class="entry-sheet-body">
+            <app-entry-metadata-form
+              [inSheet]="true"
+              [patientId]="form.getRawValue().patientId"
+              [referenceGroups]="framingReferences()"
+              [initialTempMethod]="initialTempMethod()"
+              (typeChange)="onEntryTypeChange($event)"
+              (entryAdded)="addEntry($event)"
+            ></app-entry-metadata-form>
+          </div>
+          <div class="entry-sheet-confirm" *ngIf="confirmingDiscard(); else sheetActions" role="alert">
+            <p>Discard this entry?</p>
+            <div class="actions">
+              <button type="button" class="secondary" (click)="confirmingDiscard.set(false)">Keep editing</button>
+              <button type="button" class="secondary discard" (click)="discardSheet()">Discard</button>
+            </div>
+          </div>
+          <ng-template #sheetActions>
+            <div class="actions">
+              <button type="button" class="secondary" (click)="requestCloseSheet()">Cancel</button>
+              <button type="button" class="primary" (click)="saveSheetEntry()">Save</button>
+            </div>
+          </ng-template>
+        </div>
+      </div>
     </div>
     </ng-template>
   `,
@@ -246,12 +290,93 @@ const OBSERVATION_VERBS: ObservationType[] = ['temperature', 'pain_score', 'note
         font-size: 0.9rem;
         color: #e2e8f0;
       }
-      .entries li.changing {
-        outline: 1px dashed var(--accent);
-        border-radius: 6px;
+      .entries-title {
+        margin: 0.5rem 0 0;
       }
-      .change-entry {
+      .entries.listed li {
+        padding: 0.5rem 0.65rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+        background: var(--surface-sunken);
+      }
+      .entries.listed .summary {
+        flex: 1;
+        min-width: 0;
+      }
+      .edit-entry {
         font-size: 0.85rem;
+        margin-left: auto;
+      }
+      .add-entry {
+        align-self: flex-start;
+      }
+      /* Bottom sheet on a phone, centred dialog from 900px — the Quick Log sheet's shape. */
+      .entry-sheet {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+      }
+      .entry-sheet.open {
+        display: block;
+      }
+      .entry-sheet-scrim {
+        position: absolute;
+        inset: 0;
+        border: none;
+        padding: 0;
+        background: rgba(0, 0, 0, 0.55);
+        cursor: pointer;
+      }
+      .entry-sheet-panel {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 90dvh;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-elevated);
+        border-top: 1px solid var(--border-strong);
+        border-radius: var(--radius-card) var(--radius-card) 0 0;
+        box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+        outline: none;
+      }
+      .entry-sheet-panel h2 {
+        margin: 0;
+        padding: 1rem 1rem 0.5rem;
+      }
+      .entry-sheet-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 0 1rem 0.75rem;
+      }
+      /* Pinned to the sheet's foot: Save stays reachable however long the type's fields run. */
+      .entry-sheet-panel > .actions,
+      .entry-sheet-confirm {
+        border-top: 1px solid var(--border);
+        padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+      }
+      .entry-sheet-confirm p {
+        margin: 0 0 0.5rem;
+        font-weight: 700;
+      }
+      .discard {
+        color: var(--danger-text);
+      }
+      @media (min-width: 900px) {
+        .entry-sheet-panel {
+          left: 50%;
+          right: auto;
+          bottom: auto;
+          top: 10vh;
+          max-height: 80vh;
+          transform: translateX(-50%);
+          width: min(560px, 92vw);
+          border: 1px solid var(--border-strong);
+          border-radius: var(--radius-card);
+        }
       }
       .fixed-fact {
         margin: 0;
@@ -295,6 +420,7 @@ export class NewObservationPage implements OnInit {
   /** Set by EditObservationPage: this form corrects that observation instead of logging a new one. */
   correction = input<ObservationCorrectionContext | null>(null);
   private readonly composer = viewChild(EntryMetadataFormComponent);
+  private readonly sheetPanel = viewChild<ElementRef<HTMLElement>>('sheetPanel');
 
   patients = signal<Patient[]>([]);
   activeEpisodes = signal<EpisodeOption[]>([]);
@@ -307,8 +433,14 @@ export class NewObservationPage implements OnInit {
   saving = signal(false);
   error = signal<string | null>(null);
   entries = signal<EntryRow[]>([]);
-  /** On a correction: the entry whose values are loaded into the composer to be changed. */
+  /** The listed entry whose values are loaded into the add-entry sheet to be edited. */
   changingIndex = signal<number | null>(null);
+  sheetOpen = signal(false);
+  /** The sheet is asking "Discard this entry?" in place of its Cancel/Save row. */
+  confirmingDiscard = signal(false);
+  /** The composer's draft as the sheet opened — dismissing asks first only if it has changed. */
+  private sheetOpenedWith = '';
+  sheetTitle = computed(() => (this.changingIndex() !== null ? 'Edit entry' : 'Add entry'));
   correctionEpisodeOptions = signal<EpisodeOption[]>([]);
   /** The picker's "this resolves…" switch on a correction; null until the caregiver touches it. */
   correctionResolveFlag = signal<boolean | null>(null);
@@ -331,18 +463,16 @@ export class NewObservationPage implements OnInit {
   selectedEpisodeIds = computed(() => this.formEpisodeIds());
   private formEpisodeIds = signal<string[]>([]);
 
+  /**
+   * Only for the pinned "For ⟨name⟩" line, shown when the patient is fixed (compact, correction).
+   * It reads the form control, which is not a signal, so it does not follow the patient select —
+   * never render it beside one.
+   */
   patientName = computed(
     () =>
       this.correction()?.patientName ||
       (this.patients().find((p) => p.id === this.form.getRawValue().patientId)?.fullName ?? null),
   );
-
-  /** Every write names its patient at the point of commitment — never a bare "Save" (P3). */
-  saveLabel = computed(() => {
-    const name = this.patientName();
-    if (this.correction()) return name ? `Save correction for ${name}` : 'Save correction';
-    return name ? `Save for ${name}` : 'Save observation';
-  });
 
   heading = computed(() =>
     this.correction() ? 'Correct observation' : VERB_HEADINGS[this.lockedEntryType() ?? ''] ?? 'New Observation',
@@ -485,9 +615,11 @@ export class NewObservationPage implements OnInit {
       next[changing] = { id: next[changing].id, ...draft };
       this.entries.set(next);
       this.changingIndex.set(null);
+      this.closeSheet();
       return;
     }
     this.entries.set([...this.entries(), draft]);
+    this.closeSheet();
   }
 
   onEntryTypeChange(type: ObservationType) {
@@ -644,14 +776,77 @@ export class NewObservationPage implements OnInit {
     );
   }
 
+  /** Lab results are never hand-edited; a correction also carries its documents through as stored. */
+  canEditEntry(e: EntryDraft): boolean {
+    return e.type !== 'lab_result' && !(this.correction() && e.type === 'document');
+  }
+
+  openAddEntry() {
+    const composer = this.composer();
+    if (!composer) return;
+    this.changingIndex.set(null);
+    composer.reset();
+    this.openSheet(composer);
+  }
+
+  /** The sheet's Save: the composer emits entryAdded (→ addEntry, which closes the sheet) or shows why not. */
+  saveSheetEntry() {
+    this.composer()?.add();
+  }
+
+  /** Cancel, Esc, or a tap on the scrim. Asks first when anything was filled in or changed. */
+  requestCloseSheet() {
+    if (!this.sheetOpen()) return;
+    const composer = this.composer();
+    if (composer && composer.draftSnapshot() !== this.sheetOpenedWith) {
+      this.confirmingDiscard.set(true);
+      return;
+    }
+    this.discardSheet();
+  }
+
+  discardSheet() {
+    this.composer()?.reset();
+    this.changingIndex.set(null);
+    this.closeSheet();
+  }
+
+  onEscape() {
+    if (!this.sheetOpen()) return;
+    if (this.confirmingDiscard()) this.confirmingDiscard.set(false);
+    else this.requestCloseSheet();
+  }
+
+  /** Enter (the phone keyboard's Go) in a text or number field saves the entry, as Save would. */
+  onSheetEnter(event: Event) {
+    const target = event.target as HTMLElement;
+    if (target.tagName !== 'INPUT' || (target as HTMLInputElement).type === 'file') return;
+    event.preventDefault();
+    if (!this.confirmingDiscard()) this.saveSheetEntry();
+  }
+
+  private openSheet(composer: EntryMetadataFormComponent) {
+    this.sheetOpenedWith = composer.draftSnapshot();
+    this.confirmingDiscard.set(false);
+    this.sheetOpen.set(true);
+    // Focus the dialog itself rather than its first field: no keyboard pops up uninvited.
+    setTimeout(() => this.sheetPanel()?.nativeElement.focus());
+  }
+
+  private closeSheet() {
+    this.confirmingDiscard.set(false);
+    this.sheetOpen.set(false);
+  }
+
   /**
-   * Loads one entry's values into the composer, converted into the reader's units — the same units
-   * the composer converts back from when "Add entry" is tapped — and marks it as the one changing.
+   * Loads one entry's values into the add-entry sheet, converted into the reader's units — the same
+   * units the composer converts back from on Save — and marks it as the one being edited.
    */
   changeEntry(idx: number) {
     const composer = this.composer();
     const entry = this.entries()[idx];
-    if (!composer || !entry) return;
+    if (!composer || !entry || !this.canEditEntry(entry)) return;
+    composer.reset();
     const m: any = entry.metadata ?? {};
     const units = unitsFor(this.auth.user());
     composer.entryType = entry.type;
@@ -706,15 +901,18 @@ export class NewObservationPage implements OnInit {
         composer.side = m.side ?? 'n/a';
         composer.photoSize = typeof m.sizeCm === 'number' ? fromCm(m.sizeCm, units.length) : null;
         break;
+      case 'document':
+        // Already uploaded, so it is one of the patient's files: reselect it there.
+        composer.setDocumentMode('existing');
+        composer.documentExistingFileId = m.fileId ?? null;
+        composer.documentLabel = m.label ?? '';
+        break;
       default:
         return;
     }
     // composer.onTypeChange() above already told this page about the type (typeChange → onEntryTypeChange).
     this.changingIndex.set(idx);
-  }
-
-  stopChanging() {
-    this.changingIndex.set(null);
+    this.openSheet(composer);
   }
 
   /**

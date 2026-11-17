@@ -780,7 +780,7 @@ export class DashboardPage implements OnInit {
    * "Same as last time" from the card — the exact prefill contract Quick Log's recents cards hand
    * the dose form (quick-log-sheet.component.ts → chooseRecent). A prefill and nothing more:
    * dose-checks still run there, guidance cards still render, advisory banners and the danger
-   * interstitial still fire, and the caregiver still reviews before "Save for ⟨name⟩".
+   * interstitial still fire, and the caregiver still reviews before saving.
    *
    * Per-patient by construction: the medication row lives inside this patient's card, so a
    * sibling's dose can never seed it (frontend.md → "Patient identity").
