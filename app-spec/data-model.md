@@ -856,6 +856,13 @@ the snapshot's contents do.
     planned" a skipped slot counts as used: `endAfterOccurrences - loggedCount - skippedCount`.
   - `overdue`: `nextDueAt` in the past while `status = 'active'` — the dashboard's "upcoming action"
     surfacing (F-4.1).
+  - `courseEndsAt`: when the course's last planned dose falls (epoch seconds), counted on from the
+    next due dose as the plan stands: the remaining doses for a count course, the last slot at or
+    before the effective end for a date course (whichever comes first with both), so "give every
+    dose" skips push it out. Under "restart the clock" (or no instruction) an overdue next dose is
+    counted from now, since the late dose restarts the interval. `null` for an open-ended
+    schedule, and while there is no next dose — completed or paused — since nothing is planned to
+    end. The app never invents an end.
 - `MissedDoseState` (per `InterventionSchedule`, computed on read; null unless a dose is overdue):
   `slotAt` (the planned moment missed), `nextSlotAt` (the next planned one, null when the course
   ends first), `action` (the instruction, null with none), `pastCutoff` (a take-late instruction

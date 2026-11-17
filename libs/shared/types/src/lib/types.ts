@@ -856,6 +856,11 @@ export interface ScheduleAdherence {
   missed: number;
   remainingOccurrences: number | null;
   overdue: boolean;
+  /**
+   * When the course's last planned dose falls (epoch seconds), counted on from the next dose as the
+   * plan stands — "give every dose" skips push it out. Null when open-ended, completed or paused.
+   */
+  courseEndsAt: number | null;
 }
 
 export interface InterventionSchedule {

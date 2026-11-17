@@ -605,8 +605,15 @@ derives from existing payloads:
 ## Schedule detail
 - `schedule-detail.page.ts` at `/schedules/:id`: label, type, status, the episodes it is attached to
   (chips through to `/episodes/:id`), timing and next due, the
-  intended-vs-actual stats (logged, expected by now, missed, remaining), Log now / Pause / Resume /
-  Mark complete, notes. One request, `GET /api/schedules/:id/doses`, which carries the schedule
+  intended-vs-actual stats (logged, expected by now, skipped when any, missed, remaining, days since
+  start, days until done), Log now / Pause / Resume / Mark complete, notes.
+- **The two day tiles count calendar days in the viewer's zone**, as the episode page's "Day N"
+  does: started yesterday is "1 day since start" (a course not yet started reads "N days until
+  start"); "days until done" runs to the local day of `adherence.courseEndsAt`, the last planned
+  dose, and reads "Today · last dose" on that day or once it is due. A completed course reads
+  "Done · course complete" and a paused one "Paused · resumes where it stopped" — never a count, and
+  never a negative one. An open-ended schedule has no "until done" tile. The tiles sit three
+  across at every width, so six make two even rows. One request, `GET /api/schedules/:id/doses`, which carries the schedule
   with its adherence alongside its doses.
 - **Missed doses.** Under the timing, the standing instruction: "**If a dose is missed:** Give it
   late, then keep the usual times — but skip it if the next dose is within 2 hours — “per the

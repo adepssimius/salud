@@ -5,6 +5,12 @@ import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
 import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest, Condition, LogScheduleDto, MissedDoseState, ScheduleSkip, SkipScheduleDoseRequest, ScheduleDeleteResponse } from '@salud/shared/types';
 import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, missedDoseAdvice } from './missed-dose-text';
+import { localDaysBetween } from '../episodes/episode-course';
+
+interface DayTile {
+  value: string;
+  label: string;
+}
 
 @Component({
   selector: 'app-schedule-detail-page',
@@ -87,6 +93,16 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
           <div class="stat" *ngIf="s.adherence.remainingOccurrences !== null">
             <div class="stat-value">{{ s.adherence.remainingOccurrences }}</div>
             <div class="stat-label">remaining</div>
+          </div>
+          <!-- Calendar days in the viewer's zone, as the episode page's "Day N" (frontend.md →
+               Schedule detail). The end is the API's courseEndsAt; the page never invents one. -->
+          <div class="stat" *ngIf="sinceStart(s) as d">
+            <div class="stat-value">{{ d.value }}</div>
+            <div class="stat-label">{{ d.label }}</div>
+          </div>
+          <div class="stat" *ngIf="untilDone(s) as d">
+            <div class="stat-value">{{ d.value }}</div>
+            <div class="stat-label">{{ d.label }}</div>
           </div>
         </div>
 
@@ -227,10 +243,17 @@ import { MISSED_DOSE_COURSE_EFFECT_LABELS, adviceIsSkip, instructionSummary, mis
       .adherence h2 {
         margin: 0;
       }
+      /* Three across at every width, so six tiles are two even rows — not three and one on a phone,
+         or five and one on a desktop card. */
       .stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 0.75rem;
+      }
+      @media (max-width: 560px) {
+        .stats {
+          gap: 0.5rem;
+        }
       }
       .stat {
         text-align: center;
@@ -351,6 +374,8 @@ export class ScheduleDetailPage implements OnInit {
 
   scheduleId = this.route.snapshot.paramMap.get('id')!;
   schedule = signal<InterventionSchedule | null>(null);
+  /** Read once per load, so the day tiles don't tick over mid-render. */
+  nowSec = signal(Math.floor(Date.now() / 1000));
   episodeLinks = signal<Array<{ id: string; name: string }>>([]);
   logging = signal(false);
   settingZone = signal(false);
@@ -383,6 +408,7 @@ export class ScheduleDetailPage implements OnInit {
   }
 
   private apply(res: ScheduleDosesResponse) {
+    this.nowSec.set(Math.floor(Date.now() / 1000));
     this.schedule.set(res.schedule);
     this.loadEpisodeNames(res.schedule);
     this.loadSkips();
@@ -480,6 +506,29 @@ export class ScheduleDetailPage implements OnInit {
       },
       error: () => this.episodeLinks.set([]),
     });
+  }
+
+  /** "4 days since start", or "2 days until start" for a course not begun. */
+  sinceStart(s: InterventionSchedule): DayTile {
+    const days = localDaysBetween(s.startAt, this.nowSec());
+    if (days < 0) return { value: String(-days), label: -days === 1 ? 'day until start' : 'days until start' };
+    return { value: String(days), label: days === 1 ? 'day since start' : 'days since start' };
+  }
+
+  /**
+   * Days to the local day of the last planned dose (`adherence.courseEndsAt`). Done or paused say
+   * so instead of a count; an open-ended schedule has no tile. Never negative: an overdue last dose
+   * is due today.
+   */
+  untilDone(s: InterventionSchedule): DayTile | null {
+    if (s.status === 'completed') return { value: 'Done', label: 'course complete' };
+    if (s.endAt == null && s.endAfterOccurrences == null) return null;
+    if (s.status === 'paused') return { value: 'Paused', label: 'resumes where it stopped' };
+    const end = s.adherence.courseEndsAt;
+    if (end == null) return null;
+    const days = Math.max(0, localDaysBetween(this.nowSec(), end));
+    if (days === 0) return { value: 'Today', label: 'last dose' };
+    return { value: String(days), label: days === 1 ? 'day until done' : 'days until done' };
   }
 
   goToEpisode(id: string) {

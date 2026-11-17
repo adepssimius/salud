@@ -273,6 +273,51 @@ describe('Missed-dose instruction (e2e)', () => {
     expect(dateEnd.nextDueAt).toBeNull();
   });
 
+  // data-model.md → ScheduleAdherence.courseEndsAt: the last planned dose, as the plan stands —
+  // what the schedule page's "days until done" counts to.
+  it('says when the course ends, moving it out for skipped doses that are still to be given', async () => {
+    const pid = await patient();
+    const start = hoursAgo(9); // slots -9h, -1h, +7h, …
+    const ends = async (id: string) => (await getSchedule(id)).adherence.courseEndsAt;
+    const skip = (id: string) => request(server()).post(`/api/schedules/${id}/skips`).set(auth()).send({}).expect(201);
+
+    // A count course of 3 on the plan's own slots: the third slot.
+    const count = await schedule(pid, start, { missedDoseAction: 'skip', endAfterOccurrences: 3 });
+    expect(await ends(count.id)).toBe(start + 16 * HOUR);
+    // "Give every dose": two skips add two slots.
+    const finish = await schedule(pid, start, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'finish_every_dose' });
+    await skip(finish.id);
+    await skip(finish.id);
+    expect(await ends(finish.id)).toBe(start + 32 * HOUR);
+    // "End when planned": the third slot stands.
+    const onDate = await schedule(pid, start, { missedDoseAction: 'skip', endAfterOccurrences: 3, missedDoseCourseEffect: 'end_on_date' });
+    await skip(onDate.id);
+    await skip(onDate.id);
+    expect(await ends(onDate.id)).toBe(start + 16 * HOUR);
+
+    // A date course ending at the -1h slot, two skips under "give every dose": two slots later.
+    const dated = await schedule(pid, start, { missedDoseAction: 'skip', endAt: iso(start + 8 * HOUR), missedDoseCourseEffect: 'finish_every_dose' });
+    await skip(dated.id);
+    await skip(dated.id);
+    expect(await ends(dated.id)).toBe(start + 24 * HOUR);
+
+    // No instruction, not yet started: counted from its first slot.
+    const later = hoursAgo(-2);
+    expect(await ends((await schedule(pid, later, { endAfterOccurrences: 4 })).id)).toBe(later + 24 * HOUR);
+
+    // Fixed times walk the schedule's own clock: 08:00 and 20:00 UTC, three doses → the next 08:00.
+    const fixed = await schedule(pid, Date.UTC(2030, 0, 1) / 1000, { frequencyHours: undefined, explicitTimes: ['08:00', '20:00'], timeZone: 'UTC', endAfterOccurrences: 3 });
+    expect(await ends(fixed.id)).toBe(Date.UTC(2030, 0, 2, 8) / 1000);
+
+    // Open-ended, paused or completed: no end to count to.
+    expect(await ends((await schedule(pid, start)).id)).toBeNull();
+    const paused = await schedule(pid, later, { endAfterOccurrences: 4 });
+    await request(server()).patch(`/api/schedules/${paused.id}`).set(auth()).send({ status: 'paused' }).expect(200);
+    expect(await ends(paused.id)).toBeNull();
+    await request(server()).patch(`/api/schedules/${paused.id}`).set(auth()).send({ status: 'completed' }).expect(200);
+    expect(await ends(paused.id)).toBeNull();
+  });
+
   it('keeps every route behind the care team', async () => {
     const pid = await patient();
     const s = await schedule(pid, hoursAgo(9), { missedDoseAction: 'skip' });
