@@ -13,6 +13,8 @@
 // web bundle is already over its size budget (ISSUES.md #11). No Angular pipe either — this module
 // has no Angular imports; components call it from a method, same as core/event-display.ts.
 
+import { DoseLimitedBy } from '@salud/shared/types';
+
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -73,12 +75,19 @@ export function relativeTime(epochSeconds: number, nowSeconds: number = now()): 
 }
 
 /**
- * The dose countdown. `null` in, `null` out — a medication with no guideline interval has no
- * countdown, and that is correct, not missing data (api.md → GET /api/dashboard). A time that has
- * already elapsed reads "can give now", never a negative duration.
+ * The dose countdown, from a live `canGiveAt` — never a dose's frozen `nextAllowedAt`, which is the
+ * interval only (api.md → "Dosing engine" → "Live availability"). `null` in, `null` out — no
+ * interval and no daily max is no guidance, not missing data. A time that has already elapsed
+ * reads "can give now", never a negative duration; one held back by the daily maximum says so,
+ * because "wait 5 hours" with no reason reads like a wrong interval.
  */
-export function nextDoseLabel(nextAllowedAt: number | null, nowSeconds: number = now()): string | null {
-  if (nextAllowedAt === null) return null;
-  if (nextAllowedAt <= nowSeconds) return 'can give now';
-  return `next dose ${timeUntil(nextAllowedAt, nowSeconds)}`;
+export function nextDoseLabel(
+  canGiveAt: number | null,
+  nowSeconds: number = now(),
+  limitedBy: DoseLimitedBy | null = null,
+): string | null {
+  if (canGiveAt === null) return null;
+  if (canGiveAt <= nowSeconds) return 'can give now';
+  const next = `next dose ${timeUntil(canGiveAt, nowSeconds)}`;
+  return limitedBy === 'daily_max' ? `daily max — ${next}` : next;
 }

@@ -462,6 +462,6 @@ export class QuickLogSheetComponent implements OnInit {
   }
 
   countdownLabel(recent: RecentMedication): string | null {
-    return nextDoseLabel(recent.nextAllowedAt);
+    return nextDoseLabel(recent.canGiveAt, undefined, recent.limitedBy);
   }
 }

@@ -7,6 +7,7 @@ import { ObservationsModule } from '../observations/observations.module';
 import { InterventionsModule } from '../interventions/interventions.module';
 import { EpisodesModule } from '../episodes/episodes.module';
 import { AnalytesModule } from '../analytes/analytes.module';
+import { DosingModule } from '../dosing/dosing.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AnalytesModule } from '../analytes/analytes.module';
     InterventionsModule,
     EpisodesModule,
     AnalytesModule,
+    DosingModule,
   ],
   providers: [TimelineService],
   controllers: [TimelineController],

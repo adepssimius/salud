@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gte, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
 import {
   adverseReactions,
@@ -14,6 +14,7 @@ import {
   AdvisoryCandidate,
   AgeBandGuidance,
   AtypicalDoseReason,
+  DoseLimitedBy,
   FULL_DOSE_MARGIN,
   WeightBasedGuidance,
   deriveAmountMg,
@@ -66,6 +67,27 @@ export interface DoseEvaluation {
 }
 
 const STALE_WEIGHT_DAYS = 60;
+const DAY_SECONDS = 24 * 60 * 60;
+
+/** One (patient, medication) whose live availability a caller wants (api.md → "Live availability"). */
+export interface DoseAvailabilityQuery {
+  patientId: string;
+  medicationId: string;
+  /**
+   * A dose time the caller already knows for this pair. Only bounds the scan: the patient's real
+   * latest dose is at or after it, and nothing older than a day before it can sit in any window
+   * that matters.
+   */
+  knownLastDoseAt: number;
+}
+
+export interface DoseAvailability {
+  /** Earliest moment a repeat of the latest dose clears interval and daily max; null = no guidance. */
+  canGiveAt: number | null;
+  limitedBy: DoseLimitedBy | null;
+}
+
+export const availabilityKey = (patientId: string, medicationId: string) => `${patientId}:${medicationId}`;
 
 @Injectable()
 export class DosingService {
@@ -371,5 +393,117 @@ export class DosingService {
       reasons,
       advisories,
     };
+  }
+
+  /**
+   * Live "can I give it now?" for each (patient, medication): the earliest moment a repeat of the
+   * patient's latest dose of that medication clears both the interval and the daily maximum, the
+   * two time-dependent checks a save applies (api.md → "Dosing engine" → "Live availability").
+   *
+   * Computed, never stored, and from the patient's *latest* dose — which this method finds itself
+   * rather than trusting the caller's row, because an episode-scoped row can be older than a dose
+   * logged outside the episode. The daily maximum is resolved exactly as `evaluate` resolves it
+   * (latest dose's embodiment, the patient's age now) over the same trailing-24h window, so Home
+   * cannot say "can give now" to a dose the save would then flag `exceeds_max_per_day`.
+   */
+  async availability(
+    userId: string,
+    queries: DoseAvailabilityQuery[],
+    nowTs: number = Math.floor(Date.now() / 1000),
+  ): Promise<Map<string, DoseAvailability>> {
+    const result = new Map<string, DoseAvailability>();
+    if (!queries.length) return result;
+    const db = this.db.db as any;
+
+    const patientIds = Array.from(new Set(queries.map((q) => q.patientId)));
+    for (const patientId of patientIds) await this.ensurePatientAccess(patientId, userId);
+    const medicationIds = Array.from(new Set(queries.map((q) => q.medicationId)));
+
+    const patientRows = await db.select().from(patients).where(inArray(patients.id, patientIds));
+    const dobById = new Map<string, string>(patientRows.map((p: any) => [p.id, p.dateOfBirth]));
+    const guidelineRows = await db
+      .select()
+      .from(medicationGuidelines)
+      .where(inArray(medicationGuidelines.medicationId, medicationIds));
+
+    // Bounded scan: a day before the oldest known dose covers every window from any latest dose on.
+    const cutoff = Math.min(...queries.map((q) => q.knownLastDoseAt)) - DAY_SECONDS;
+    const doseRows = await db
+      .select()
+      .from(interventions)
+      .where(
+        and(
+          inArray(interventions.patientId, patientIds),
+          eq(interventions.type, 'medication_dose'),
+          gte(interventions.performedAt, new Date(cutoff * 1000)),
+        ),
+      );
+
+    type Dose = { performedAt: number; amountMg: number; nextAllowedAt: number | null; embodimentId: string | null; amountMgRaw: number | null };
+    const dosesByKey = new Map<string, Dose[]>();
+    for (const row of doseRows) {
+      const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      if (!metadata.medicationId) continue;
+      const performedAt = normalizeTs(row.performedAt);
+      if (performedAt === null) continue;
+      const key = availabilityKey(row.patientId, metadata.medicationId);
+      const list = dosesByKey.get(key) ?? [];
+      list.push({
+        performedAt,
+        amountMg: Number(metadata.amountMg) || 0,
+        amountMgRaw: metadata.amountMg ?? null,
+        nextAllowedAt: metadata.nextAllowedAt ?? null,
+        embodimentId: metadata.medicationEmbodimentId ?? null,
+      });
+      dosesByKey.set(key, list);
+    }
+
+    for (const q of queries) {
+      const key = availabilityKey(q.patientId, q.medicationId);
+      if (result.has(key)) continue;
+      const doses = dosesByKey.get(key) ?? [];
+      if (!doses.length) {
+        result.set(key, { canGiveAt: null, limitedBy: null });
+        continue;
+      }
+      const latest = doses.reduce((a, b) => (b.performedAt > a.performedAt ? b : a));
+
+      const dob = dobById.get(q.patientId);
+      const ageMonths = dob ? this.ageInMonths(dob, new Date(nowTs * 1000)) : 0;
+      const forMed = guidelineRows.filter((g: any) => g.medicationId === q.medicationId);
+      const weightBased = this.resolveGuideline(forMed, 'weight_based', latest.embodimentId, ageMonths);
+      const ageBand = this.resolveGuideline(forMed, 'age_band', latest.embodimentId, ageMonths);
+      const maxPerDay: number | null = weightBased?.maxMgPerDay ?? ageBand?.maxMgPerDay ?? null;
+      const intervalAt = latest.nextAllowedAt;
+
+      if (intervalAt == null && maxPerDay == null) {
+        result.set(key, { canGiveAt: null, limitedBy: null });
+        continue;
+      }
+      if (maxPerDay == null) {
+        result.set(key, { canGiveAt: intervalAt, limitedBy: 'interval' });
+        continue;
+      }
+
+      // The save's window: doses at or after t − 24h and not after t (evaluate → dailyTotalMgBefore).
+      const repeatMg = latest.amountMgRaw != null ? Number(latest.amountMgRaw) || 0 : 0;
+      const exceeds = (t: number) =>
+        doses.reduce((sum, d) => (d.performedAt >= t - DAY_SECONDS && d.performedAt <= t ? sum + d.amountMg : sum), 0) +
+          repeatMg >
+        maxPerDay;
+      const start = intervalAt ?? latest.performedAt;
+      // The total only falls as doses age out, one second past their 24h mark — so the answer is the
+      // start itself or one of those moments.
+      const moments = [start, ...doses.map((d) => d.performedAt + DAY_SECONDS + 1).filter((t) => t > start)].sort(
+        (a, b) => a - b,
+      );
+      let at = moments.find((t) => !exceeds(t));
+      // A repeat larger than the max on its own never fits; the window emptying is the best answer.
+      if (at === undefined) at = moments[moments.length - 1];
+
+      const limitedBy: DoseLimitedBy = at > start || intervalAt == null ? 'daily_max' : 'interval';
+      result.set(key, { canGiveAt: at, limitedBy });
+    }
+    return result;
   }
 }

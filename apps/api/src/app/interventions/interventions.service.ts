@@ -14,13 +14,13 @@ import {
 import { CreateInterventionDto } from './dto/create-intervention.dto';
 import { UpdateInterventionDto } from './dto/update-intervention.dto';
 import { EpisodesService } from '../episodes/episodes.service';
-import { DosingService, DoseEvaluation } from '../dosing/dosing.service';
+import { DosingService, DoseEvaluation, availabilityKey } from '../dosing/dosing.service';
 import { AdvisoriesService } from '../advisories/advisories.service';
 import { RevisionsService } from '../revisions/revisions.service';
 import { normalizeTs, toDate } from '../persistence/time';
 import { medicationTagsByIds } from '../medications/medication-tags';
 import { assertNoReservedMetadataKeys } from './reserved-metadata';
-import { DoseSource } from '@salud/shared/types';
+import { DoseLimitedBy, DoseSource } from '@salud/shared/types';
 
 /** api.md → `GET /api/patients/:patientId/recent-medications`: "in the last 14 days". */
 const RECENT_MEDICATIONS_WINDOW_DAYS = 14;
@@ -653,10 +653,25 @@ export class InterventionsService {
             : null,
           lastDoseSource: dose?.lastDoseSource ?? null,
           nextAllowedAt: dose?.nextAllowedAt ?? null,
+          canGiveAt: null as number | null,
+          limitedBy: null as DoseLimitedBy | null,
           isAtypicalLastDose: dose?.isAtypicalLastDose ?? false,
           onActiveSchedule: scheduledMedicationIds.has(medicationId),
         };
       });
+
+    // The live interval-and-daily-max answer, exactly as the dashboard serves it (api.md → "Dosing
+    // engine" → "Live availability"). A never-given scheduled medication has nothing to repeat.
+    const given = entries.filter((e) => e.lastDoseAt !== null);
+    const availability = await this.dosingService.availability(
+      userId,
+      given.map((e) => ({ patientId, medicationId: e.medicationId, knownLastDoseAt: e.lastDoseAt! })),
+    );
+    for (const e of entries) {
+      const a = e.lastDoseAt !== null ? availability.get(availabilityKey(patientId, e.medicationId)) : undefined;
+      e.canGiveAt = a?.canGiveAt ?? null;
+      e.limitedBy = a?.limitedBy ?? null;
+    }
 
     entries.sort((a, b) => {
       if (a.lastDoseAt === null && b.lastDoseAt === null) return a.medicationName.localeCompare(b.medicationName);
