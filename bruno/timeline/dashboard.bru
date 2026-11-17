@@ -20,6 +20,27 @@ assert {
   recentTemperatures: isDefined
 }
 
+docs {
+  Every dose row in `lastDoses[].doses` and `activeEpisodes[].medications` carries `canGiveAt` /
+  `limitedBy`: the live interval-and-daily-max answer to "can I give it now?", computed at request
+  time from the patient's latest dose of that medication (api.md → "Dosing engine" → "Live
+  availability"). `nextAllowedAt` stays the frozen, interval-only value.
+}
+
+tests {
+  test("dose rows carry the live availability fields", function () {
+    const body = res.getBody();
+    const rows = [
+      ...body.lastDoses.flatMap((p) => p.doses),
+      ...body.activeEpisodes.flatMap((e) => e.medications),
+    ];
+    for (const row of rows) {
+      expect(row).to.have.property('canGiveAt');
+      expect(row).to.have.property('limitedBy');
+    }
+  });
+}
+
 settings {
   encodeUrl: true
   timeout: 0
