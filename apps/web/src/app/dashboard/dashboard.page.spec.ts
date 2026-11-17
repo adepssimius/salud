@@ -183,7 +183,9 @@ describe('DashboardPage', () => {
                   medicationId: 'm1',
                   medicationName: 'Tylenol',
                   lastDoseAt: nowSec() - (2 * 3600 + 15 * 60),
-                  canGiveAt: nowSec() + 6000,
+                  // 30 s of slack: the countdown floors to minutes, so a second ticking over
+                  // between here and the render would otherwise read "1h 39m".
+                  canGiveAt: nowSec() + 6000 + 30,
                   isAtypicalLastDose: false,
                 },
               ],
