@@ -163,6 +163,37 @@ describe('Timeline (e2e)', () => {
     expect(timeline.body.weightPrompt.needsUpdate).toBe(false);
   });
 
+  describe('weightPrompt scales with age (advisories.md → stale_weight)', () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+    async function patientWithWeight(dateOfBirth: string, weightDaysAgo: number) {
+      const created = await request(app.getHttpServer())
+        .post('/api/patients')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fullName: 'Weight Prompt Patient', dateOfBirth, sexAtBirth: 'male', myRole: 'parent' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/patients/${created.body.id}/observations`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ observedAt: daysAgo(weightDaysAgo).toISOString(), entries: [{ type: 'weight', metadata: { kg: 8 } }] })
+        .expect(201);
+      const timeline = await request(app.getHttpServer())
+        .get(`/api/patients/${created.body.id}/timeline`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return timeline.body.weightPrompt;
+    }
+
+    it('leaves an adult with a 90-day-old weight alone', async () => {
+      const prompt = await patientWithWeight('1980-06-15', 90);
+      expect(prompt).toMatchObject({ needsUpdate: false, daysSince: 90 });
+    });
+
+    it('prompts for a two-month-old whose weight is 10 days old', async () => {
+      const prompt = await patientWithWeight(daysAgo(61).toISOString().slice(0, 10), 10);
+      expect(prompt).toMatchObject({ needsUpdate: true, daysSince: 10 });
+    });
+  });
+
   it('attributes every entry with a server-resolved recordedBy', async () => {
     const timeline = await request(app.getHttpServer())
       .get(`/api/patients/${patientId}/timeline`)
