@@ -7,9 +7,11 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { nextDoseLabel, timeAgo, timeUntil, relativeTime } from '../core/relative-time';
 import { convertTemp, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
+import { missedDoseAdvice } from '../schedules/missed-dose-text';
 import {
   DashboardPayload,
   DashboardTemperaturePoint,
+  DashboardUpcomingSchedule,
   DoseLimitedBy,
   DoseSource,
   PatientAccentColor,
@@ -316,8 +318,19 @@ interface SickCard {
               <div class="muted small" *ngIf="s.nextDueAt">
                 Due {{ until(s.nextDueAt) }}
               </div>
+              <!-- The schedule's own missed-dose instruction, repeated where the overdue dose is
+                   seen (frontend.md → Home). No instruction, no advice. -->
+              <div class="small missed-advice" *ngIf="s.missedDose && missedAdvice(s) as a">
+                {{ a }}<ng-container *ngIf="s.missedDoseNote"> — “{{ s.missedDoseNote }}”</ng-container>
+              </div>
             </button>
-            <button type="button" class="secondary small" (click)="logDose(s.scheduleId)">Log dose</button>
+            <div class="row-actions">
+              <button type="button" class="secondary small" *ngIf="s.missedDose?.doubleNextDue" (click)="logDose(s.scheduleId, true)">
+                Log double dose
+              </button>
+              <button type="button" class="secondary small" *ngIf="!s.missedDose?.doubleNextDue" (click)="logDose(s.scheduleId)">Log dose</button>
+              <button type="button" class="secondary small" *ngIf="s.missedDose" (click)="skipDose(s.scheduleId)">Skip</button>
+            </div>
           </li>
         </ul>
       </section>
@@ -469,6 +482,16 @@ interface SickCard {
         border-color: var(--danger-border);
         background: var(--danger-bg);
       }
+      .schedule-list .missed-advice {
+        margin-top: 0.2rem;
+        color: var(--text);
+      }
+      .schedule-list .row-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        flex-shrink: 0;
+      }
       .row-link {
         flex: 1;
         /* A flex item's min-width resolves to auto, i.e. its longest unbreakable word — so a schedule
@@ -492,14 +515,22 @@ interface SickCard {
         .schedule-list li {
           flex-wrap: wrap;
         }
-        .schedule-list li > .secondary.small {
+        .schedule-list li > .secondary.small,
+        .schedule-list .row-actions {
           margin-left: auto;
+        }
+        /* With Log dose and Skip side by side there is no room beside a wrapped label: the label
+           takes the whole line and the actions sit under it, so the overdue pill never runs into
+           a button. */
+        .schedule-list li:has(.row-actions) > .row-link {
+          flex-basis: 100%;
         }
       }
       .row-main {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.25rem 0.5rem;
       }
       /* The strip and what's-new rows name a patient too, so they carry the dot — the association
          between a color and a child is only learnable if it is the same everywhere. */
@@ -888,8 +919,25 @@ export class DashboardPage implements OnInit {
     this.router.navigate(['/episodes', episodeId]);
   }
 
-  logDose(scheduleId: string) {
-    this.router.navigate(['/interventions/new'], { queryParams: { scheduleId } });
+  /** The dose form, prefilled from the schedule — doubled when it is the prescribed double. */
+  logDose(scheduleId: string, double = false) {
+    this.router.navigate(['/interventions/new'], { queryParams: double ? { scheduleId, double: '1' } : { scheduleId } });
+  }
+
+  /** The caregiver skips the missed dose: recorded as skipped, not missed (api.md → "Missed doses"). */
+  skipDose(scheduleId: string) {
+    this.api.post(`/schedules/${scheduleId}/skips`, {}).subscribe({
+      next: () => this.load(),
+      error: (err) => this.error.set(errorText(err, 'Could not skip that dose.')),
+    });
+  }
+
+  missedAdvice(s: DashboardUpcomingSchedule): string | null {
+    return s.missedDose ? missedDoseAdvice(s.missedDose, (sec) => this.clockTime(sec)) : null;
+  }
+
+  private clockTime(sec: number): string {
+    return new Date(sec * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
   restock(embodimentId: string) {

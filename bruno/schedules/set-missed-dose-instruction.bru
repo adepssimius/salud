@@ -1,0 +1,38 @@
+meta {
+  name: Set Missed-Dose Instruction
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "missedDoseAction": "take_late_keep_times",
+    "missedDoseCutoffHours": 2,
+    "missedDoseNote": "per the label"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.missedDoseAction: eq take_late_keep_times
+  res.body.missedDoseCutoffHours: eq 2
+}
+
+docs {
+  What the prescriber or label said to do about a missed dose. Actions: take_late_keep_times,
+  take_late_restart, skip, double_next, ask_prescriber (null clears). A cutoff goes only with a
+  take-late action and a course effect only with a course that ends, else 400
+  MISSED_DOSE_INSTRUCTION_INVALID. The response carries `missedDose` when a dose is overdue.
+  See app-spec/api.md -> Intervention schedules -> Missed doses.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

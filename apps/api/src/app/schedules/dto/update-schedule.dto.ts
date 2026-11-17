@@ -1,4 +1,5 @@
-import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { MISSED_DOSE_ACTIONS, MISSED_DOSE_COURSE_EFFECTS, MissedDoseAction, MissedDoseCourseEffect } from '@salud/shared/types';
+import { MaxLength, ArrayNotEmpty, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ScheduleStatus } from '@salud/shared/types';
 
 export class UpdateScheduleDto {
@@ -89,4 +90,24 @@ export class UpdateScheduleDto {
   @IsOptional()
   @IsIn(['active', 'paused', 'completed'] satisfies ScheduleStatus[])
   status?: ScheduleStatus;
+
+  // The missed-dose instruction (api.md → Intervention schedules → "Missed doses"). null clears it.
+  @IsOptional()
+  @IsIn(MISSED_DOSE_ACTIONS)
+  missedDoseAction?: MissedDoseAction | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.25)
+  @Max(168)
+  missedDoseCutoffHours?: number | null;
+
+  @IsOptional()
+  @IsIn(MISSED_DOSE_COURSE_EFFECTS)
+  missedDoseCourseEffect?: MissedDoseCourseEffect | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  missedDoseNote?: string | null;
 }

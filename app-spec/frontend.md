@@ -566,6 +566,21 @@ derives from existing payloads:
   action that routes to `/interventions/new?scheduleId=...`, pre-filling patient, medication,
   embodiment, and amount from the schedule (F-4.2) — the caregiver still reviews and confirms
   before saving, consistent with every other dose entry.
+- **A missed dose carries its schedule's instruction** (api.md → Intervention schedules → "Missed
+  doses"). An overdue row whose schedule has an instruction repeats it in one sentence under the
+  label ("Skip this dose and give the next one as usual (8:00 PM).", "Don't give it now — give a
+  double dose at the next dose (8:00 PM).", "The next dose is due soon (9:00 PM), so per the
+  instruction: skip this one."), with the instruction's note in quotes. No instruction, no
+  sentence. Beside "Log dose" sits **Skip** (records the skip — `POST /schedules/:id/skips`), and
+  when "take two next time" is in force "Log dose" becomes **"Log double dose"**, opening the dose
+  form with `&double=1`. The words come from one module (`schedules/missed-dose-text.ts`) shared
+  with the schedule page and the dose form.
+- **Logging a schedule's missed dose in the dose form** shows the same sentence in a banner above
+  the guidance. When the double is due, a checkbox "This is the prescribed double dose" (ticked
+  when arriving with `double=1`) doubles the schedule's amounts and sends `prescribedDouble`;
+  unticking restores them. Every dose check still runs: the preview's atypical warning reads
+  "exceeds max per dose — prescribed double after a missed dose (schedule instruction)", as the
+  saved advisory, the intervention detail page and the ER Brief do.
 - **Fixed-time schedules carry the household's zone from the browser.** The new-schedule form
   sends the browser's IANA zone as `timeZone` on every create (data-model.md →
   `InterventionSchedule.timeZone`); there is no zone picker. The schedule page names the zone
@@ -592,6 +607,14 @@ derives from existing payloads:
   intended-vs-actual stats (logged, expected by now, missed, remaining), Log now / Pause / Resume /
   Mark complete, notes. One request, `GET /api/schedules/:id/doses`, which carries the schedule
   with its adherence alongside its doses.
+- **Missed doses.** Under the timing, the standing instruction: "**If a dose is missed:** Give it
+  late, then keep the usual times — but skip it if the next dose is within 2 hours — “per the
+  label”", and the course effect when set. When a dose is missed, a card says "missed · Due
+  ⟨time⟩", repeats the instruction for this dose (for "ask the prescriber", with the schedule's
+  condition's first contact), and offers **Log it now** and **Skip this dose** — Skip first when
+  the instruction says to skip or the cutoff has passed — or **Log the double dose** when "take
+  two next time" is in force. Skipped doses are listed ("skipped" / "made up by a double dose")
+  with **Undo** on a tapped skip only.
 - **Doses.** Every dose on the schedule, newest first, each marked "from schedule" (logged with
   Log now or from a due row) or "linked later". A dose linked later carries **Unlink**; one logged
   from the schedule does not (api.md → "Linking existing doses").
@@ -881,6 +904,18 @@ app. They therefore need somewhere to be entered.
     and saying it under the strict one is exactly the confusion the two options exist to prevent.
   - Typing in either box selects its option. No schema change: both were always storable; only
     the form's question was unclear.
+- **If a dose is missed** — a fieldset after the course's end, recording what the prescriber or
+  label said (data-model.md → "Missed-dose instruction"):
+  - a select, "No instruction" first (the default — the app then gives no advice), then "Give it
+    late, then keep the usual times", "Give it late, then count the next dose from then", "Skip it
+    and give the next dose as usual", "Take two next time", "Ask the prescriber";
+  - for the two give-it-late options only, "Skip it instead if the next dose is within [N] hours"
+    (optional), with an ⓘ tooltip explaining it;
+  - for a course that ends only, "Effect on the course": "Give every dose — skipped doses are
+    added to the end" or "End when planned — skipped doses are not made up";
+  - once an instruction is chosen, "What the label or prescriber said (optional)".
+  Nothing is sent that has nothing to act on (a cutoff without give-it-late, an effect without an
+  end), matching the API's `MISSED_DOSE_INSTRUCTION_INVALID`.
 - **The name comes last, and writes itself.** At the bottom of the form, prefilled with what a
   nurse would call it, so it is recognisable where the ER Brief lists schedules:
   - dose, then medicine (first letter capitalised), then frequency — "500 mg Acetaminophen q6h";

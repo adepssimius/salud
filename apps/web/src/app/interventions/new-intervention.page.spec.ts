@@ -683,6 +683,63 @@ describe('NewInterventionPage', () => {
     expect(component.selectedMedication()?.id).toBe('med-1');
     expect(component.embodiments().length).toBe(1);
   });
+  // frontend.md → Schedules → "Missed doses": logging a missed dose from its schedule repeats the
+  // instruction, and Home's "Log double dose" arrives with the prescribed double ticked.
+  it('shows the missed-dose instruction and prefills the prescribed double, sending it as such', () => {
+    queryParams = { scheduleId: 'sched-2', double: '1' };
+    const schedule = {
+      id: 'sched-2',
+      patientId: 'p1',
+      type: 'medication_dose',
+      medicationId: 'med-1',
+      medicationEmbodimentId: null,
+      episodeId: null,
+      label: 'Amoxicillin q8h',
+      doseMg: 400,
+      doseMl: null,
+      pillCount: null,
+      frequencyHours: 8,
+      explicitTimes: null,
+      startAt: 1700000000,
+      status: 'active',
+      missedDoseAction: 'double_next',
+      missedDose: { slotAt: 1700000000, nextSlotAt: 1700028800, action: 'double_next', pastCutoff: false, doubleNextDue: true },
+      adherence: { expectedCount: 1, loggedCount: 0, skippedCount: 0, missed: 1, remainingOccurrences: null, overdue: true },
+    };
+    apiMock.get.mockImplementation((path: string) => {
+      if (path === '/schedules/sched-2') return of(schedule);
+      if (path === '/medications/med-1') return of({ id: 'med-1', name: 'Amoxicillin', brandNames: [], tags: [] });
+      if (path === '/medications/med-1/embodiments') return of([]);
+      if (path.includes('/episodes')) return of([]);
+      return of([{ id: 'p1', fullName: 'Patient 1' }]);
+    });
+    apiMock.post.mockReturnValue(of({ id: 'i1' }));
+    const fixture = TestBed.createComponent(NewInterventionPage);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+
+    expect(fixture.nativeElement.querySelector('.missed-dose').textContent).toContain("Don't give it now — give a double dose at the next dose");
+    expect(component.prescribedDouble()).toBe(true);
+    expect(component.form.getRawValue().amountMg).toBe(800);
+
+    // The preview's atypical warning says why the dose is over the maximum.
+    component.doseCheckResult.set({
+      guidance: { weightBased: null, ageBand: null },
+      nextAllowedAt: null,
+      dailyTotalMg: 800,
+      advisories: [{ type: 'atypical_dose', severity: 'warning', payload: { reasons: ['exceeds_max_per_dose'] } }],
+    } as any);
+    expect(component.nonDangerAdvisories()[0].payload).toMatchObject({ prescribedDouble: true });
+
+    component.setPrescribedDouble(false);
+    expect(component.form.getRawValue().amountMg).toBe(400);
+    component.setPrescribedDouble(true);
+    component.form.patchValue({ performedAt: '2026-01-01T08:00' });
+    component.submit();
+    const body = apiMock.post.mock.calls.find((c: any[]) => String(c[0]).endsWith('/interventions'))![1];
+    expect(body).toMatchObject({ interventionScheduleId: 'sched-2', prescribedDouble: true, amountMg: 800 });
+  });
+
   // frontend.md → "Information architecture (v2)" → Quick Log: "Dose: recents first, search
   // second." The sheet picks the medication; this form takes the prefill and does everything else
   // exactly as it always did.

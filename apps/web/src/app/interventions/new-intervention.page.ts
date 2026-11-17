@@ -12,6 +12,7 @@ import { ERROR_SENTENCES, errorText } from '../core/error-display';
 import { AmountBoxes, DoseAmountSync, amountBoxesFor } from './dose-amount-sync';
 import { PillCountInputComponent } from './pill-count-input.component';
 import { DoseGuidanceComponent } from './dose-guidance.component';
+import { missedDoseAdvice } from '../schedules/missed-dose-text';
 import {
   CorrectionEpisodeState,
   correctionResolves,
@@ -32,6 +33,7 @@ import {
   MedicationEmbodiment,
   Patient,
   UpdateInterventionDto,
+  MissedDoseState,
 } from '@salud/shared/types';
 
 /**
@@ -199,6 +201,17 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
               </select>
             </label>
           </div>
+          <!-- Logging a dose the schedule says is missed: its instruction, repeated here, and the
+               prescribed double when "take two next time" is in force (frontend.md → Schedules →
+               "Missed doses"). Every check below still runs on the doubled amount. -->
+          <div class="missed-dose" *ngIf="scheduleMissed() as m">
+            <p><strong>This schedule's dose is missed.</strong><ng-container *ngIf="missedAdvice(m) as a"> {{ a }}</ng-container></p>
+            <label class="inline-check" *ngIf="m.doubleNextDue">
+              <input type="checkbox" [checked]="prescribedDouble()" (change)="setPrescribedDouble($any($event.target).checked)" />
+              <span>This is the prescribed double dose</span>
+            </label>
+          </div>
+
           <app-dose-guidance
             *ngIf="selectedMedication()"
             [result]="doseCheckResult()"
@@ -377,6 +390,18 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
       .link {
         font-size: 0.85rem;
       }
+      .missed-dose {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        padding: 0.65rem 0.8rem;
+        border-radius: var(--radius-control);
+        background: var(--danger-bg);
+        border: 1px solid var(--danger-border);
+      }
+      .missed-dose p {
+        margin: 0;
+      }
       .advisories {
         display: flex;
         flex-direction: column;
@@ -434,6 +459,7 @@ export class NewInterventionPage implements OnInit {
   correctionResolveSelected = computed(() => this.correctionResolvesIds().length > 0);
 
   private scheduleIdParam: string | null = null;
+  private doubleParam = false;
   private patientIdParam: string | null = null;
   /**
    * "Same as last time", handed over by Quick Log's recents step or Home's per-medication repeat
@@ -472,9 +498,31 @@ export class NewInterventionPage implements OnInit {
   dangerAdvisories = computed(
     () => this.doseCheckResult()?.advisories.filter((a) => a.type === 'reaction_danger') ?? [],
   );
-  nonDangerAdvisories = computed(
-    () => this.doseCheckResult()?.advisories.filter((a) => a.type !== 'reaction_danger') ?? [],
+  nonDangerAdvisories = computed(() =>
+    (this.doseCheckResult()?.advisories.filter((a) => a.type !== 'reaction_danger') ?? []).map((a) =>
+      // The preview says why a prescribed double is over the maximum, as the saved advisory will.
+      a.type === 'atypical_dose' && this.prescribedDouble() ? { ...a, payload: { ...(a.payload ?? {}), prescribedDouble: true } } : a,
+    ),
   );
+
+  /** The prefilling schedule's missed dose, when it has one. */
+  scheduleMissed = signal<MissedDoseState | null>(null);
+  prescribedDouble = signal(false);
+  private scheduleAmounts: { mg: number | null; ml: number | null; pills: number | null } | null = null;
+
+  missedAdvice(m: MissedDoseState): string | null {
+    return missedDoseAdvice(m, (sec) => new Date(sec * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+  }
+
+  /** Ticking it doubles the schedule's amounts; unticking puts them back. */
+  setPrescribedDouble(on: boolean) {
+    this.prescribedDouble.set(on);
+    const base = this.scheduleAmounts;
+    if (!base) return;
+    const f = on ? 2 : 1;
+    const times = (v: number | null) => (v != null ? v * f : null);
+    this.amountSync.set({ mg: times(base.mg), ml: times(base.ml), pills: times(base.pills) }, this.firstGiven(base.mg, base.ml, base.pills));
+  }
   showDangerInterstitial = computed(
     () => this.dangerAdvisories().length > 0 && !this.dangerAdvisoriesAcknowledged(),
   );
@@ -549,6 +597,7 @@ export class NewInterventionPage implements OnInit {
     }
     const params = this.route.snapshot.queryParamMap;
     this.scheduleIdParam = params.get('scheduleId');
+    this.doubleParam = params.get('double') === '1';
     this.patientIdParam = params.get('patientId');
     if (this.patientIdParam) this.form.patchValue({ patientId: this.patientIdParam });
     if (params.get('type') === 'dressing_change') this.form.patchValue({ type: 'dressing_change' });
@@ -641,6 +690,10 @@ export class NewInterventionPage implements OnInit {
           { mg: schedule.doseMg, ml: schedule.doseMl, pills: schedule.pillCount },
           this.firstGiven(schedule.doseMg, schedule.doseMl, schedule.pillCount),
         );
+        this.scheduleAmounts = { mg: schedule.doseMg, ml: schedule.doseMl, pills: schedule.pillCount };
+        this.scheduleMissed.set(schedule.missedDose ?? null);
+        // Home's "Log double dose" arrives with double=1; only honoured while the double is due.
+        if (this.doubleParam && schedule.missedDose?.doubleNextDue) this.setPrescribedDouble(true);
         this.loadEpisodes(schedule.patientId);
         if (schedule.medicationId) {
           this.loadMedicationForSchedule(schedule.medicationId, schedule.medicationEmbodimentId);
@@ -778,6 +831,7 @@ export class NewInterventionPage implements OnInit {
         ageMonthsUsed: val.ageMonthsUsed ?? undefined,
         guidelineId: val.guidelineId || undefined,
         interventionScheduleId: val.interventionScheduleId || undefined,
+        ...(this.prescribedDouble() && val.interventionScheduleId ? { prescribedDouble: true } : {}),
       });
     } else {
       Object.assign(body, {

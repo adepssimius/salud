@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -18,6 +19,7 @@ import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
 import { UpdateScheduleDosesDto } from './dto/update-schedule-doses.dto';
+import { SkipScheduleDoseDto } from './dto/skip-schedule-dose.dto';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -80,5 +82,29 @@ export class SchedulesController {
     @Body() dto: UpdateScheduleDosesDto,
   ) {
     return await this.schedules.updateDoses(id, req.user.userId, dto);
+  }
+
+  // Missed doses (api.md → Intervention schedules → "Missed doses").
+  @Post('schedules/:id/skips')
+  async skip(
+    @Request() req: any,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: SkipScheduleDoseDto,
+  ) {
+    return await this.schedules.skip(id, req.user.userId, dto);
+  }
+
+  @Get('schedules/:id/skips')
+  async listSkips(@Request() req: any, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return await this.schedules.listSkips(id, req.user.userId);
+  }
+
+  @Delete('schedules/:id/skips/:skipId')
+  async unskip(
+    @Request() req: any,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Param('skipId', new ParseUUIDPipe({ version: '4' })) skipId: string,
+  ) {
+    return await this.schedules.unskip(id, skipId, req.user.userId);
   }
 }

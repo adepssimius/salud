@@ -1,0 +1,31 @@
+meta {
+  name: List Skipped Doses
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/skips
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  const first = (res.body || []).find((k) => k.reason === 'skipped');
+  if (first) bru.setVar('skipId', first.id);
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+docs {
+  The schedule's skipped slots, newest first; reason "skipped" or "made_up_by_double". Stores the
+  first tapped skip as `skipId` for "Undo Skip".
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

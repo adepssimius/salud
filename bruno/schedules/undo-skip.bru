@@ -1,0 +1,25 @@
+meta {
+  name: Undo Skip
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}/skips/{{skipId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Undo a skip tapped by mistake: the slot is missed again. A slot made up by a prescribed double
+  goes only with its dose (400 SCHEDULE_SKIP_NOT_UNDOABLE); 404 SCHEDULE_SKIP_NOT_FOUND.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

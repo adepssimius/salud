@@ -364,4 +364,37 @@ describe('NewSchedulePage', () => {
       expect(comp.isDaily()).toBe(false);
     });
   });
+
+  // frontend.md → New schedule form → "If a dose is missed".
+  it('sends the missed-dose instruction, the cutoff only with a take-late action and the effect only with an end', () => {
+    apiMock.post.mockReturnValue(of({ id: 's' }));
+    const fixture = TestBed.createComponent(NewSchedulePage);
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+    comp.form.patchValue({
+      patientId: 'p1',
+      label: 'Amox q8h',
+      medicationId: 'med-1',
+      frequencyHours: 8,
+      missedDoseAction: 'take_late_keep_times',
+      missedDoseCutoffHours: 2,
+      missedDoseCourseEffect: 'finish_every_dose',
+      missedDoseNote: ' per the pharmacist ',
+    });
+    fixture.detectChanges();
+    expect(comp.isTakeLate()).toBe(true);
+    expect(fixture.nativeElement.querySelector('input[formcontrolname=missedDoseCutoffHours]')).not.toBeNull();
+    // No end yet: the course effect is neither shown nor sent.
+    expect(fixture.nativeElement.querySelector('select[formcontrolname=missedDoseCourseEffect]')).toBeNull();
+    comp.submit();
+    let body = apiMock.post.mock.calls[0][1];
+    expect(body).toMatchObject({ missedDoseAction: 'take_late_keep_times', missedDoseCutoffHours: 2, missedDoseNote: 'per the pharmacist' });
+    expect(body.missedDoseCourseEffect).toBeUndefined();
+
+    comp.form.patchValue({ endAfterOccurrences: 10, missedDoseAction: 'skip' });
+    comp.submit();
+    body = apiMock.post.mock.calls[1][1];
+    expect(body).toMatchObject({ missedDoseAction: 'skip', missedDoseCourseEffect: 'finish_every_dose' });
+    expect(body.missedDoseCutoffHours).toBeUndefined();
+  });
 });

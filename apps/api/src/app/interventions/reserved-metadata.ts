@@ -47,6 +47,8 @@ export const SERVICE_OWNED_METADATA_KEYS = [
   'amountMgDerived',
   // Set when the dose was linked to a schedule after it was logged (POST /schedules/:id/doses).
   'scheduleLinked',
+  // Set when the dose is a schedule's prescribed double ("take two next time").
+  'prescribedDouble',
 ] as const;
 
 const RESERVED = new Set<string>(SERVICE_OWNED_METADATA_KEYS);

@@ -6,7 +6,7 @@ import { AuthService } from '../core/auth.service';
 import { PhotoThumbnailComponent } from '../core/photo-thumbnail.component';
 import { describeEvent, photoFileIds, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { doseReasonLabel } from '../core/advisory-banner.component';
+import { atypicalReasonsText } from '../core/advisory-banner.component';
 import { BriefCareDocumentsComponent } from './brief-care-documents.component';
 import {
   CreateErBriefSnapshotDto,
@@ -534,6 +534,6 @@ export class ErBriefPage implements OnInit {
   /** The reasons in the words the advisory banner uses, not the raw codes. */
   reasonsText(payload: Record<string, any> | null | undefined): string {
     const reasons: string[] = payload?.['reasons'] ?? [];
-    return reasons.length ? reasons.map(doseReasonLabel).join(', ') : 'atypical';
+    return reasons.length ? atypicalReasonsText(reasons, payload?.['prescribedDouble']) : 'atypical';
   }
 }

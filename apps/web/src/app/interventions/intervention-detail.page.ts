@@ -15,7 +15,7 @@ import {
 import { ApiClientService } from '../core/api-client.service';
 import { AuthService } from '../core/auth.service';
 import { RevisionHistoryComponent } from '../core/revision-history.component';
-import { doseReasonLabel } from '../core/advisory-banner.component';
+import { atypicalReasonsText } from '../core/advisory-banner.component';
 import { fromKg, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
 import { timeAgo } from '../core/relative-time';
@@ -248,12 +248,11 @@ export class InterventionDetailPage implements OnInit {
   atypicalReasons = computed<string | null>(() => {
     const raw: string | null = this.metadata().atypicalReason ?? null;
     if (!raw) return null;
-    return raw
+    const codes = raw
       .split(',')
       .map((code: string) => code.trim())
-      .filter(Boolean)
-      .map(doseReasonLabel)
-      .join(', ');
+      .filter(Boolean);
+    return atypicalReasonsText(codes, this.metadata().prescribedDouble === true);
   });
 
   /** Attribution through the care team — see ObservationDetailPage for why it can come up empty. */

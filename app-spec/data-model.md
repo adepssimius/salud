@@ -601,6 +601,28 @@ episodes.
     forward, e.g. 02:30) is due the length of the gap later (03:30). `null` only on schedules
     created before the field existed: those read their times on the server's own zone, as they
     always did, until a caregiver sets one (the schedule page offers the browser's zone).
+  - **Missed-dose instruction** — what the prescriber or label said to do when a dose is missed.
+    The app records it and repeats it where the missed dose is seen; it never decides on its own
+    (P6). All four are null by default, and **no instruction means no advice**.
+    - `missedDoseAction: enum('take_late_keep_times','take_late_restart','skip','double_next','ask_prescriber') | null`:
+      - `take_late_keep_times` — give it late; the late dose counts for the missed slot and the
+        next dose stays on the original times.
+      - `take_late_restart` — give it late; the next dose is counted from when it was given.
+      - `skip` — skip it; the next dose is the next planned one.
+      - `double_next` — "take two next time": the next dose is a double, prefilled doubled.
+      - `ask_prescriber` — ask the prescriber; the missed dose shows the instruction and, when the
+        schedule nests under a Condition, its first contact.
+    - `missedDoseCutoffHours: decimal | null` — only with a take-late action: when the next dose
+      is within this many hours, the advice becomes "skip this one" instead.
+    - `missedDoseCourseEffect: enum('finish_every_dose','end_on_date') | null` — only on a
+      course that ends (`endAt` or `endAfterOccurrences`): give every dose (each skipped slot adds
+      one to the end) or end when planned (skipped doses are not made up).
+    - `missedDoseNote: text | null` — free text shown with the instruction ("per the pharmacist").
+  - How the next dose follows the doses given — the **restart** reading (no instruction, or
+    `take_late_restart`: one interval after the last dose, or the next fixed time after it — every
+    schedule's behaviour before instructions existed) or the **grid** reading (every other
+    instruction: the plan's own slots are consumed in order, one per dose given or slot skipped, so
+    a late dose covers the slot it was late for and the times stay put).
   - `startAt: datetime`
   - `endAfterOccurrences: integer | null`
   - `endAt: datetime | null`
@@ -611,12 +633,29 @@ episodes.
   - `createdAt`, `updatedAt`
 - Linking:
   - When an intervention is logged from a schedule, `interventionScheduleId` is stored on the intervention.
+  - **Any** dose filed against a schedule — from `POST /schedules/:id/log` or from the dose form with
+    `interventionScheduleId` — moves the schedule's `nextDueAt`/`status` the same way; the
+    schedule must be the same patient's.
   - A dose logged ad hoc can be linked to a schedule afterwards, and unlinked again, only through the
     schedule's explicit "Linking existing doses" action (api.md → Intervention schedules) — never a
     dose correction. Such a dose carries the reserved `metadata.scheduleLinked: true`, keeps its
     own `doseSource`, and gets a `Revision` per change. Only these can be unlinked; a dose logged
     from the schedule stays linked.
 
+
+### ScheduleSkip
+A planned slot of an `InterventionSchedule` that was **deliberately not given** — distinct from a
+missed slot, which simply has no dose. Written only by a caregiver's action: tapping "Skip this
+dose", or logging a prescribed double, which makes up the slot it replaces. The app never skips on
+its own.
+- `id: uuid`
+- `scheduleId: uuid`
+- `slotAt: datetime` — the planned moment skipped (only ever the schedule's current missed slot)
+- `reason: enum('skipped','made_up_by_double')` — a `made_up_by_double` row belongs to its dose and
+  cannot be undone on its own
+- `recordedByUserId: uuid`
+- `createdAt`
+- One row per (schedule, slot), checked by the service.
 
 ### FileAsset
 - `id: uuid`
@@ -786,13 +825,22 @@ the snapshot's contents do.
     do not count, and the count never exceeds `endAfterOccurrences`. Without the cap a finished
     course would keep accruing missed doses forever. Fixed `explicitTimes` slots are read in the
     schedule's `timeZone` (`InterventionSchedule.timeZone`); only a row with no stored zone falls
-    back to the server's clock.
+    back to the server's clock. The course's **effective** end applies the instruction's course
+    effect: "give every dose" adds a slot per skip, "end when planned" ends a count course at its
+    N-th planned slot.
   - `loggedCount`: doses actually logged against this schedule (`intervention.scheduleId` match).
-  - `missed`: `max(0, expectedCount - loggedCount)`.
+  - `skippedCount`: slots deliberately not given (`ScheduleSkip` rows).
+  - `missed`: `max(0, expectedCount - loggedCount - skippedCount)` — a skipped slot is not missed.
   - `remainingOccurrences`: `endAfterOccurrences - loggedCount` when `endAfterOccurrences` is set
-    (F-4.4 — "3 doses of amoxicillin left"), else `null` for open-ended schedules.
+    (F-4.4 — "3 doses of amoxicillin left"), else `null` for open-ended schedules. Under "end when
+    planned" a skipped slot counts as used: `endAfterOccurrences - loggedCount - skippedCount`.
   - `overdue`: `nextDueAt` in the past while `status = 'active'` — the dashboard's "upcoming action"
     surfacing (F-4.1).
+- `MissedDoseState` (per `InterventionSchedule`, computed on read; null unless a dose is overdue):
+  `slotAt` (the planned moment missed), `nextSlotAt` (the next planned one, null when the course
+  ends first), `action` (the instruction, null with none), `pastCutoff` (a take-late instruction
+  whose next dose is within its cutoff), `doubleNextDue` (`double_next` in force). Home, the
+  schedule page and the dose form all read this one value, so they never disagree.
 
 ## Data integrity rules
 - Observations/interventions must belong to at least one patient.

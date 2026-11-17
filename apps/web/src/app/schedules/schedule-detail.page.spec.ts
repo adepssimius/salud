@@ -100,8 +100,7 @@ describe('ScheduleDetailPage', () => {
     expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/log', {});
     expect(comp.logging()).toBe(false);
     // The schedule's doses list changed too, so the page re-reads it.
-    expect(apiMock.get).toHaveBeenCalledTimes(2);
-    expect(apiMock.get).toHaveBeenLastCalledWith('/schedules/s1/doses');
+    expect(apiMock.get.mock.calls.filter((c: any[]) => c[0] === '/schedules/s1/doses')).toHaveLength(2);
   });
 
   it('pause/resume/complete PATCH the correct status', () => {
@@ -199,6 +198,70 @@ describe('ScheduleDetailPage', () => {
       expect(buttons).toHaveLength(1);
       buttons[0].click();
       expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/doses', { unlink: ['a'] });
+    });
+  });
+
+  // frontend.md → Schedule detail → "Missed doses": the instruction repeated, the caregiver acts.
+  describe('missed doses', () => {
+    const missedSchedule = (missedDose: any, extra: any = {}) => ({
+      ...baseSchedule,
+      missedDoseAction: missedDose.action,
+      missedDoseCutoffHours: null,
+      missedDoseCourseEffect: null,
+      missedDoseNote: 'per the label',
+      missedDose,
+      adherence: { ...baseSchedule.adherence, skippedCount: 0, overdue: true },
+      ...extra,
+    });
+    const respond = (schedule: any, skips: any[] = []) =>
+      apiMock.get.mockImplementation((path: string) =>
+        path.endsWith('/skips') ? of(skips) : of({ schedule, linked: [], candidates: [] }),
+      );
+
+    it('states the instruction and offers to skip first when it says to skip', () => {
+      respond(missedSchedule({ slotAt: 1700000000, nextSlotAt: 1700028800, action: 'skip', pastCutoff: false, doubleNextDue: false }));
+      apiMock.post.mockReturnValue(of({}));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      const text = fixture.nativeElement.textContent;
+      expect(text).toContain('If a dose is missed:');
+      expect(text).toContain('Skip it and give the next dose as usual');
+      expect(text).toContain('“per the label”');
+      expect(text).toContain('Skip this dose and give the next one as usual');
+      const skipButton = Array.from(fixture.nativeElement.querySelectorAll('.missed-actions button') as NodeListOf<HTMLButtonElement>).find((b) =>
+        b.textContent!.includes('Skip this dose'),
+      )!;
+      expect(skipButton.classList.contains('primary')).toBe(true);
+      skipButton.click();
+      expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/skips', {});
+    });
+
+    it('logs the prescribed double when take-two-next-time is in force', () => {
+      respond(missedSchedule({ slotAt: 1700000000, nextSlotAt: 1700028800, action: 'double_next', pastCutoff: false, doubleNextDue: true }));
+      apiMock.post.mockReturnValue(of({ intervention: {}, schedule: baseSchedule }));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain("Don't give it now — give a double dose at the next dose");
+      fixture.componentInstance.logDouble();
+      expect(apiMock.post).toHaveBeenCalledWith('/schedules/s1/log', { double: true });
+    });
+
+    it('gives no advice without an instruction, and lists skips with Undo only for a tapped skip', () => {
+      respond(missedSchedule({ slotAt: 1700000000, nextSlotAt: 1700028800, action: null, pastCutoff: false, doubleNextDue: false }, { missedDoseNote: null }), [
+        { id: 'k1', scheduleId: 's1', slotAt: 1699971200, reason: 'skipped', recordedByUserId: 'u1', createdAt: 1 },
+        { id: 'k2', scheduleId: 's1', slotAt: 1699942400, reason: 'made_up_by_double', recordedByUserId: 'u1', createdAt: 1 },
+      ]);
+      apiMock.delete = jest.fn(() => of(baseSchedule));
+      const fixture = TestBed.createComponent(ScheduleDetailPage);
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      expect(el.textContent).not.toContain('If a dose is missed:');
+      expect(el.querySelector('.missed-advice')).toBeNull();
+      expect(el.textContent).toContain('made up by a double dose');
+      const undo = Array.from(el.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).filter((b) => b.textContent!.trim() === 'Undo');
+      expect(undo).toHaveLength(1);
+      undo[0].click();
+      expect(apiMock.delete).toHaveBeenCalledWith('/schedules/s1/skips/k1');
     });
   });
 });
