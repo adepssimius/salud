@@ -169,7 +169,8 @@ dark room — and a repeat dose in at most four taps.** The `+` opens a sheet, n
   compact single-purpose layout when arriving with a preselected type.
 - **Dose: recents first, search second.** For the selected patient, the medication step leads
   with cards for medications recently given or scheduled: name, embodiment, amount last given,
-  last-dose age, and the next-allowed countdown. Tapping a card prefills medication + embodiment
+  last-dose age, and the can-give countdown (from `canGiveAt`, so it honours the daily maximum
+  as well as the interval — see Home). Tapping a card prefills medication + embodiment
   + amount ("same as last time"); dose-checks still run, guidance cards, advisory banners, and
   the danger interstitial still render, and the caregiver still reviews before saving.
   The typeahead search remains below for anything new. This inverts v1, where every repeat dose
@@ -253,12 +254,20 @@ follows the household's state instead of rendering one fixed stack of sections:
     drawn from the app's own idea of normal.
 - **Night board — the concurrent-illness centerpiece.** When **two or more** patients are sick, a
   condensed grid renders *above* the cards: one row per sick patient (name + color), one line per
-  active medication, each cell just the countdown ("can give now" / "in 1h 40m") plus any
-  atypical flag. A single caregiver alternating between two bedrooms gets "who can have what,
+  active medication, each cell just the countdown ("can give now" / "in 1h 40m" /
+  "daily max · in 5h 10m") plus any atypical flag. A single caregiver alternating between two bedrooms gets "who can have what,
   when" in one glance, without scrolling between cards. The board is pure arithmetic — computed
   next-allowed times, no interpretation (P6).
 - Card order: the patient with the **soonest next actionable moment** (earliest next-allowed
   time or most-overdue schedule) first — the top of the screen is the next thing to do.
+- **Every "can give now" on Home and in Quick Log reads `canGiveAt`, never `nextAllowedAt`**
+  (api.md → "Dosing engine" → "Live availability"). `nextAllowedAt` is only the interval; a
+  patient at the daily maximum would otherwise read "can give now" with the interval long past.
+  When the daily maximum is what is holding the dose back (`limitedBy: 'daily_max'`), the
+  countdown says so — "daily max · in 5h 10m", and in the strip's and Quick Log's fuller sentence
+  "daily max — next dose in 5h 10m" — because "wait 5 hours" with no reason reads like a wrong
+  interval. Ordering by "soonest next actionable moment" uses `canGiveAt` too. `null` still reads
+  "no interval given".
 - Quiet-household content (shopping list, "since you last looked" rows for quiet patients)
   demotes below the sick cards; it never interleaves with them.
 
@@ -523,8 +532,9 @@ derives from existing payloads:
 > negatives — carry over into the sick cards and quiet mode unchanged.
 - **"Last doses" strip — the first content on the page after any advisories.** Per patient: every
   medication given in the last 24 hours, with its name, how long ago in relative form ("2h 15m
-  ago"), and the next-allowed countdown ("can give now" / "next dose in 1h 40m", omitted entirely
-  when no guideline supplies an interval). This is the direct answer to the founding question
+  ago"), and the can-give countdown ("can give now" / "next dose in 1h 40m" / "daily max — next
+  dose in 5h 10m", from `canGiveAt`; omitted entirely when no guideline supplies an interval or a
+  daily max). This is the direct answer to the founding question
   (product.md → origin story), so it sits above everything else that is history or planning.
   - **A patient with nothing in the window gets an explicit confident negative — "Nothing given in
     the last 24 hours." — never a blank space or a hidden row.** At 3 AM the negative *is* the

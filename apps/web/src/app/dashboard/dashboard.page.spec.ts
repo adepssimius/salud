@@ -96,7 +96,7 @@ describe('DashboardPage', () => {
             startedAt: 1700000000,
             lastObservationSummary: { observedAt: 1700000100, entries: [{ id: 'e1', type: 'temperature', metadata: {} }] },
             medications: [
-              { medicationId: 'm1', medicationName: 'Ibuprofen', lastDoseAt: 1700000200, nextAllowedAt: 1700014600, isAtypicalLastDose: false },
+              { medicationId: 'm1', medicationName: 'Ibuprofen', lastDoseAt: 1700000200, canGiveAt: 1700014600, isAtypicalLastDose: false },
             ],
           },
         ],
@@ -134,7 +134,7 @@ describe('DashboardPage', () => {
                   medicationId: 'm1',
                   medicationName: 'Tylenol',
                   lastDoseAt: nowSec() - (2 * 3600 + 15 * 60),
-                  nextAllowedAt: nowSec() + 6000,
+                  canGiveAt: nowSec() + 6000,
                   isAtypicalLastDose: false,
                 },
               ],
@@ -167,7 +167,7 @@ describe('DashboardPage', () => {
       expect(text).not.toContain('Nothing needs attention right now.');
     });
 
-    it('reads "can give now" once nextAllowedAt has elapsed', () => {
+    it('reads "can give now" once canGiveAt has elapsed', () => {
       apiMock.get.mockReturnValue(
         of({
           ...emptyPayload,
@@ -180,7 +180,7 @@ describe('DashboardPage', () => {
                   medicationId: 'm1',
                   medicationName: 'Tylenol',
                   lastDoseAt: nowSec() - 5 * 3600,
-                  nextAllowedAt: nowSec() - 60,
+                  canGiveAt: nowSec() - 60,
                   isAtypicalLastDose: false,
                 },
               ],
@@ -326,7 +326,7 @@ describe('DashboardPage', () => {
       medicationId: 'm1',
       medicationName: 'Ibuprofen',
       lastDoseAt: nowSec() - 3600,
-      nextAllowedAt: nowSec() + 6000,
+      canGiveAt: nowSec() + 6000,
       isAtypicalLastDose: false,
       ...over,
     });
@@ -387,16 +387,29 @@ describe('DashboardPage', () => {
 
       it('reads "can give now" on the hero once next-allowed has elapsed', () => {
         const fixture = render({
-          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() - 60 })] })],
+          activeEpisodes: [episode({ medications: [dose({ canGiveAt: nowSec() - 60 })] })],
         });
         const hero = fixture.nativeElement.querySelector('.dose-hero');
         expect(hero.textContent.trim()).toBe('can give now');
         expect(hero.classList).toContain('ready');
       });
 
+      it('reads canGiveAt, not the frozen nextAllowedAt: an elapsed interval at the daily max is no "can give now"', () => {
+        const fixture = render({
+          activeEpisodes: [
+            episode({
+              medications: [dose({ nextAllowedAt: nowSec() - 3600, canGiveAt: nowSec() + 6000, limitedBy: 'daily_max' })],
+            }),
+          ],
+        });
+        const hero = fixture.nativeElement.querySelector('.dose-hero');
+        expect(hero.textContent.trim()).toBe('daily max · in 1h 40m');
+        expect(hero.classList).not.toContain('ready');
+      });
+
       it('says so in words when no guideline supplied an interval — null is no guidance, not "cannot give"', () => {
         const fixture = render({
-          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: null })] })],
+          activeEpisodes: [episode({ medications: [dose({ canGiveAt: null })] })],
         });
         expect(fixture.nativeElement.querySelector('.dose-hero').textContent.trim()).toBe('no interval given');
       });
@@ -408,7 +421,7 @@ describe('DashboardPage', () => {
             {
               patientId: 'p1',
               patientName: 'Ada',
-              doses: [dose({ medicationId: 'm2', medicationName: 'Tylenol', nextAllowedAt: nowSec() + 60 })],
+              doses: [dose({ medicationId: 'm2', medicationName: 'Tylenol', canGiveAt: nowSec() + 60 })],
             },
           ],
         });
@@ -417,8 +430,8 @@ describe('DashboardPage', () => {
       });
 
       it('keeps the newer of two records of the same medication rather than showing it twice', () => {
-        const stale = dose({ lastDoseAt: nowSec() - 7200, nextAllowedAt: nowSec() + 1200 });
-        const fresh = dose({ lastDoseAt: nowSec() - 600, nextAllowedAt: nowSec() + 9000 });
+        const stale = dose({ lastDoseAt: nowSec() - 7200, canGiveAt: nowSec() + 1200 });
+        const fresh = dose({ lastDoseAt: nowSec() - 600, canGiveAt: nowSec() + 9000 });
         const fixture = render({
           activeEpisodes: [episode({ medications: [stale] })],
           lastDoses: [{ patientId: 'p1', patientName: 'Ada', doses: [fresh] }],
@@ -426,7 +439,7 @@ describe('DashboardPage', () => {
         const meds = fixture.componentInstance.sickCards()[0].medications;
         expect(meds.length).toBe(1);
         expect(meds[0].lastDoseAt).toBe(fresh.lastDoseAt);
-        expect(meds[0].nextAllowedAt).toBe(fresh.nextAllowedAt);
+        expect(meds[0].canGiveAt).toBe(fresh.canGiveAt);
       });
 
       it('does not repeat a sick patient in the Last doses strip, but still lists quiet patients there', () => {
@@ -703,14 +716,14 @@ describe('DashboardPage', () => {
       it('orders cards by the soonest next actionable moment, counting overdue schedules', () => {
         const fixture = render({
           activeEpisodes: [
-            episode({ patientId: 'p1', patientName: 'Ada', medications: [dose({ nextAllowedAt: nowSec() + 9000 })] }),
+            episode({ patientId: 'p1', patientName: 'Ada', medications: [dose({ canGiveAt: nowSec() + 9000 })] }),
             episode({
               patientId: 'p2',
               patientName: 'Bo',
               episodeId: 'ep2',
-              medications: [dose({ nextAllowedAt: nowSec() + 1800 })],
+              medications: [dose({ canGiveAt: nowSec() + 1800 })],
             }),
-            episode({ patientId: 'p3', patientName: 'Cy', episodeId: 'ep3', medications: [dose({ nextAllowedAt: null })] }),
+            episode({ patientId: 'p3', patientName: 'Cy', episodeId: 'ep3', medications: [dose({ canGiveAt: null })] }),
           ],
           upcomingSchedules: [
             {
@@ -757,7 +770,7 @@ describe('DashboardPage', () => {
         // Build the payload on the real clock first, so the fixture's timestamps stay sane.
         const payload = {
           ...emptyPayload,
-          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() + 9000 })] })],
+          activeEpisodes: [episode({ medications: [dose({ canGiveAt: nowSec() + 9000 })] })],
           lastDoses: [{ patientId: 'p2', patientName: 'Bo', accentColor: 'rose', doses: [dose()] }],
         };
         installGallopingClock();
@@ -770,7 +783,7 @@ describe('DashboardPage', () => {
 
       it('renders the same label twice for the same payload', () => {
         const fixture = render({
-          activeEpisodes: [episode({ medications: [dose({ nextAllowedAt: nowSec() + 9000 })] })],
+          activeEpisodes: [episode({ medications: [dose({ canGiveAt: nowSec() + 9000 })] })],
         });
         const read = () => fixture.nativeElement.querySelector('.dose-hero').textContent.trim();
         const first = read();
@@ -793,7 +806,7 @@ describe('DashboardPage', () => {
               patientName: 'Bo',
               episodeId: 'ep2',
               accentColor: 'amber',
-              medications: [dose({ nextAllowedAt: nowSec() - 60 })],
+              medications: [dose({ canGiveAt: nowSec() - 60 })],
             }),
           ],
         });
@@ -817,7 +830,7 @@ describe('DashboardPage', () => {
               patientName: 'Bo',
               episodeId: 'ep2',
               accentColor: 'amber',
-              medications: [dose({ nextAllowedAt: nowSec() + 90000 })],
+              medications: [dose({ canGiveAt: nowSec() + 90000 })],
             }),
           ],
         });
@@ -876,13 +889,13 @@ describe('DashboardPage', () => {
           episode({
             patientId: 'p1',
             patientName: 'Ada',
-            medications: [dose({ nextAllowedAt: nowSec() + 6000 })],
+            medications: [dose({ canGiveAt: nowSec() + 6000 })],
           }),
           episode({
             patientId: 'p2',
             patientName: 'Bo',
             episodeId: 'ep2',
-            medications: [dose({ nextAllowedAt: nowSec() - 60, isAtypicalLastDose: true })],
+            medications: [dose({ canGiveAt: nowSec() - 60, isAtypicalLastDose: true })],
           }),
         ],
       });
@@ -927,8 +940,8 @@ describe('DashboardPage', () => {
               patientId: 'p1',
               patientName: 'Ada',
               medications: [
-                dose({ nextAllowedAt: nowSec() + 6000 }),
-                dose({ medicationId: 'm2', medicationName: 'Tylenol', nextAllowedAt: nowSec() + 1800 }),
+                dose({ canGiveAt: nowSec() + 6000 }),
+                dose({ medicationId: 'm2', medicationName: 'Tylenol', canGiveAt: nowSec() + 1800 }),
               ],
             }),
             episode({ patientId: 'p2', patientName: 'Bo', episodeId: 'ep2', medications: [dose()] }),
