@@ -54,13 +54,14 @@ on this origin would otherwise be stored XSS.
 
 ### Static caching
 
-`apps/web/nginx.conf` sets `Cache-Control` from a `map` on `$uri`:
+`apps/web/nginx.conf` sets `Cache-Control` from a `map` on `$status $uri`:
 
 | Response | Policy |
 | --- | --- |
-| `index.html` — including `/` and every deep link, which `try_files` rewrites to it | `no-cache` |
-| Content-hashed bundles (`main-2N5A5CP3.js`, `styles-OLD5FDBE.css`) | `public, max-age=31536000, immutable` |
+| `index.html` — `/` and every extensionless deep link, which `try_files` rewrites to it | `no-cache` |
+| Content-hashed bundles (`main-2N5A5CP3.js`, `styles-OLD5FDBE.css`), 200/304 only | `public, max-age=31536000, immutable` |
 | Unhashed files from `public/` (`favicon.ico`) | `no-cache` (they keep their names forever) |
+| Any other status (e.g. a 404 for a missing asset) | `no-store` |
 
 `index.html` is the only file whose name never changes between builds, so a browser holding a
 cached copy keeps loading whatever bundle hashes that copy referenced. The app pins itself to an
@@ -71,6 +72,13 @@ freshness. It surfaced the day OIDC went live: a stale bundle rendered the passw
 API correctly answered `403 PASSWORD_AUTH_DISABLED`, which that bundle was too old to have a
 message for. `no-cache` does not stop caching — it forces revalidation, and an unchanged file still
 answers 304.
+
+**A missing file is a 404, never `index.html`.** Only extensionless paths fall back to
+`index.html`; a path ending in a file extension is served if it exists and is a 404 otherwise. A
+tab that outlived a deploy asks for chunk hashes the new image no longer has; served `index.html`,
+the browser rejects it as a module of the wrong MIME type and the click silently does nothing. The
+404 is `no-store` because during a rolling update the same name may still exist on the other pod.
+The client side of the same failure — reload once, then a banner — is in frontend.md → App shell.
 
 **The single `add_header Cache-Control` sits at server level on purpose.** nginx inherits
 `add_header` into a block only when that block declares none of its own, so moving it into a

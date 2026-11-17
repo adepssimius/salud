@@ -74,6 +74,10 @@ Profile tab. v2 makes the split structural:
   indicator), Home at the top, Manage at the bottom. The content area is free to go multi-column.
 - The `+` is available on every authenticated screen. Inside a patient hub it is already scoped
   to that patient; elsewhere it asks which patient first — see "Quick Log" below.
+- A tab left open across a deploy recovers by itself: when a page's code fails to load, the app
+  reloads once at the URL the caregiver was going to. If that fails too it shows "This page
+  couldn't load. Salud may have just been updated" with a Reload button, never a dead click
+  (`core/stale-build.ts`; deployment.md → Static caching).
 
 ### Patient identity — accent colors and the wrong-chart guard
 
