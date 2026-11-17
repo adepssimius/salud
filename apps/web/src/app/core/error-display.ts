@@ -28,10 +28,11 @@ export const ERROR_SENTENCES = {
   ANALYTE_RANGE_NOT_FOUND: 'That range no longer exists. Reload this analyte.',
   AT_LEAST_ONE_ENTRY_REQUIRED: 'Add at least one entry before saving.',
   BODY_LOCATION_REQUIRED: 'A dressing change needs a body location. Add one and try again.',
-  // A correction may not unlink an entry from the episode it started (data-model.md → Corrections);
-  // the edit form locks that checkbox, so this reaches a caregiver only if two edits race.
+  // An entry may not leave the episode it started (data-model.md → Corrections). The edit form
+  // locks that checkbox and the episode page offers no Remove on the start, so this reaches a
+  // caregiver only if two edits race.
   CANNOT_UNLINK_STARTED_EPISODE:
-    'This entry started that episode, so it has to stay part of it. Keep the episode checked and save again.',
+    'That entry started the episode, so it has to stay part of it. Keep it in the episode and save again.',
   CANNOT_REMOVE_OWNER: 'The owner cannot be removed from the care team. Make someone else the owner first.',
   // Same non-disclosure stance as PHOTO_FILE_NOT_FOUND: silent on which failure mode it was.
   CARE_DOCUMENT_FILE_NOT_FOUND: 'That file could not be attached to this care document. Upload it again and retry.',
@@ -55,6 +56,10 @@ export const ERROR_SENTENCES = {
   EPISODE_TIME_ORDER_INVALID:
     "That time would make an episode end before it began. Check the time against the episode's start and end.",
   EPISODE_NOT_FOUND: 'That episode is no longer available. Refresh the page and try again.',
+  // Episodes drawn from History (api.md → POST /patients/:id/episodes, POST /episodes/:id/events).
+  EPISODE_EVENTS_REQUIRED: 'Choose at least one entry for this episode.',
+  EPISODE_EVENT_NOT_FOUND:
+    'One of the chosen entries is no longer available — it may have been removed. Reload the list and choose again.',
   GUIDELINE_AGE_RANGE_INVALID:
     'The minimum age must be lower than the maximum age. Check both and try again.',
   GUIDELINE_IN_USE: 'This guideline is attached to doses already logged. It cannot be deleted.',

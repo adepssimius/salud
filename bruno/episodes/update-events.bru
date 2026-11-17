@@ -1,0 +1,30 @@
+meta {
+  name: Add Or Remove Episode Entries
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}episodes/{{episodeId}}/events
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "add": [
+      { "type": "observation", "id": "{{observationId}}" }
+    ],
+    "remove": []
+  }
+}
+
+docs {
+  Adding a member or removing a non-member is a no-op. Removing the entry that started the episode
+  is 400 CANNOT_UNLINK_STARTED_EPISODE; removing the entry that resolved it reopens the episode.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

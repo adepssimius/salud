@@ -165,7 +165,11 @@ The spec describes the whole Phase-1 product; most of it is now built. Current r
 Episodes are manual frames over the timeline, e.g. "Fever Jan 2025".
 
 - An episode is **started** by an observation/intervention (`startEpisodeName` in the create body) and
-  **resolved** by one (`resolvesEpisodeIds`). No direct create/update endpoint.
+  **resolved** by one (`resolvesEpisodeIds`). It can also be drawn afterward from existing entries
+  (`POST /api/patients/:id/episodes`; the earliest selected entry becomes its start, so the start
+  anchor is always an event) and its members edited from the episode side
+  (`POST /api/episodes/:id/events`, which reuses the entry-correction plan). There is no direct
+  resolve/reopen endpoint.
 - `episodes.started_at_type|started_at_id` and `ended_at_type|ended_at_id` point at either an
   observation or an intervention — that polymorphic `id` is deliberately **not** a foreign key.
 - Membership lives in `episodes_events_pivot` (`episode_id`, `event_type`, `event_id`,
