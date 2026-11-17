@@ -18,7 +18,7 @@ import { RevisionHistoryComponent } from '../core/revision-history.component';
 import { doseReasonLabel } from '../core/advisory-banner.component';
 import { fromKg, unitsFor } from '../core/event-display';
 import { errorText } from '../core/error-display';
-import { nextDoseLabel, timeAgo } from '../core/relative-time';
+import { timeAgo } from '../core/relative-time';
 
 /** One labeled line in the provenance block. */
 interface Fact {
@@ -306,9 +306,12 @@ export class InterventionDetailPage implements OnInit {
         facts.push({ label: 'Guideline', value: 'Cited, but no longer in the catalog' });
       }
       if (m.nextAllowedAt != null) {
-        const countdown = nextDoseLabel(m.nextAllowedAt);
+        // The frozen fact, never a verdict: no countdown, no "can give now". This page cannot know
+        // whether a later dose of this medication has been given since, and the stored time was
+        // only ever the interval check — "can I give it now?" belongs to Home and the quick-log
+        // sheet, which read the latest dose (frontend.md → "Intervention detail").
         const when = new Date(m.nextAllowedAt * 1000).toLocaleString();
-        facts.push({ label: 'Next dose allowed', value: countdown ? `${when} — ${countdown}` : when });
+        facts.push({ label: 'Next dose allowed from', value: `${when} · set when this dose was logged` });
       }
     } else {
       if (m.bodyLocation) facts.push({ label: 'Body location', value: m.bodyLocation });
