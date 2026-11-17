@@ -485,6 +485,79 @@ export interface UpdateEmbodimentDto {
   runningLow?: boolean; // server stamps runningLowFlaggedByUserId/At from the requester
 }
 
+// Repo catalog (api.md → "Repo catalog"). The preview lists what catalog/medication-catalog.json
+// would add; apply adds the selected subset. Reconciling never updates or deletes a row, so
+// `differences` on a present item is information only.
+export type CatalogSeedValue = string | number | string[] | null;
+
+export interface CatalogSeedDifference {
+  field: string;
+  database: CatalogSeedValue;
+  file: CatalogSeedValue;
+}
+
+export interface CatalogSeedNewMedication {
+  selectionId: string;
+  name: string;
+  brandNames: string[];
+  tags: string[];
+  embodimentLabels: string[];
+  guidelineCount: number;
+}
+
+export interface CatalogSeedNewEmbodiment {
+  selectionId: string;
+  medicationId: string;
+  medicationName: string;
+  label: string;
+  unitType: MedicationUnitType;
+  guidelineCount: number;
+}
+
+export interface CatalogSeedNewGuideline {
+  selectionId: string;
+  medicationId: string;
+  medicationName: string;
+  // null for a medication-wide guideline
+  embodimentLabel: string | null;
+  source: string;
+  type: GuidelineType;
+}
+
+export interface CatalogSeedPresentItem {
+  kind: 'medication' | 'embodiment' | 'guideline';
+  selectionId: string;
+  // The matched database row.
+  id: string;
+  medicationName: string;
+  // The embodiment label or guideline source; the medication name for kind 'medication'.
+  label: string;
+  differences: CatalogSeedDifference[];
+}
+
+export interface CatalogSeedPreview {
+  sourceUrl: string;
+  // SHA-256 (hex) of the fetched bytes — echoed back on apply.
+  sourceHash: string;
+  fetchedAt: number; // epoch seconds
+  newMedications: CatalogSeedNewMedication[];
+  newEmbodiments: CatalogSeedNewEmbodiment[];
+  newGuidelines: CatalogSeedNewGuideline[];
+  present: CatalogSeedPresentItem[];
+}
+
+export interface CatalogSeedApplyRequest {
+  sourceHash: string;
+  select: string[];
+}
+
+export type CatalogSeedSkipReason = 'already_present' | 'parent_missing' | 'unknown';
+
+export interface CatalogSeedApplyResult {
+  added: string[];
+  skipped: { selectionId: string; reason: CatalogSeedSkipReason }[];
+}
+
 export interface MedicationGuideline {
   id: string;
   medicationId: string;

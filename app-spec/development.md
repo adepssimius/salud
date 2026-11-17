@@ -46,11 +46,32 @@
 - Seed a test user in development with: `yarn seed:test-user`
   - Creates `test@example.com` with password `test` and default unit prefs.
   - Honors DB env config (SQLite by default; `DB_CLIENT=postgres` + `DATABASE_URL` for Postgres).
-- Seed a starter medication catalog with: `yarn seed:catalog` (`tools/seed-catalog.ts`)
-  - Acetaminophen and ibuprofen, two embodiments each, and both a weight-based and an age-band
-    guideline each — enough for dose guidance, atypical detection and schedules to be exercisable.
-    Without it every dose-guidance feature is inert, since the catalog starts empty.
-  - Idempotent: skips a medication whose `name` already exists. Honors the same DB env config.
+- **The repo catalog file** — `catalog/medication-catalog.json` — is the one source of catalog data
+  the repo ships. A deployed instance pulls from it through "Check repo catalog" on the Medication
+  catalog page (api.md → "Repo catalog"); a dev database through `yarn seed:catalog` below. Adding a
+  medication to every instance is adding an entry here and merging to `main`; it reaches an
+  instance when a caregiver there previews and confirms it, never by itself.
+  - Shape: `{ "version": 1, "medications": [ … ] }`. Each medication:
+    `{ key, name, brandNames?, description?, tags?, embodiments: [ … ], guidelines?: [ … ] }`; each
+    embodiment: `{ key, label, unitType, concentrationMg?, concentrationVolumeMl?,
+    concentrationMgPerMl?, strengthMgPerUnit?, notes?, guidelines?: [ … ] }` (concentration as the
+    pair **or** the per-mL figure, never both, same rule as the API); each guideline:
+    `{ key, source, type, …the type's numeric fields, notes? }`. A guideline under an embodiment
+    applies to that embodiment; one under the medication applies across its embodiments.
+  - `key`s are lower-kebab-case, unique among their siblings, and **never renamed or reused** —
+    they are the `selectionId`s a preview hands out. Matching against a database is by name/label,
+    not key (api.md), so a key is free to differ from the name.
+  - No cabinet fields (`atHome`, `expiresAt`, `runningLow`): those describe one household's bottle.
+  - Bump `version` only for a shape change the running code cannot read; an older image refuses a
+    newer version rather than misreading it.
+  - The file is validated by the same code the API uses (`catalog-seed.spec.ts` loads the
+    checked-in copy), so a malformed entry fails CI before it can reach `main`.
+- Seed a dev database's catalog with: `yarn seed:catalog` (`tools/seed-catalog.ts`)
+  - Reads the local `catalog/medication-catalog.json` and adds everything missing through the same
+    reconcile code the API's apply uses — today acetaminophen and ibuprofen with both guideline
+    types (enough for dose guidance, atypical detection and schedules to be exercisable), plus the
+    creams. Without it every dose-guidance feature is inert, since the catalog starts empty.
+  - Idempotent: never updates or deletes, only adds what is missing. Honors the same DB env config.
   - Also seeds the two chart overlay defaults those tags anticipate — antipyretic doses on the
     `temperature` chart, analgesic doses on the `pain_score` chart (data-model.md →
     ChartOverlayDefault) — idempotent on the (analyte, kind, value) triple. Like everything here it

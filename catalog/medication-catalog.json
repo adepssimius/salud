@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "medications": [
+    {
+      "key": "acetaminophen",
+      "name": "acetaminophen",
+      "brandNames": ["Tylenol", "Panadol", "Feverall"],
+      "description": "Antipyretic and analgesic.",
+      "tags": ["antipyretic", "analgesic"],
+      "embodiments": [
+        {
+          "key": "suspension-160mg-5ml",
+          "label": "160 mg/5 mL suspension (Children's Tylenol)",
+          "unitType": "ml",
+          "concentrationMg": 160,
+          "concentrationVolumeMl": 5,
+          "guidelines": [
+            {
+              "key": "aap-weight-based",
+              "source": "AAP Clinical Report — Fever and Antipyretic Use in Children (2011)",
+              "type": "weight_based",
+              "mgPerKg": 15,
+              "maxMgPerDose": 1000,
+              "maxMgPerDay": 4000,
+              "minIntervalHours": 4,
+              "notes": "Standard weight-based dosing; caps at adult maximums."
+            },
+            {
+              "key": "label-age-band-12-23mo",
+              "source": "Manufacturer label — Children's Tylenol dosing chart",
+              "type": "age_band",
+              "ageMinMonths": 12,
+              "ageMaxMonths": 23,
+              "doseMg": 160,
+              "doseMl": 5,
+              "maxMgPerDay": 800,
+              "frequencyPerDay": 4
+            }
+          ]
+        },
+        {
+          "key": "tablet-500mg",
+          "label": "500 mg tablet",
+          "unitType": "tablet",
+          "strengthMgPerUnit": 500
+        }
+      ]
+    },
+    {
+      "key": "ibuprofen",
+      "name": "ibuprofen",
+      "brandNames": ["Motrin", "Advil"],
+      "description": "NSAID with antipyretic and analgesic effects.",
+      "tags": ["antipyretic", "analgesic", "NSAID"],
+      "embodiments": [
+        {
+          "key": "suspension-100mg-5ml",
+          "label": "100 mg/5 mL suspension (Children's Motrin)",
+          "unitType": "ml",
+          "concentrationMg": 100,
+          "concentrationVolumeMl": 5,
+          "guidelines": [
+            {
+              "key": "aap-weight-based",
+              "source": "AAP Clinical Report — Fever and Antipyretic Use in Children (2011)",
+              "type": "weight_based",
+              "mgPerKg": 10,
+              "maxMgPerDose": 400,
+              "maxMgPerDay": 1200,
+              "minIntervalHours": 6,
+              "notes": "Not recommended under 6 months of age."
+            },
+            {
+              "key": "label-age-band-24-35mo",
+              "source": "Manufacturer label — Children's Motrin dosing chart",
+              "type": "age_band",
+              "ageMinMonths": 24,
+              "ageMaxMonths": 35,
+              "doseMg": 100,
+              "doseMl": 5,
+              "maxMgPerDay": 400,
+              "frequencyPerDay": 4
+            }
+          ]
+        },
+        {
+          "key": "tablet-200mg",
+          "label": "200 mg tablet",
+          "unitType": "tablet",
+          "strengthMgPerUnit": 200
+        }
+      ]
+    },
+    {
+      "key": "miconazole",
+      "name": "Miconazole",
+      "tags": ["antifungal"],
+      "embodiments": [
+        {
+          "key": "vaginal-cream-4pct-25g",
+          "label": "4% vaginal cream (25 g tube)",
+          "unitType": "other",
+          "notes": "Miconazole nitrate vaginal cream USP 4%. 3-day treatment: one applicatorful at bedtime for 3 nights. (up&up Miconazole 3, NDC 11673-391-06)"
+        }
+      ]
+    },
+    {
+      "key": "clotrimazole",
+      "name": "Clotrimazole",
+      "tags": ["antifungal"],
+      "embodiments": [
+        {
+          "key": "cream-1pct-28g",
+          "label": "1% cream (28.4 g tube)",
+          "unitType": "other",
+          "notes": "Topical antifungal. Apply a thin layer twice daily. (CVS Health, NDC 59779-305-02)"
+        }
+      ]
+    }
+  ]
+}
