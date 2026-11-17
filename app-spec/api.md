@@ -471,7 +471,8 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     - **`metadata` may not name a key the service owns** (400 `RESERVED_METADATA_KEY`, body carries
       the offending `keys`). `metadata` is otherwise free-form and a client may park its own keys
       there, but the dosing engine's resolved fields (`isAtypical`, `atypicalReason`,
-      `nextAllowedAt`, `guidelineId`, `weightKgUsed`, `ageMonthsUsed`, `amountMgDerived`) and the validated top-level
+      `nextAllowedAt`, `guidelineId`, `weightKgUsed`, `ageMonthsUsed`, `amountMgDerived`, and the
+      `scheduleLinked` flag below) and the validated top-level
       fields (`medicationId`, `amountMg`, `side`, …) are the server's to write. Two things this
       closes: a client could otherwise hand back `isAtypical: false` over the verdict just
       computed — erasing the permanent trace that a dose didn't follow guidance (F-2.4), with
@@ -531,7 +532,9 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     `doseSource` on a dose whose stored `doseSource` is `'schedule'` or whose `scheduleId` is set.
     The type and the schedule link are what the record *is* — a dressing change logged as a dose,
     or a dose filed against the wrong plan, is voided and logged again (see "Corrections" →
-    Voiding), so the schedule's adherence count never silently gains or loses a dose.
+    Voiding), so the schedule's adherence count never silently gains or loses a dose. The one way
+    a dose's schedule link changes is the schedule's own explicit **Linking existing doses**
+    action (Intervention schedules below) — never a dose edit.
   - Validation is create's, applied to the **merged** result: `MEDICATION_ID_REQUIRED`,
     `BODY_LOCATION_REQUIRED`, `RESERVED_METADATA_KEY`, the UUID and range checks, the episode subset
     and same-patient rules, start recomputation, `EPISODE_LAST_ENTRY`, `EPISODE_ALREADY_RESOLVED`
@@ -797,6 +800,43 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     override misreads it in the ER Brief.
   - Existing rows written before `'schedule'` existed carry `doseSource: 'override'` and are not
     rewritten.
+
+### Linking existing doses
+
+A schedule is often created after its first doses were given and logged ad hoc — "I need some way to
+associate my ad hoc doses with a schedule I just created." Those doses have no `scheduleId`, so the
+schedule reads them as missed. They are attached **explicitly**, never counted implicitly: adherence
+is defined on linked doses only, everywhere it is shown.
+
+- `GET /api/schedules/:scheduleId/doses` → `ScheduleDosesResponse`
+  `{ schedule, linked, candidates }`. `linked`: every dose with this `scheduleId`, newest first.
+  `candidates`: this patient's interventions that could be linked — no `scheduleId`, the
+  schedule's `type`, for a dose schedule its `medicationId` and (when the schedule names one) its
+  `medicationEmbodimentId`, and `performedAt` from `startAt` to `endAt` (open-ended without one) —
+  newest first. Each is a `ScheduleDose`: `interventionId`, `performedAt`, embodiment and amounts,
+  `doseSource`, `recordedByUserId`, and `linkedLater`.
+- `POST /api/schedules/:scheduleId/doses` — body `{ "link": [uuid], "unlink": [uuid] }`, both
+  optional; returns `ScheduleDosesResponse` (201).
+  - 400 `SCHEDULE_DOSES_INVALID` with neither list, or the same dose in both. A dose that is not
+    this patient's is 404 `INTERVENTION_NOT_FOUND` (body carries `interventionIds`), never
+    "not linkable" — the schedule's patient is the access boundary.
+  - `link`: each dose must be a candidate as above, else 400 `DOSE_NOT_LINKABLE` (body carries
+    `interventionIds`). Linking one already linked here is a no-op.
+  - `unlink`: only a dose **linked after the fact** (`metadata.scheduleLinked: true`) can be
+    unlinked, else 400 `DOSE_NOT_UNLINKABLE`. A dose logged *from* the schedule (`/log`) belongs to
+    it for good. Unlinking one not linked here is a no-op.
+  - Linking sets the dose's `scheduleId` (and `metadata.interventionScheduleId`) and the reserved
+    `metadata.scheduleLinked: true`; unlinking clears all three. **`doseSource` is left as it was**
+    — it records how the amount was chosen, and these doses were not logged from the schedule.
+  - Each changed dose gets a `Revision` (its prior state, as for any correction).
+  - Then, for an `active` schedule, `nextDueAt` and `status` are recomputed exactly as a timing
+    `PATCH` does: from the schedule's latest dose by `performedAt` (or `startAt` with none), and
+    reaching `endAfterOccurrences` or passing `endAt` completes it. A paused or completed schedule
+    is left as the caregiver set it. Adherence is count-based (`expectedCount` against
+    `loggedCount`); there is no per-slot matching, so a linked dose counts toward the total, not
+    toward a particular slot.
+  - **Atomic**: revisions, dose updates and the schedule recompute in one transaction; a request
+    that fails any check writes nothing.
 
 ## Timeline & dashboard
 - `GET /api/patients/:patientId/timeline`
@@ -1632,7 +1672,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `USER_NOT_FOUND` | 400 / 404 / 401 | 400 adding a caregiver with a `userId` that no longer resolves (stale search result); 404 transferring patient ownership to an unknown user; 401 `GET /users/me` when the account no longer exists; 401 `POST /api/auth/oidc/exchange` if the account vanished mid-login (defensive — the `oidc_handoffs` foreign key prevents it) |
 | `EPISODE_NOT_FOUND` | 404 | episode routes, and episode ids referenced from observations/interventions |
 | `OBSERVATION_NOT_FOUND` | 404 | observation get/update |
-| `INTERVENTION_NOT_FOUND` | 404 | intervention get/update |
+| `INTERVENTION_NOT_FOUND` | 404 | intervention get/update; `POST /schedules/:id/doses` naming a dose that is not this schedule's patient's (body carries `interventionIds`) |
 | `CONDITION_NOT_FOUND` | 404 | condition get/update |
 | `PROTOCOL_NOT_FOUND` | 404 | protocol get/update |
 | `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update |
@@ -1654,6 +1694,9 @@ sentence silently falls back to that call site's generic message rather than rea
 | `RESOLVES_MUST_BE_SUBSET_OF_EPISODES` | 400 | `resolvesEpisodeIds` not a subset of `episodeIds` |
 | `OBSERVATION_SCHEMA_INVALID` | 400 (array form) | an observation entry's `metadata` fails its type-specific schema — see "Error response shapes" above for how this arrives |
 | `INVALID_REACTION_SCOPE` | 400 | an `AdverseReaction` create whose scope target doesn't match exactly one of `medicationId`/`embodimentId`/`tag` per its `scopeType` |
+| `SCHEDULE_DOSES_INVALID` | 400 | `POST /schedules/:id/doses` with neither `link` nor `unlink`, or the same dose in both |
+| `DOSE_NOT_LINKABLE` | 400 | `POST /schedules/:id/doses` `link` names a dose that is not a candidate (already on a schedule, another medicine or embodiment, another type, or outside `startAt`–`endAt`); body carries `interventionIds` |
+| `DOSE_NOT_UNLINKABLE` | 400 | `POST /schedules/:id/doses` `unlink` names a dose logged *from* the schedule rather than linked afterwards; body carries `interventionIds` |
 | `SCHEDULE_EPISODE_CONDITION_CONFLICT` | 400 | an `InterventionSchedule` create/update with both `episodeId` and `conditionId` set |
 | `MEDICATION_ID_REQUIRED` | 400 | intervention or schedule create/update of type `medication_dose` missing `medicationId` |
 | `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |

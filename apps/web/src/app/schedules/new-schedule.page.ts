@@ -11,6 +11,7 @@ import {
   Medication,
   MedicationEmbodiment,
   Patient,
+  ScheduleDosesResponse,
   ScheduleType,
 } from '@salud/shared/types';
 
@@ -407,13 +408,29 @@ export class NewSchedulePage implements OnInit {
     }
 
     this.api.post<InterventionSchedule, CreateScheduleDto>(`/patients/${val.patientId}/schedules`, body).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.backOut();
-      },
+      next: (created) => this.offerLinkOrBackOut(created),
       error: (err) => {
         this.saving.set(false);
         this.error.set(errorText(err, 'Could not create schedule.'));
+      },
+    });
+  }
+
+  /**
+   * Doses of this medicine already logged since the schedule's start count as missed until they
+   * are linked (frontend.md → Schedule detail → "Linking existing doses"), so when there are any
+   * the form hands over to the schedule page with the link list open rather than backing out.
+   */
+  private offerLinkOrBackOut(created: InterventionSchedule) {
+    this.api.get<ScheduleDosesResponse>(`/schedules/${created.id}/doses`).subscribe({
+      next: (res) => {
+        this.saving.set(false);
+        if (res.candidates.length) this.router.navigate(['/schedules', created.id], { queryParams: { link: '1' } });
+        else this.backOut();
+      },
+      error: () => {
+        this.saving.set(false);
+        this.backOut();
       },
     });
   }

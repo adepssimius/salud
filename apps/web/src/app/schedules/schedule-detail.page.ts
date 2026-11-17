@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiClientService } from '../core/api-client.service';
 import { errorText } from '../core/error-display';
-import { InterventionSchedule } from '@salud/shared/types';
+import { InterventionSchedule, formatPillCount, ScheduleDose, ScheduleDosesResponse, UpdateScheduleDosesRequest } from '@salud/shared/types';
 
 @Component({
   selector: 'app-schedule-detail-page',
@@ -44,6 +44,40 @@ import { InterventionSchedule } from '@salud/shared/types';
             <div class="stat-label">remaining</div>
           </div>
         </div>
+
+        <!-- Right under the numbers it corrects: unlinked doses of this medicine read as missed
+             (frontend.md → Schedule detail → "Linking existing doses"). -->
+        <div class="link-offer" *ngIf="candidates().length && !linking()">
+          <p>
+            {{ candidates().length }} {{ candidates().length === 1 ? 'dose' : 'doses' }} of this
+            {{ s.type === 'medication_dose' ? 'medicine' : 'treatment' }} {{ candidates().length === 1 ? 'was' : 'were' }}
+            logged without this schedule since it started, so {{ candidates().length === 1 ? 'it counts' : 'they count' }} as missed.
+          </p>
+          <button type="button" class="primary" (click)="startLinking()">Link existing doses</button>
+        </div>
+
+        <div class="linking" *ngIf="linking()">
+          <p class="muted small">
+            Choose the doses that were given for this schedule. Each keeps how it was logged; the
+            link is recorded in its history.
+          </p>
+          <ul class="row-list">
+            <li *ngFor="let d of candidates()">
+              <label class="inline-check">
+                <input type="checkbox" [checked]="picked().has(d.interventionId)" (change)="togglePick(d.interventionId)" />
+                <span>{{ when(d.performedAt) }}</span>
+                <span class="muted small" *ngIf="amount(d) as a">· {{ a }}</span>
+              </label>
+            </li>
+          </ul>
+          <div class="link-actions">
+            <button type="button" class="secondary" (click)="linking.set(false)">Cancel</button>
+            <button type="button" class="primary" [disabled]="!picked().size || saving()" (click)="linkPicked()">
+              Link {{ picked().size }} {{ picked().size === 1 ? 'dose' : 'doses' }}
+            </button>
+          </div>
+        </div>
+
       </section>
 
       <div class="actions">
@@ -56,6 +90,25 @@ import { InterventionSchedule } from '@salud/shared/types';
           Mark complete
         </button>
       </div>
+
+      <!-- Doses on this schedule, and the ad hoc ones that could be (frontend.md → Schedule detail
+           → "Linking existing doses"). Adherence counts linked doses only, so an unlinked dose of
+           this medicine reads as missed until it is linked here. -->
+      <section class="doses">
+        <h2>Doses</h2>
+
+        <ul class="row-list linked" *ngIf="linked().length; else noDoses">
+          <li *ngFor="let d of linked()">
+            <span>{{ when(d.performedAt) }}</span>
+            <span class="muted small" *ngIf="amount(d) as a">{{ a }}</span>
+            <span class="pill pill-neutral">{{ d.linkedLater ? 'linked later' : 'from schedule' }}</span>
+            <button type="button" class="link unlink" *ngIf="d.linkedLater" [disabled]="saving()" (click)="unlink(d)">
+              Unlink
+            </button>
+          </li>
+        </ul>
+        <ng-template #noDoses><p class="muted small">No doses on this schedule yet.</p></ng-template>
+      </section>
 
       <p class="muted" *ngIf="s.notes">{{ s.notes }}</p>
       <p class="error" *ngIf="error()">{{ error() }}</p>
@@ -89,6 +142,12 @@ import { InterventionSchedule } from '@salud/shared/types';
       .adherence {
         border-top: 1px solid rgba(255, 255, 255, 0.08);
         padding-top: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .adherence h2 {
+        margin: 0;
       }
       .stats {
         display: grid;
@@ -113,6 +172,55 @@ import { InterventionSchedule } from '@salud/shared/types';
         font-size: 0.8rem;
         color: #cbd5e1;
       }
+      .doses {
+        border-top: 1px solid var(--border);
+        padding-top: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .doses h2 {
+        margin: 0;
+      }
+      .link-offer {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        border-radius: var(--radius-control);
+        background: var(--accent-bg);
+        border: 1px solid var(--accent-border);
+      }
+      .link-offer p {
+        margin: 0;
+      }
+      .linking {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .linking p {
+        margin: 0;
+      }
+      .link-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .linked li {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .linked .pill {
+        text-transform: none;
+      }
+      .unlink {
+        margin-left: auto;
+      }
       .actions {
         justify-content: flex-start;
         gap: 0.5rem;
@@ -130,16 +238,82 @@ export class ScheduleDetailPage implements OnInit {
   schedule = signal<InterventionSchedule | null>(null);
   logging = signal(false);
   error = signal<string | null>(null);
+  linked = signal<ScheduleDose[]>([]);
+  candidates = signal<ScheduleDose[]>([]);
+  linking = signal(false);
+  picked = signal<Set<string>>(new Set());
+  saving = signal(false);
+  /** Opened from the new-schedule form with doses to offer: start with the link list open. */
+  private offerLinking = this.route.snapshot.queryParamMap?.get('link') === '1';
 
   ngOnInit(): void {
     this.load();
   }
 
+  // One request: the schedule with its adherence, its doses, and the doses it could take.
   private load() {
-    this.api.get<InterventionSchedule>(`/schedules/${this.scheduleId}`).subscribe({
-      next: (s) => this.schedule.set(s),
+    this.api.get<ScheduleDosesResponse>(`/schedules/${this.scheduleId}/doses`).subscribe({
+      next: (res) => {
+        this.apply(res);
+        if (this.offerLinking && res.candidates.length) this.startLinking();
+        this.offerLinking = false;
+      },
       error: (err) => this.error.set(errorText(err, 'Unable to load schedule.')),
     });
+  }
+
+  private apply(res: ScheduleDosesResponse) {
+    this.schedule.set(res.schedule);
+    this.linked.set(res.linked);
+    this.candidates.set(res.candidates);
+  }
+
+  /** Every candidate preselected — the usual case is "all of those were for this" — untick any that weren't. */
+  startLinking() {
+    this.picked.set(new Set(this.candidates().map((d) => d.interventionId)));
+    this.linking.set(true);
+  }
+
+  togglePick(id: string) {
+    const next = new Set(this.picked());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.picked.set(next);
+  }
+
+  linkPicked() {
+    this.saveDoses({ link: [...this.picked()] }, () => this.linking.set(false));
+  }
+
+  unlink(d: ScheduleDose) {
+    this.saveDoses({ unlink: [d.interventionId] });
+  }
+
+  private saveDoses(body: UpdateScheduleDosesRequest, done?: () => void) {
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.post<ScheduleDosesResponse, UpdateScheduleDosesRequest>(`/schedules/${this.scheduleId}/doses`, body).subscribe({
+      next: (res) => {
+        this.saving.set(false);
+        this.apply(res);
+        done?.();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(errorText(err, 'Could not change the doses on this schedule.'));
+      },
+    });
+  }
+
+  when(ts: number): string {
+    return new Date(ts * 1000).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  amount(d: ScheduleDose): string | null {
+    if (d.amountMg != null) return `${d.amountMg} mg`;
+    if (d.amountMl != null) return `${d.amountMl} mL`;
+    if (d.pillCount != null) return `×${formatPillCount(d.pillCount)}`;
+    return null;
   }
 
   logNow() {
@@ -148,6 +322,7 @@ export class ScheduleDetailPage implements OnInit {
       next: (res) => {
         this.logging.set(false);
         this.schedule.set(res.schedule);
+        this.load();
       },
       error: (err) => {
         this.logging.set(false);

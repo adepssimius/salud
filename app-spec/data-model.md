@@ -459,6 +459,8 @@ episodes.
   - `amountMgDerived: boolean` — `true` when `amountMg` was derived as above rather than entered.
     Reserved (server-written). A later correction that changes only the volume or pill count
     re-derives a derived `amountMg`; an entered one is never touched.
+  - `scheduleLinked: boolean` — `true` when the dose was linked to its schedule after it was
+    logged (see InterventionSchedule → Linking). Reserved (server-written); absent otherwise.
   - `amountMl: decimal | null`
   - `pillCount: decimal | null` — partial pills allowed (¼, ⅓, ½, ⅔, ¾ in the form; any positive
     decimal on the wire, so ⅓ is stored as 0.3333…).
@@ -597,6 +599,11 @@ episodes.
   - `createdAt`, `updatedAt`
 - Linking:
   - When an intervention is logged from a schedule, `interventionScheduleId` is stored on the intervention.
+  - A dose logged ad hoc can be linked to a schedule afterwards, and unlinked again, only through the
+    schedule's explicit "Linking existing doses" action (api.md → Intervention schedules) — never a
+    dose correction. Such a dose carries the reserved `metadata.scheduleLinked: true`, keeps its
+    own `doseSource`, and gets a `Revision` per change. Only these can be unlinked; a dose logged
+    from the schedule stays linked.
 
 
 ### FileAsset

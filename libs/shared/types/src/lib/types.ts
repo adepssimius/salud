@@ -865,6 +865,40 @@ export interface UpdateScheduleDto {
   status?: ScheduleStatus;
 }
 
+/**
+ * One dose as the schedule's "Doses" panel lists it (api.md → Intervention schedules → Linking
+ * existing doses). `linkedLater` marks a dose attached to the schedule after it was logged ad hoc
+ * — the only kind that can be unlinked; a dose logged from the schedule belongs to it for good.
+ */
+export interface ScheduleDose {
+  interventionId: string;
+  performedAt: number; // epoch seconds
+  medicationEmbodimentId: string | null;
+  amountMg: number | null;
+  amountMl: number | null;
+  pillCount: number | null;
+  doseSource: DoseSource | null;
+  recordedByUserId: string;
+  linkedLater: boolean;
+}
+
+/**
+ * `GET|POST /api/schedules/:id/doses`. `linked`: every dose counted toward this schedule, newest
+ * first. `candidates`: this patient's doses that could be linked — no schedule, the schedule's
+ * medicine (and embodiment, when it names one), performed from `startAt` to `endAt` — newest first.
+ */
+export interface ScheduleDosesResponse {
+  schedule: InterventionSchedule;
+  linked: ScheduleDose[];
+  candidates: ScheduleDose[];
+}
+
+/** `POST /api/schedules/:id/doses` — intervention ids to attach to, or detach from, the schedule. */
+export interface UpdateScheduleDosesRequest {
+  link?: string[];
+  unlink?: string[];
+}
+
 export interface LogScheduleDto {
   performedAt?: string; // ISO datetime; defaults to now
   notes?: string;
