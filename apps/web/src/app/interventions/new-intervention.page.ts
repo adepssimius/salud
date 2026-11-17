@@ -9,7 +9,7 @@ import { AdvisoryBannerComponent } from '../core/advisory-banner.component';
 import { EpisodeAttachmentComponent, EpisodeOption } from '../quick-log/episode-attachment.component';
 import { DangerInterstitialComponent } from '../core/danger-interstitial.component';
 import { ERROR_SENTENCES, errorText } from '../core/error-display';
-import { DoseAmountSync } from './dose-amount-sync';
+import { AmountBoxes, DoseAmountSync, amountBoxesFor } from './dose-amount-sync';
 import { PillCountInputComponent } from './pill-count-input.component';
 import {
   CorrectionEpisodeState,
@@ -273,17 +273,26 @@ const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
                 <option value="override">Override</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" *ngIf="showMg()">
               <span>Amount (mg)</span>
               <input type="number" step="0.01" formControlName="amountMg" />
             </label>
-            <label class="field">
+            <p class="muted small no-amount" *ngIf="noAmountBoxes()">
+              No amount to measure for this form — say how much in the notes if it matters.
+            </p>
+            <!-- Which boxes sit beside mg is the embodiment's kind; a box holding a value always
+                 shows (frontend.md → "The embodiment decides which amount boxes show"). -->
+            <label class="field" *ngIf="showMl()">
               <span>Amount (mL)</span>
               <input type="number" step="0.01" formControlName="amountMl" />
             </label>
-            <div class="field" role="group" aria-labelledby="pill-count-label">
-              <span id="pill-count-label">Pill count</span>
-              <app-pill-count-input formControlName="pillCount" />
+            <div class="field" role="group" aria-labelledby="pill-count-label" *ngIf="showCount()">
+              <span id="pill-count-label">{{ countLabel() }}</span>
+              <app-pill-count-input
+                formControlName="pillCount"
+                [fractions]="countFractions()"
+                [wholeLabel]="countLabel()"
+              />
             </div>
           </div>
           <p class="muted small" *ngIf="correction()">
@@ -896,6 +905,44 @@ export class NewInterventionPage implements OnInit {
     this.dangerAdvisoriesAcknowledged.set(false);
   }
 
+  // ── Which amount boxes show (frontend.md → "The embodiment decides which amount boxes show") ──
+
+  private amountBoxes(): AmountBoxes {
+    const id = this.form.controls.medicationEmbodimentId.value;
+    const embodiment = id ? this.embodiments().find((e) => e.id === id) : undefined;
+    return amountBoxesFor(embodiment);
+  }
+
+  /** mg for every form but a cream, ointment or gel — or whenever it holds a value. */
+  showMg(): boolean {
+    return this.amountBoxes().mg || this.form.controls.amountMg.value != null;
+  }
+
+  /** A cream, ointment or gel with nothing typed: the form shows no amount at all. */
+  noAmountBoxes(): boolean {
+    return !this.showMg() && !this.showMl() && !this.showCount();
+  }
+
+  /** mL beside mg for a liquid — or whenever it holds a value, so nothing is hidden unseen. */
+  showMl(): boolean {
+    return this.amountBoxes().ml || this.form.controls.amountMl.value != null;
+  }
+
+  /** The count beside mg for tablets, capsules and drops — or whenever it holds a value. */
+  showCount(): boolean {
+    return !!this.amountBoxes().count || this.form.controls.pillCount.value != null;
+  }
+
+  /** "Tablets" / "Capsules" / "Drops"; "Pill count" for a value kept on a kind with no count. */
+  countLabel(): string {
+    return this.amountBoxes().count ?? 'Pill count';
+  }
+
+  countFractions(): boolean {
+    const boxes = this.amountBoxes();
+    return boxes.count ? boxes.fractions : true;
+  }
+
   isExpired(embodiment: MedicationEmbodiment): boolean {
     return !!embodiment.expiresAt && embodiment.expiresAt * 1000 < Date.now();
   }
@@ -1060,7 +1107,8 @@ export class NewInterventionPage implements OnInit {
         const storedDerived = !!(iv.metadata as any)?.amountMgDerived;
         if (!storedDerived || amountMg !== stored.amountMg) body.amountMg = null;
       } else if (amountMg !== stored.amountMg) {
-        if (amountMg === null) return { problem: 'Enter the amount in mg.' };
+        // A cream has no mg: moving a dose onto one drops its mg (null leaves nothing to derive).
+        if (amountMg === null && this.amountBoxes().mg) return { problem: 'Enter the amount in mg.' };
         body.amountMg = amountMg;
       }
       const amountMl = num(val.amountMl);

@@ -37,6 +37,7 @@ const CREAMS = [
         key: 'cream-1pct-28g',
         label: '1% cream (28.4 g tube)',
         unitType: 'other',
+        dosageForm: 'cream',
         notes: 'Thin layer twice daily.',
         guidelines: [
           { key: 'label', source: 'Package label', type: 'weight_based', mgPerKg: 1, maxMgPerDose: 10, maxMgPerDay: 20, minIntervalHours: 12 },
@@ -105,6 +106,7 @@ describe('Repo catalog / catalog seed (e2e)', () => {
     expect(forms[0]).toMatchObject({
       label: '1% cream (28.4 g tube)',
       unitType: 'other',
+      dosageForm: 'cream', // the file's form arrives with the row (data-model.md → MedicationEmbodiment)
       concentrationMgPerMl: null,
       strengthMgPerUnit: null,
       notes: 'Thin layer twice daily.',

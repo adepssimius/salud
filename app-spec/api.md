@@ -997,12 +997,28 @@ gap completely, and `defaultActive: false` already covers "retire this, don't de
 ### Embodiments
 - `POST /api/medications/:medicationId/embodiments`
   - Body: `{ label, concentrationMgPerMl?, concentrationMg?, concentrationVolumeMl?,
-    strengthMgPerUnit?, unitType, notes? }`, plus the same **cabinet fields** `PATCH` accepts:
-    `atHome?`, `expiresAt?`, `runningLow?`.
+    strengthMgPerUnit?, dosageForm?, unitType?, notes? }`, plus the same **cabinet fields** `PATCH`
+    accepts: `atHome?`, `expiresAt?`, `runningLow?`. One of `dosageForm` / `unitType` is required
+    ("Dosage form" below).
 - `GET /api/medications/:medicationId/embodiments`
 - `PATCH /api/embodiments/:embodimentId`
   - Body: any subset of the create fields, plus **cabinet fields** (§Cabinet awareness below):
     `atHome?`, `expiresAt?`, `runningLow?`.
+
+#### Dosage form
+`dosageForm` is what the embodiment *is*; `unitType` is what a dose of it is counted in
+(data-model.md → `MedicationEmbodiment`). The form decides the unit, so the server sets `unitType`
+from it — liquid → `ml`; tablet, chewable → `tablet`; capsule → `capsule`; drops → `drop`; cream,
+ointment, gel, other → `other` — on create and on `PATCH`:
+- `dosageForm` alone: `unitType` is set from it.
+- Both, agreeing: accepted. Both, disagreeing: 400 `DOSAGE_FORM_UNIT_TYPE_MISMATCH` — a row that says
+  "cream" and counts in mL is a contradiction, not something to pick a winner from.
+- `unitType` alone: an untyped row (`dosageForm: null`), as every row was before the field existed.
+- `PATCH` with `dosageForm: null` clears the form and leaves `unitType` as it is.
+- `dosageForm` is not itself a dosing field under the concentration lock below, but the `unitType`
+  it sets is: once doses or schedules use the row, a change of form that moves the unit (liquid →
+  tablet) is 409 `EMBODIMENT_CONCENTRATION_IN_USE`, and one that does not (tablet → chewable, an
+  untyped `other` → cream) is allowed.
 
 #### Concentration: the label pair vs. mg/mL
 A liquid's concentration can be given either way, and the response always carries all three fields
@@ -1619,6 +1635,7 @@ sentence silently falls back to that call site's generic message rather than rea
 | `EPISODE_TIME_ORDER_INVALID` | 400 | any change — an entry create that resolves an episode, an observation/intervention `PATCH` of `observedAt`/`performedAt`/`episodeIds`/`resolvesEpisodeIds`, `POST /api/patients/:id/episodes` with `resolvedBy`, `POST /api/episodes/:id/events` — that would leave a resolved episode with other members whose resolving entry is strictly earlier than all of them |
 | `FIELD_NOT_CORRECTABLE` | 400 | an observation/intervention `PATCH` naming a field a correction may not change (type, schedule link, `doseSource: 'schedule'`, `unitPreferenceAtEntry`, attribution, `createdAt`, episode-start fields); body carries `fields` |
 | `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |
+| `DOSAGE_FORM_UNIT_TYPE_MISMATCH` | 400 | embodiment create/update sending a `unitType` that is not the one its `dosageForm` counts in (Embodiments → "Dosage form") |
 | `CONCENTRATION_INPUT_CONFLICT` | 400 | embodiment create/update sending both `concentrationMgPerMl` and a `concentrationMg`/`concentrationVolumeMl` value |
 | `CONCENTRATION_PAIR_INCOMPLETE` | 400 | embodiment create/update whose merged concentration pair has only one of `concentrationMg`/`concentrationVolumeMl` |
 | `CONCENTRATION_OUT_OF_RANGE` | 400 | embodiment create/update whose derived `concentrationMg ÷ concentrationVolumeMl` falls outside 0.001–10000 mg/mL |

@@ -24,6 +24,7 @@ const EMB = {
   concentrationVolumeMl: null,
   strengthMgPerUnit: 500,
   unitType: 'tablet' as const,
+  dosageForm: 'tablet' as const,
   notes: null,
   atHome: false,
   expiresAt: null,

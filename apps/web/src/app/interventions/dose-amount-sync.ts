@@ -1,8 +1,82 @@
 import { AbstractControl } from '@angular/forms';
 import { Subscription } from 'rxjs';
-import { DoseAmountEmbodiment, mgFromMl, mgFromPills, mlFromMg, pillsFromMg } from '@salud/shared/types';
+import {
+  DoseAmountEmbodiment,
+  DosageForm,
+  MedicationUnitType,
+  TOPICAL_DOSAGE_FORMS,
+  mgFromMl,
+  mgFromPills,
+  mlFromMg,
+  pillsFromMg,
+} from '@salud/shared/types';
 
 export type AmountBox = 'mg' | 'ml' | 'pills';
+
+/** An embodiment as the amount boxes see it: its figures, and the kind that picks the boxes. */
+export type AmountEmbodiment = DoseAmountEmbodiment & {
+  unitType?: MedicationUnitType | null;
+  dosageForm?: DosageForm | null;
+};
+
+/** Which boxes an embodiment shows, and what the count is called. */
+export interface AmountBoxes {
+  mg: boolean;
+  ml: boolean;
+  /** The count box's label; null when the kind has no count. */
+  count: 'Tablets' | 'Chewables' | 'Capsules' | 'Drops' | null;
+  /** Whether the count takes a fraction (pills split; drops don't). */
+  fractions: boolean;
+}
+
+const MG_ALONE: AmountBoxes = { mg: true, ml: false, count: null, fractions: false };
+
+/**
+ * frontend.md → "Dose entry" → "The embodiment decides which amount boxes show". Keyed on the
+ * dosage form; a row with no form recorded falls back to its unit type. No embodiment: mg alone.
+ */
+export function amountBoxesFor(embodiment: Pick<AmountEmbodiment, 'unitType' | 'dosageForm'> | null | undefined): AmountBoxes {
+  const form = embodiment?.dosageForm;
+  if (form) {
+    if (TOPICAL_DOSAGE_FORMS.includes(form)) return { mg: false, ml: false, count: null, fractions: false };
+    switch (form) {
+      case 'liquid':
+        return { mg: true, ml: true, count: null, fractions: false };
+      case 'tablet':
+        return { mg: true, ml: false, count: 'Tablets', fractions: true };
+      case 'chewable':
+        return { mg: true, ml: false, count: 'Chewables', fractions: true };
+      case 'capsule':
+        return { mg: true, ml: false, count: 'Capsules', fractions: true };
+      case 'drops':
+        return { mg: true, ml: false, count: 'Drops', fractions: false };
+      default:
+        return MG_ALONE;
+    }
+  }
+  switch (embodiment?.unitType) {
+    case 'ml':
+      return { mg: true, ml: true, count: null, fractions: false };
+    case 'tablet':
+      return { mg: true, ml: false, count: 'Tablets', fractions: true };
+    case 'capsule':
+      return { mg: true, ml: false, count: 'Capsules', fractions: true };
+    case 'drop':
+      return { mg: true, ml: false, count: 'Drops', fractions: false };
+    default:
+      return MG_ALONE;
+  }
+}
+
+/** Whether `box` shows for these boxes. */
+export function boxShown(boxes: AmountBoxes, box: AmountBox): boolean {
+  return box === 'mg' ? boxes.mg : box === 'ml' ? boxes.ml : !!boxes.count;
+}
+
+/** An embodiment that says what kind it is — one without either field is left unrestricted. */
+function hasKind(e: AmountEmbodiment | null | undefined): e is AmountEmbodiment {
+  return !!(e?.dosageForm || e?.unitType);
+}
 
 /**
  * Keeps the dose form's mg, mL and pill-count boxes in step (frontend.md → "Dose entry" → "The
@@ -22,13 +96,18 @@ export class DoseAmountSync {
   private readonly derived = new Set<AmountBox>();
   private suppress = false;
   private embodimentId: string | null = null;
+  /**
+   * The last embodiment the boxes were set for. Kept through an empty pick, so going tablet →
+   * (another medication, "Select…") → cream still counts as a switch and clears the count.
+   */
+  private lastEmbodiment: AmountEmbodiment | null = null;
   private readonly subs = new Subscription();
 
   constructor(
     private readonly controls: Record<AmountBox, AbstractControl<number | null>>,
     private readonly embodimentControl: AbstractControl<string>,
     /** The embodiment with this id; undefined while the list is not loaded yet. */
-    private readonly lookup: (id: string) => DoseAmountEmbodiment | undefined,
+    private readonly lookup: (id: string) => AmountEmbodiment | undefined,
   ) {
     for (const box of ['mg', 'ml', 'pills'] as const) {
       this.subs.add(controls[box].valueChanges.subscribe(() => this.onTyped(box)));
@@ -70,6 +149,7 @@ export class DoseAmountSync {
    * nothing else: an mg-only dose being corrected does not grow an mL it was never given.
    */
   refresh(): void {
+    this.lastEmbodiment = this.embodiment() ?? this.lastEmbodiment;
     if (!this.source || this.source === 'mg' || !this.embodiment()) return;
     if (this.controls.mg.value != null) return;
     const value = this.compute(this.source, 'mg');
@@ -90,9 +170,35 @@ export class DoseAmountSync {
     this.embodimentId = id;
     // An id whose embodiment is not loaded yet is not "an embodiment without figures": wait for
     // refresh() rather than clearing what it might fill.
-    if (id && !this.lookup(id)) return;
+    const next = id ? this.lookup(id) : undefined;
+    if (id && !next) return;
+    // Only a switch from one embodiment to another clears: the first one arriving (a prefill or a
+    // correction loading its bottle) must not empty a stored amount the caregiver hasn't seen yet.
+    if (this.lastEmbodiment && hasKind(next)) this.clearHidden(next);
+    if (next) this.lastEmbodiment = next;
     this.recompute();
   }
+
+  /**
+   * Empty the boxes `embodiment` hides (frontend.md → "Switching embodiment clears what the new one
+   * hides"). When the emptied box was the source, mg takes over if it is still shown — it stands as
+   * typed, since the volume or count it came from is gone — and the newly shown box fills from it.
+   */
+  private clearHidden(embodiment: AmountEmbodiment): void {
+    const shown = amountBoxesFor(embodiment);
+    const hidden = (['mg', 'ml', 'pills'] as const).filter((b) => !boxShown(shown, b));
+    for (const box of hidden) {
+      if (this.controls[box].value == null) continue;
+      if (this.source === box) {
+        this.source = shown.mg && this.controls.mg.value != null ? 'mg' : null;
+        this.derived.delete('mg');
+      }
+      this.write(box, null);
+      this.derived.delete(box);
+    }
+    if (this.source && hidden.includes(this.source)) this.source = null;
+  }
+
 
   private recompute(): void {
     if (!this.source) return;
@@ -108,11 +214,14 @@ export class DoseAmountSync {
     }
   }
 
+  /** The boxes a change in `source` fills: never one the selected embodiment's kind hides. */
   private targets(source: AmountBox): AmountBox[] {
-    return (['mg', 'ml', 'pills'] as const).filter((b) => b !== source);
+    const e = this.embodiment();
+    const shown = hasKind(e) ? amountBoxesFor(e) : null;
+    return (['mg', 'ml', 'pills'] as const).filter((b) => b !== source && (!shown || boxShown(shown, b)));
   }
 
-  private embodiment(): DoseAmountEmbodiment | null {
+  private embodiment(): AmountEmbodiment | null {
     const id = this.embodimentControl.value;
     return id ? (this.lookup(id) ?? null) : null;
   }

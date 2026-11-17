@@ -40,6 +40,8 @@ export const ERROR_SENTENCES = {
   CATALOG_SEED_NOT_CONFIGURED: 'Checking the repo catalog is turned off on this server.',
   CATALOG_SEED_UNAVAILABLE:
     "The repo catalog couldn't be reached just now. Nothing was added; try again in a minute.",
+  DOSAGE_FORM_UNIT_TYPE_MISMATCH:
+    "That form and unit don't go together — a cream isn't counted in mL, for instance. Pick the form and the unit follows it.",
   CONCENTRATION_INPUT_CONFLICT:
     'Give the concentration one way or the other: either as it is printed (mg per mL) or as a single mg/mL figure, not both.',
   CONCENTRATION_OUT_OF_RANGE:

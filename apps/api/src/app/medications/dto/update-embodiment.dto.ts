@@ -1,5 +1,5 @@
 import { IsBoolean, IsDateString, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
-import { MedicationUnitType } from '@salud/shared/types';
+import { DOSAGE_FORMS, DosageForm, MedicationUnitType } from '@salud/shared/types';
 
 const UNIT_TYPES: MedicationUnitType[] = ['tablet', 'capsule', 'ml', 'drop', 'other'];
 
@@ -39,6 +39,13 @@ export class UpdateEmbodimentDto {
   @IsOptional()
   @IsIn(UNIT_TYPES)
   unitType?: MedicationUnitType;
+
+  // Sets `unitType` from the form, so it is under the same lock: a change of form that moves the
+  // unit (liquid -> tablet) is refused once doses or schedules use the row, one that doesn't
+  // (tablet -> chewable, other -> cream) is not. `null` clears the form and leaves `unitType`.
+  @IsOptional()
+  @IsIn([...DOSAGE_FORMS, null])
+  dosageForm?: DosageForm | null;
 
   @IsOptional()
   @IsString()

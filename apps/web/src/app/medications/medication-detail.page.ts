@@ -5,6 +5,7 @@ import { ApiClientService } from '../core/api-client.service';
 import { Medication, MedicationEmbodiment, MedicationGuideline } from '@salud/shared/types';
 import { errorText } from '../core/error-display';
 import { concentrationText } from '../core/concentration-display';
+import { DOSAGE_FORM_LABELS } from '../core/dosage-form';
 import { MedicationHeaderEditorComponent } from './medication-header-editor.component';
 import { EmbodimentEditorComponent } from './embodiment-editor.component';
 import { GuidelineEditorComponent } from './guideline-editor.component';
@@ -71,7 +72,7 @@ import { GuidelineEditorComponent } from './guideline-editor.component';
               <div class="row-head">
                 <div class="emb-header">
                   <strong>{{ e.label }}</strong>
-                  <span class="pill">{{ e.unitType }}</span>
+                  <span class="pill">{{ e.dosageForm ? dosageFormLabels[e.dosageForm] : e.unitType }}</span>
                 </div>
                 <button type="button" class="secondary edit" (click)="editEmbodiment(e.id)">Edit</button>
               </div>
@@ -249,6 +250,7 @@ export class MedicationDetailPage implements OnInit {
 
   medicationId = this.route.snapshot.paramMap.get('id')!;
 
+  readonly dosageFormLabels = DOSAGE_FORM_LABELS;
   medication = signal<Medication | null>(null);
   embodiments = signal<MedicationEmbodiment[]>([]);
   guidelines = signal<MedicationGuideline[]>([]);
