@@ -166,9 +166,10 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
       "resolvedBy": { "type": "observation|intervention", "id": "uuid" }  // optional; must be in events
     }
     ```
-  - The start is the earliest entry in `events` by clinical time (ties: observation before
-    intervention, then id). With `resolvedBy` the episode is created `resolved`, ended by that
-    entry; otherwise `active`.
+  - The start is the earliest entry in `events` by clinical time (data-model.md → "An episode
+    starts at its earliest entry", which also gives the tie order). With `resolvedBy` the episode
+    is created `resolved`, ended by that entry; otherwise `active`. A `resolvedBy` strictly
+    earlier than every other selected entry is 400 `EPISODE_TIME_ORDER_INVALID`.
   - Errors: 400 `EPISODE_EVENTS_REQUIRED` when `events` is empty; 404 `EPISODE_EVENT_NOT_FOUND` when
     an entry does not exist or belongs to another patient; 400
     `RESOLVES_MUST_BE_SUBSET_OF_EPISODES` when `resolvedBy` is not one of `events`; 404
@@ -183,9 +184,12 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
     empty (400 `EPISODE_EVENTS_REQUIRED`). Adding an entry that is already a member, or removing one
     that is not, is a no-op for that entry.
   - Each changed entry goes through the same plan as `PATCH .../observations|interventions/:id`
-    with a new `episodeIds` (and, when it resolved this episode, `resolvesEpisodeIds`): removing the
-    entry that started the episode is 400 `CANNOT_UNLINK_STARTED_EPISODE`; removing the entry that
-    resolved it reopens the episode. Entries must belong to the episode's patient (404
+    with a new `episodeIds` (and, when it resolved this episode, `resolvesEpisodeIds`). The start
+    is then recomputed over the combined result: adding an entry earlier than the start makes it
+    the start, and removing the entry that started the episode promotes the next-earliest member.
+    Removing the entry that resolved it reopens the episode. Removing every member is 400
+    `EPISODE_LAST_ENTRY`; a result whose resolving entry would be strictly earlier than every other
+    member is 400 `EPISODE_TIME_ORDER_INVALID`. Entries must belong to the episode's patient (404
     `EPISODE_EVENT_NOT_FOUND`).
   - **Atomic**: every entry's pivot rows, episode state and one `Revision` per entry whose links
     change, in one transaction; a request that fails any check writes nothing.
@@ -275,6 +279,10 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       schema (data model).
     - `resolvesEpisodeIds` must be subset of `episodeIds`, and every id in either list must belong to
       **this** patient (404 `EPISODE_NOT_FOUND`).
+    - Filing the entry into an existing episode with a time earlier than all its members makes it
+      that episode's start (data-model.md → "An episode starts at its earliest entry"). Resolving
+      an episode with a time earlier than every one of its members is 400
+      `EPISODE_TIME_ORDER_INVALID`.
     - If any entry type = `photo` or `document`, `metadata.fileId` is required, and the file must
       already exist and be attached to this patient (or be a patientless upload by the acting
       user) — 400 `PHOTO_FILE_NOT_FOUND` / `DOCUMENT_FILE_NOT_FOUND` otherwise. A shape-valid UUID
@@ -354,19 +362,20 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
       `labContext` (see above).
     - `episodeIds` / `resolvesEpisodeIds`: same subset and same-patient rules as create
       (`RESOLVES_MUST_BE_SUBSET_OF_EPISODES`, `EPISODE_NOT_FOUND`). An `episodeIds` that drops an
-      episode this observation **started** is rejected with 400 `CANNOT_UNLINK_STARTED_EPISODE`.
-      Resolving an episode another event already resolved is `EPISODE_ALREADY_RESOLVED`, as on
-      create.
-    - An `observedAt` that would put a resolving event before its episode's start, or a starting
-      event after its episode's resolution, is rejected with 400 `EPISODE_TIME_ORDER_INVALID`
-      (data-model.md → "Data integrity rules").
+      episode this observation **started** moves that episode's start to its next-earliest member;
+      one that drops the **last** member of an episode is 400 `EPISODE_LAST_ENTRY`. Resolving an
+      episode another event already resolved is `EPISODE_ALREADY_RESOLVED`, as on create.
+    - A change to `observedAt`, `episodeIds` or `resolvesEpisodeIds` that would leave a resolved
+      episode's resolving entry strictly earlier than every other member is rejected with 400
+      `EPISODE_TIME_ORDER_INVALID` (data-model.md → "Data integrity rules").
   - What the server recomputes, in the same request:
     - `patients.latestWeightKg` / `latestWeightRecordedAt`, from the patient's newest remaining
       `weight` entry, whenever `entries` or `observedAt` is sent (data-model.md → Patient). It can
       go down as well as up, and to `null`.
     - Episode state: dropping a resolve link reopens the episode; a changed `observedAt` moves the
-      derived `startedAt`/`endedAt` of episodes this observation starts or resolves
-      (data-model.md → "Data integrity rules").
+      derived `startedAt`/`endedAt` of episodes this observation starts or resolves; and the start
+      of every episode whose membership or member times changed is recomputed to its earliest
+      member (data-model.md → "Data integrity rules").
     - **Protocols are re-checked** whenever `entries` or `observedAt` is sent, exactly as on create,
       against the active Protocols of the patient's active Conditions. A trip writes a
       `protocol_fired` Advisory unless one for the same Protocol already exists with this
@@ -438,6 +447,10 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
   - Validation:
     - `resolvesEpisodeIds` must be subset of `episodeIds`, and every id in either list must belong to
       **this** patient (404 `EPISODE_NOT_FOUND`).
+    - Filing the entry into an existing episode with a time earlier than all its members makes it
+      that episode's start (data-model.md → "An episode starts at its earliest entry"). Resolving
+      an episode with a time earlier than every one of its members is 400
+      `EPISODE_TIME_ORDER_INVALID`.
     - `medicationId` is **required** when `type = 'medication_dose'` (400 `MEDICATION_ID_REQUIRED`),
       and `bodyLocation` when `type = 'dressing_change'` (400 `BODY_LOCATION_REQUIRED`) — the same
       two rules schedule create has always enforced. A dose with no medication isn't merely an empty
@@ -510,8 +523,8 @@ Hang off a Condition, mirroring the medication → guideline sub-resource shape.
     Voiding), so the schedule's adherence count never silently gains or loses a dose.
   - Validation is create's, applied to the **merged** result: `MEDICATION_ID_REQUIRED`,
     `BODY_LOCATION_REQUIRED`, `RESERVED_METADATA_KEY`, the UUID and range checks, the episode subset
-    and same-patient rules, `CANNOT_UNLINK_STARTED_EPISODE`, `EPISODE_ALREADY_RESOLVED` and
-    `EPISODE_TIME_ORDER_INVALID` exactly as for observations above.
+    and same-patient rules, start recomputation, `EPISODE_LAST_ENTRY`, `EPISODE_ALREADY_RESOLVED`
+    and `EPISODE_TIME_ORDER_INVALID` exactly as for observations above.
   - **Re-evaluation is scoped to a dose change.** The dosing engine re-runs only when the body sends
     a dose-affecting field — `performedAt`, `medicationId`, `medicationEmbodimentId`, `doseSource`
     or `amountMg` — and then recomputes `guidelineId`, `weightKgUsed`, `ageMonthsUsed`,
@@ -1568,10 +1581,10 @@ sentence silently falls back to that call site's generic message rather than rea
 | `DATE_IN_FUTURE` | 400 (array form) | a past-event datetime (`dateOfBirth`, `observedAt`, `performedAt`, `occurredAt`) later than the server's clock |
 | `PHOTO_FILE_NOT_FOUND` | 400 (array form) | a `photo` entry's `metadata.fileId` naming a file that does not exist or does not belong to this patient — one code for both, deliberately |
 | `EPISODE_ALREADY_RESOLVED` | 400 | a second, different event attempting to resolve an already-resolved episode |
-| `CANNOT_UNLINK_STARTED_EPISODE` | 400 | an observation/intervention `PATCH` whose `episodeIds` drops an episode that event started, or `POST /api/episodes/:id/events` removing the entry that started the episode |
+| `EPISODE_LAST_ENTRY` | 400 | an observation/intervention `PATCH` whose `episodeIds` drops the last remaining member of an episode, or `POST /api/episodes/:id/events` removing every member. (Replaces `CANNOT_UNLINK_STARTED_EPISODE`, retired: removing the starting entry now promotes the next-earliest member.) |
 | `EPISODE_EVENTS_REQUIRED` | 400 | `POST /api/patients/:id/episodes` with no `events`, or `POST /api/episodes/:id/events` with neither `add` nor `remove` |
 | `EPISODE_EVENT_NOT_FOUND` | 404 | an entry named in `POST /api/patients/:id/episodes` or `POST /api/episodes/:id/events` that does not exist or belongs to another patient |
-| `EPISODE_TIME_ORDER_INVALID` | 400 | an observation/intervention `PATCH` whose corrected `observedAt`/`performedAt` would put an episode's resolving event before its starting event |
+| `EPISODE_TIME_ORDER_INVALID` | 400 | any change — an entry create that resolves an episode, an observation/intervention `PATCH` of `observedAt`/`performedAt`/`episodeIds`/`resolvesEpisodeIds`, `POST /api/patients/:id/episodes` with `resolvedBy`, `POST /api/episodes/:id/events` — that would leave a resolved episode with other members whose resolving entry is strictly earlier than all of them |
 | `FIELD_NOT_CORRECTABLE` | 400 | an observation/intervention `PATCH` naming a field a correction may not change (type, schedule link, `doseSource: 'schedule'`, `unitPreferenceAtEntry`, attribution, `createdAt`, episode-start fields); body carries `fields` |
 | `GUIDELINE_AGE_RANGE_INVALID` | 400 | an `age_band` guideline whose merged `ageMinMonths` exceeds its `ageMaxMonths` |
 | `CONCENTRATION_INPUT_CONFLICT` | 400 | embodiment create/update sending both `concentrationMgPerMl` and a `concentrationMg`/`concentrationVolumeMl` value |

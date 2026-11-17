@@ -5,6 +5,9 @@ import { AppModule } from '../app.module';
 import { createTestApp } from '../../testing/create-test-app';
 import { DatabaseService } from '../persistence/database.service';
 import { EpisodesService } from './episodes.service';
+import { randomUUID } from 'crypto';
+import { and, eq } from 'drizzle-orm';
+import { episodes, episodesEventsPivot } from '../../db/schema';
 
 async function registerAndLogin(app: INestApplication) {
   const email = `ep-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
@@ -337,16 +340,53 @@ describe('Episodes (e2e)', () => {
       dbService = app.get(DatabaseService);
     });
 
-    it('refuses to unlink an event from the episode it started, but only when episodeIds is sent', async () => {
-      const { a, episodeId } = await startedAndResolved();
-      expect(await errorOf(plan(a.id, { episodeIds: [] }))).toBe('CANNOT_UNLINK_STARTED_EPISODE');
-      // Omitted list: the links carry over, nothing to refuse, and the pivot is left alone.
+    it('moves the start to the next-earliest member when the starting event is unlinked', async () => {
+      const { a, b, episodeId } = await startedAndResolved();
+      // b is then the only member, starting and ending the frame — valid, as on a direct create.
+      const p = await plan(a.id, { episodeIds: [] });
+      expect(p.anchors).toEqual([{ episodeId, startedAtType: 'observation', startedAtId: b.id }]);
+      // Omitted list: the links carry over and the pivot is left alone; the time still re-plans.
       const untouched = await plan(a.id, { clinicalTime: nowSec() - 4 * HOUR });
       expect(untouched.rewritePivot).toBe(false);
       expect(untouched.episodeIds).toEqual([episodeId]);
-      // Re-sending the same list keeps the startsEpisode flag on the rewritten membership row.
+      expect(untouched.anchors).toEqual([{ episodeId, startedAtType: 'observation', startedAtId: a.id }]);
+      // Re-sending the same list rewrites the row unflagged; the anchor write puts the flag back.
       const kept = await plan(a.id, { episodeIds: [episodeId] });
-      expect(kept.pivotRows).toEqual([{ episodeId, startsEpisode: true, resolvesEpisode: false }]);
+      expect(kept.pivotRows).toEqual([{ episodeId, startsEpisode: false, resolvesEpisode: false }]);
+      expect(kept.anchors).toEqual([]);
+    });
+
+    it('refuses to unlink the last member of an episode', async () => {
+      const lone = await observe({ observedAt: iso(nowSec() - HOUR), startEpisodeName: `Lone ${Math.random()}` });
+      expect(await errorOf(plan(lone.id, { episodeIds: [] }))).toBe('EPISODE_LAST_ENTRY');
+    });
+
+    it('heals a stored start that is not the earliest member on the next read', async () => {
+      const { t0, a, episodeId } = await startedAndResolved();
+      const earlier = await observe({ observedAt: iso(t0 - 5 * HOUR) });
+      // Reproduce the pre-fix state directly: a member earlier than the start, start left on a.
+      const db = dbService.db as any;
+      await db.insert(episodesEventsPivot).values({
+        id: randomUUID(),
+        episodeId,
+        eventType: 'observation',
+        eventId: earlier.id,
+        startsEpisode: false,
+        resolvesEpisode: false,
+      });
+      const stale = await db.select().from(episodes).where(eq(episodes.id, episodeId));
+      expect(stale[0].startedAtId).toBe(a.id);
+
+      const ep = await episode(episodeId);
+      expect(ep.startedAtId).toBe(earlier.id);
+      expect(ep.startedAt).toBe(t0 - 5 * HOUR);
+      const row = await db.select().from(episodes).where(eq(episodes.id, episodeId));
+      expect(row[0].startedAtId).toBe(earlier.id);
+      const flagged = await db
+        .select()
+        .from(episodesEventsPivot)
+        .where(and(eq(episodesEventsPivot.episodeId, episodeId), eq(episodesEventsPivot.startsEpisode, true)));
+      expect(flagged.map((f: any) => f.eventId)).toEqual([earlier.id]);
     });
 
     it('reopens the episode when its resolving event drops the resolve link, keeping the membership', async () => {

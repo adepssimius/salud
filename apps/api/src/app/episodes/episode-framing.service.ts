@@ -11,7 +11,12 @@ import {
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
 import { Episode, EpisodeEventRef } from '@salud/shared/types';
-import { EpisodesService, EventEpisodeCorrectionPlan } from './episodes.service';
+import {
+  EpisodesService,
+  EventEpisodeCorrectionPlan,
+  endsAtItsStart,
+  pickEpisodeStart,
+} from './episodes.service';
 import { ObservationsService } from '../observations/observations.service';
 import { InterventionsService } from '../interventions/interventions.service';
 import { RevisionsService } from '../revisions/revisions.service';
@@ -42,8 +47,9 @@ function dedupe(refs: EpisodeEventRef[] | undefined): EpisodeEventRef[] {
  *
  * Membership edits deliberately go through `planEventEpisodeCorrection` /
  * `applyEventEpisodeCorrection`, the same pair the entry PATCHes use, so the episode-side and
- * entry-side paths cannot disagree about CANNOT_UNLINK_STARTED_EPISODE, reopening, or the
- * resolve-subset rule. Same two-phase shape too: every read first, then one transaction of writes
+ * entry-side paths cannot disagree about the start, EPISODE_LAST_ENTRY, EPISODE_TIME_ORDER_INVALID,
+ * reopening, or the resolve-subset rule. The one difference: several entries change in one request
+ * here, so the start is planned once over all of them (`planEpisodeAnchors`), not per entry. Same two-phase shape too: every read first, then one transaction of writes
  * (the sqlite caveat on `DatabaseService.withTransaction`).
  */
 @Injectable()
@@ -121,14 +127,10 @@ export class EpisodeFramingService {
       if (condition.patientId !== patientId) throw new NotFoundException('CONDITION_NOT_FOUND');
     }
 
-    // The start is the earliest selected entry; ties go observation-first, then by id, so the
-    // choice is deterministic. Since the start is the earliest, `resolvedBy` can never precede it.
-    const start = [...loaded].sort(
-      (a, b) =>
-        a.time - b.time ||
-        (a.type === b.type ? 0 : a.type === 'observation' ? -1 : 1) ||
-        a.id.localeCompare(b.id),
-    )[0];
+    // The start is the earliest selected entry (data-model.md → "An episode starts at its earliest
+    // entry"), by the one ordering every route shares.
+    if (endsAtItsStart(loaded, resolvedBy)) throw new BadRequestException('EPISODE_TIME_ORDER_INVALID');
+    const start = pickEpisodeStart(loaded, resolvedBy)!;
 
     const snapshots = await Promise.all(refs.map(async (r) => ({ ref: r, snap: await this.snapshot(r, userId) })));
     const episodeId = randomUUID();
@@ -224,11 +226,18 @@ export class EpisodeFramingService {
         eventId: ref.id,
         episodeIds,
         resolvesEpisodeIds,
+        deferAnchors: true,
       });
       work.push({ ref, plan, snap: await this.snapshot(ref, userId) });
     }
 
     if (work.length) {
+      // Over the combined result: adding an earlier entry and removing the old start in one
+      // request is one move, and removing every member is caught even one entry at a time.
+      const anchors = await this.episodesService.planEpisodeAnchors(
+        patientId,
+        work.map((w) => w.plan),
+      );
       const now = new Date();
       await this.db.withTransaction(async (tx: any) => {
         for (const { ref, plan, snap } of work) {
@@ -239,6 +248,7 @@ export class EpisodeFramingService {
             .where(eq(this.entityTable(ref.type).id, ref.id));
           await this.episodesService.applyEventEpisodeCorrection(tx, plan);
         }
+        await this.episodesService.applyEpisodeAnchors(tx, anchors);
       });
     }
 

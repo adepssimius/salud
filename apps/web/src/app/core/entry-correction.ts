@@ -17,7 +17,7 @@ export function toLocalDateTimeInput(epochSeconds: number): string {
 export interface CorrectionEpisodeState {
   /** Every episode the form offers: the patient's active ones plus whatever this entry is linked to. */
   options: EpisodeOption[];
-  /** The episode this entry started, if any — shown checked and locked. */
+  /** The episode this entry started, if any — selectable, but never offered to "this resolves…". */
   startedId: string | null;
   /** Membership as stored: the union of `episodeIds` and `resolvesEpisodeIds`. */
   selectedIds: string[];

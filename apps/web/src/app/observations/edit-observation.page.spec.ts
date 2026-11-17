@@ -232,13 +232,18 @@ describe('EditObservationPage', () => {
     ]);
   });
 
-  it('shows the episode this entry started checked and locked, and offers no new episode', () => {
-    const { el } = render();
+  it('shows the episode this entry started checked but not locked, and offers no new episode', () => {
+    const { fixture, el } = render();
     const chips = Array.from(el.querySelectorAll('app-episode-attachment .chip')) as HTMLButtonElement[];
     const fever = chips.find((b) => b.textContent?.trim() === 'Fever')!;
     expect(fever.classList).toContain('chip-on');
-    expect(fever.disabled).toBe(true);
-    expect(el.textContent).toContain('This entry started this episode');
+    // Unlinking the start just moves it to the next-earliest entry (data-model.md).
+    expect(fever.disabled).toBe(false);
+    expect(el.textContent).not.toContain('This entry started this episode');
+    fever.click();
+    fixture.detectChanges();
+    save(fixture);
+    expect(apiMock.patch.mock.calls[0][1]).toEqual({ episodeIds: [], resolvesEpisodeIds: [] });
     expect(el.textContent).not.toMatch(/start a new episode/i);
     expect(chips.some((b) => b.textContent?.trim() === 'More')).toBe(false);
     // Active episodes are offered; a resolved one the entry is not linked to is not.
@@ -275,7 +280,7 @@ describe('EditObservationPage', () => {
     });
   });
 
-  it.each(['FIELD_NOT_CORRECTABLE', 'CANNOT_UNLINK_STARTED_EPISODE', 'EPISODE_TIME_ORDER_INVALID'] as const)(
+  it.each(['FIELD_NOT_CORRECTABLE', 'EPISODE_LAST_ENTRY', 'EPISODE_TIME_ORDER_INVALID'] as const)(
     'shows the %s sentence and keeps the form filled',
     (code) => {
       apiMock.patch.mockReturnValue(throwError(() => ({ status: 400, error: { message: code, fields: ['x'] } })));

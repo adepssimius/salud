@@ -166,6 +166,9 @@ export class ObservationsService {
     const id = randomUUID();
     const observedAtDate = new Date(dto.observedAt);
     const observedAtTs = Math.floor(observedAtDate.getTime() / 1000);
+    // Read-only and before the entry exists: a resolving entry may not land before every member
+    // of the episode it resolves (data-model.md → "An episode may not end at its start…").
+    await this.episodesService.assertResolvingTimeOrder(patientId, dto.resolvesEpisodeIds, observedAtTs);
 
     await db.insert(observations).values({
       id,
@@ -234,6 +237,10 @@ export class ObservationsService {
         });
       }
     }
+
+    // A back-dated entry filed into an existing episode becomes its start when it is the earliest
+    // member (data-model.md → "An episode starts at its earliest entry").
+    await this.episodesService.reconcileEpisodeStartsById(patientId, Array.from(episodeIds));
 
     const firedAdvisories = await this.advisoriesService.evaluateProtocols(
       patientId,
