@@ -34,8 +34,8 @@ const VERBS: Verb[] = [
  *
  * Patient scoping is the wrong-chart guard (frontend.md → "Patient identity"): pre-scoped inside a
  * hub, skipped entirely for a single-patient household, and otherwise chips ordered sick-first.
- * The chosen name stays pinned at the top of the sheet, and the form it hands off to names the
- * patient again on the save button.
+ * The chosen name stays pinned at the top of the sheet, and the form it hands off to pins it
+ * again at the top.
  */
 @Component({
   selector: 'app-quick-log-sheet',
@@ -421,7 +421,7 @@ export class QuickLogSheetComponent implements OnInit {
    * "Same as last time" — medication, embodiment and amount, handed to the dose form as a prefill.
    * It is a prefill and nothing more: dose-checks still run there, guidance cards still render
    * side by side, advisory banners and the danger interstitial still fire, and the caregiver still
-   * reviews before "Save for ⟨name⟩" (P1 — guardrails, no gates).
+   * reviews before saving (P1 — guardrails, no gates).
    */
   chooseRecent(recent: RecentMedication) {
     const params: Record<string, string> = {
