@@ -130,7 +130,10 @@ export class PatientHubShell implements OnInit, AfterViewInit {
     const token = this.store.patient()?.accentColor;
     return token ? `accent-${token}` : '';
   });
-  weightStale = computed(() => !!this.store.patient() && isWeightStale(this.store.patient()!.latestWeightRecordedAt));
+  weightStale = computed(() => {
+    const patient = this.store.patient();
+    return !!patient && isWeightStale(patient.latestWeightRecordedAt, patient.dateOfBirth);
+  });
   weightLabel = computed(() => {
     const days = weightAgeDays(this.store.patient()?.latestWeightRecordedAt);
     return days === null ? 'weight never recorded' : `weight ${days} days old`;

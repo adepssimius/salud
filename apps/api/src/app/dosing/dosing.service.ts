@@ -18,6 +18,7 @@ import {
   WeightBasedGuidance,
   deriveAmountMg,
   toDrawableMl,
+  weightStaleness,
 } from '@salud/shared/types';
 import { normalizeTs } from '../persistence/time';
 
@@ -64,8 +65,6 @@ export interface DoseEvaluation {
   // the caller from `reasons`, since only it knows the dose's context id.
   advisories: AdvisoryCandidate[];
 }
-
-const STALE_WEIGHT_DAYS = 60;
 
 @Injectable()
 export class DosingService {
@@ -294,21 +293,15 @@ export class DosingService {
     if (belowFullDose) reasons.push('below_full_dose');
 
     const advisories: AdvisoryCandidate[] = [];
-    if (weightRecordedAt === null) {
+    // Judged at the dose's own time, so a backdated dose is read against the patient's age then
+    // (advisories.md → stale_weight).
+    const weightAge = weightStaleness(weightRecordedAt, patient.dateOfBirth, input.occurredAt);
+    if (weightAge.stale) {
       advisories.push({
         type: 'stale_weight',
         severity: 'warning',
-        payload: { daysSince: null, lastRecordedAt: null },
+        payload: { daysSince: weightAge.daysSince, lastRecordedAt: weightRecordedAt },
       });
-    } else {
-      const daysSince = Math.floor((occurredAtTs - weightRecordedAt) / 86400);
-      if (daysSince > STALE_WEIGHT_DAYS) {
-        advisories.push({
-          type: 'stale_weight',
-          severity: 'warning',
-          payload: { daysSince, lastRecordedAt: weightRecordedAt },
-        });
-      }
     }
 
     if (input.embodimentId) {

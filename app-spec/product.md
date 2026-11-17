@@ -62,7 +62,7 @@ Load-bearing; every feature decision traces back to one of these.
      - Weight-based rules: mg/kg, max mg per dose, max mg per day, min interval hours, applicable age range, guideline source.
      - Age-band rules: min/max months, dose (mg/mL or pill count per embodiment), frequency per day, max mg per day, guideline source.
    - When logging a dose:
-     - Show both weight-based recommendation (using latest weight; prompt for weight if older than 60 days) and age-band recommendation side-by-side (age recommendation only applicable if the adult dose is not appropriate).
+     - Show both weight-based recommendation (using latest weight; prompt for weight once it is older than an age-scaled threshold, from 1 week for a young infant to 12 months for an adult — advisories.md → "Stale weight") and age-band recommendation side-by-side (age recommendation only applicable if the adult dose is not appropriate).
      - Allow selection of formulation/embodiment (e.g., “2 x 500mg tablets”, “5 mL 5mg/mL syrup”).
      - Compute next allowed dose time based on chosen guideline and current log.
    - Atypical detection: any logged dose or interval that falls outside the stored guideline triggers a warning inline before save. Caregiver can confirm and save anyway.

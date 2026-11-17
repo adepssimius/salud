@@ -273,13 +273,40 @@ describe('Dosing engine (e2e)', () => {
     expect(staleWeight.payload.daysSince).toBeNull();
   });
 
-  it('flags stale_weight when the latest weight is more than 60 days old (F-3.2)', async () => {
+  it('flags stale_weight when the latest weight is past the age threshold — 60 days at 1–2 years (F-3.2)', async () => {
     const stalePatientId = await createPatient(18);
     await logWeight(stalePatientId, 12, 61);
     const result = await doseCheck(stalePatientId, { medicationId, medicationEmbodimentId: embodimentId });
     const staleWeight = result.advisories.find((a: any) => a.type === 'stale_weight');
     expect(staleWeight).toBeDefined();
     expect(staleWeight.payload.daysSince).toBeGreaterThanOrEqual(61);
+  });
+
+  it('does not flag an adult whose weight is 90 days old (12-month threshold)', async () => {
+    const adultId = await createPatient(40 * 12);
+    await logWeight(adultId, 70, 90);
+    const result = await doseCheck(adultId, { medicationId, medicationEmbodimentId: embodimentId });
+    expect(result.advisories.find((a: any) => a.type === 'stale_weight')).toBeUndefined();
+  });
+
+  it('flags a two-month-old whose weight is 10 days old (1-week threshold)', async () => {
+    const infantId = await createPatient(2);
+    await logWeight(infantId, 5, 10);
+    const result = await doseCheck(infantId, { medicationId, medicationEmbodimentId: embodimentId });
+    const staleWeight = result.advisories.find((a: any) => a.type === 'stale_weight');
+    expect(staleWeight).toBeDefined();
+    expect(staleWeight.payload.daysSince).toBe(10);
+  });
+
+  it('judges the threshold by the patient\'s age at the dose time, not today', async () => {
+    // 13 months old today (60-day tier), but under a year at a dose 35 days back (30-day tier).
+    const toddlerId = await createPatient(13);
+    await logWeight(toddlerId, 9, 70);
+    const occurredAt = new Date(Date.now() - 35 * 86_400_000).toISOString();
+    const backdated = await doseCheck(toddlerId, { medicationId, medicationEmbodimentId: embodimentId, occurredAt });
+    const staleWeight = backdated.advisories.find((a: any) => a.type === 'stale_weight');
+    expect(staleWeight).toBeDefined();
+    expect(staleWeight.payload.daysSince).toBe(35);
   });
 
   it('does not flag stale_weight when the weight is recent', async () => {
