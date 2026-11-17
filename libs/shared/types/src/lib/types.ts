@@ -289,10 +289,30 @@ export interface Episode {
   // hydrated events, call GET /api/patients/:patientId/timeline?episodeId=...
   observationIds?: string[];
   interventionIds?: string[];
+  /**
+   * Only on GET /api/episodes/:episodeId. The schedules filed under this episode
+   * (`InterventionSchedule.episodeId`), each with its computed adherence — the course the episode
+   * is keeping up with (frontend.md → Episode detail → "Keeping up").
+   */
+  schedules?: InterventionSchedule[];
+  /**
+   * Only on GET /api/episodes/:episodeId. Every medication a member dose or a schedule of this
+   * episode names, with the embodiments they name, so the page can say "clotrimazole 1% cream"
+   * without a catalog round trip per dose.
+   */
+  medications?: EpisodeMedicationRef[];
   // NOT NULL columns, and every mapper has always produced them — optionality here was the
   // loophole that let ISSUES #20's ISO-string leak through unnoticed.
   createdAt: number;
   updatedAt: number;
+}
+
+/** A medication an episode's doses or schedules name (GET /api/episodes/:episodeId). */
+export interface EpisodeMedicationRef {
+  id: string;
+  name: string;
+  /** Only the embodiments the episode's doses or schedules name, not the whole catalog entry. */
+  embodiments: Array<{ id: string; label: string; dosageForm: DosageForm | null }>;
 }
 
 /** One observation or intervention, named from the episode side (api.md → Episodes). */

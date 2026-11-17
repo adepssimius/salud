@@ -6,12 +6,16 @@ import {
   careTeamMemberships,
   episodes,
   episodesEventsPivot,
+  interventionSchedules,
   interventions,
+  medicationEmbodiments,
+  medications,
   observations,
   patients,
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
-import { ActiveEpisodeSummary, Episode } from '@salud/shared/types';
+import { ActiveEpisodeSummary, Episode, EpisodeMedicationRef, InterventionSchedule } from '@salud/shared/types';
+import { toScheduleView } from '../schedules/schedule-view';
 
 type EpisodeEndType = 'observation' | 'intervention';
 export type EpisodeEventType = EpisodeEndType;
@@ -633,7 +637,55 @@ export class EpisodesService {
       createdAt: normalizeTs(row.createdAt)!,
       updatedAt: normalizeTs(row.updatedAt)!,
     };
+    const schedules = await this.episodeSchedules(episodeId);
+    episode.schedules = schedules;
+    episode.medications = await this.episodeMedications(episode.interventionIds ?? [], schedules);
     return episode;
+  }
+
+  /** The schedules filed under this episode, oldest first, in the schedules routes' own shape. */
+  private async episodeSchedules(episodeId: string): Promise<InterventionSchedule[]> {
+    const db = this.db.db as any;
+    const rows: any[] = await db.select().from(interventionSchedules).where(eq(interventionSchedules.episodeId, episodeId));
+    const views = await Promise.all(rows.map((r) => toScheduleView(db, r)));
+    return views.sort((a, b) => a.startAt - b.startAt || a.createdAt - b.createdAt);
+  }
+
+  /**
+   * The medications (and embodiments) this episode's doses and schedules name — what the episode
+   * page needs to say "clotrimazole 1% cream" on every dose line (api.md → Episodes).
+   */
+  private async episodeMedications(interventionIds: string[], schedules: InterventionSchedule[]): Promise<EpisodeMedicationRef[]> {
+    const db = this.db.db as any;
+    const medIds = new Set<string>();
+    const embIds = new Set<string>();
+    if (interventionIds.length) {
+      const rows: any[] = await db.select().from(interventions).where(inArray(interventions.id, interventionIds));
+      for (const r of rows) {
+        if (r.type !== 'medication_dose') continue;
+        const m = r.metadata ? JSON.parse(r.metadata) : {};
+        if (m.medicationId) medIds.add(m.medicationId);
+        if (m.medicationEmbodimentId) embIds.add(m.medicationEmbodimentId);
+      }
+    }
+    for (const s of schedules) {
+      if (s.medicationId) medIds.add(s.medicationId);
+      if (s.medicationEmbodimentId) embIds.add(s.medicationEmbodimentId);
+    }
+    if (!medIds.size) return [];
+    const meds: any[] = await db.select().from(medications).where(inArray(medications.id, [...medIds]));
+    const embs: any[] = embIds.size
+      ? await db.select().from(medicationEmbodiments).where(inArray(medicationEmbodiments.id, [...embIds]))
+      : [];
+    return meds
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        embodiments: embs
+          .filter((e) => e.medicationId === m.id)
+          .map((e) => ({ id: e.id, label: e.label, dosageForm: e.dosageForm ?? null })),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async listForPatient(patientId: string, userId: string, status?: 'active' | 'resolved'): Promise<Episode[]> {

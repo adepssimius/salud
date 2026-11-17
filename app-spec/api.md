@@ -214,6 +214,17 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
   - Includes derived `startedAt`/`endedAt` (epoch seconds, resolved from the linked event's own
     timestamp; `endedAt` is `null` while active) — same resolution `GET .../episodes` already does,
     now consistent between the list and single-item routes.
+  - Includes **`schedules`**: every `InterventionSchedule` whose `episodeId` is this episode,
+    oldest `startAt` first, each in exactly the `GET /api/schedules/:id` shape (computed
+    `ScheduleAdherence` included). `[]` when none. The episode page's "Keeping up" section reads
+    these rather than a second request per schedule.
+  - Includes **`medications`**: every medication a member dose (`metadata.medicationId`) or one of
+    those schedules names, as `{ id, name, embodiments: [{ id, label, dosageForm }] }`, sorted by
+    name, where `embodiments` lists only the embodiments those doses and schedules name. `[]` when
+    none. This is what lets the page say "clotrimazole (1% cream)" on every dose line instead of
+    "medication dose", without loading the catalog.
+  - Neither field is on the list routes. Both write routes that answer "shaped as
+    `GET /api/episodes/:episodeId`" (drawing an episode, editing its members) carry them too.
 - `GET /api/episodes/active`
   - Returns all active episodes for patients on the requester’s care team.
   - Each item carries the episode's `createdAt`/`updatedAt` (epoch seconds) plus a denormalized
@@ -773,7 +784,9 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
 - `GET /api/patients/:patientId/schedules`
   - Filters: `type`, `status`, `episodeId`.
   - Each item includes computed **`ScheduleAdherence`**: `expectedCount` (how many occurrences
-    should have happened by now, derived from `frequencyHours`/`explicitTimes` since `startAt`),
+    should have happened by now, derived from `frequencyHours`/`explicitTimes` since `startAt`,
+    and **capped at the course's end** — no slot after `endAt` counts, and never more than
+    `endAfterOccurrences`; a finished course stops accruing missed doses),
     `loggedCount` (doses actually logged against this schedule, via `intervention.scheduleId`),
     `missed` (`max(0, expectedCount - loggedCount)`), `remainingOccurrences`
     (`endAfterOccurrences - loggedCount`, `null` for open-ended schedules), and `overdue`
