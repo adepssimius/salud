@@ -152,3 +152,96 @@ describe('reconcileCatalog', () => {
     expect(embItem.differences).toEqual([{ field: 'notes', database: 'edited', file: null }]);
   });
 });
+
+// The Children's Tylenol label chart (160 mg/5 mL): "under 2 years, ask a doctor", then five age
+// rows up to 11 years. The dosing engine compares ages inclusively at both ends
+// (`DosingService.resolveGuideline`), so the bands must tile 24–143 months with no month in two
+// bands and none in no band.
+describe("checked-in Children's Tylenol label chart", () => {
+  const file = parseCatalogFile(fs.readFileSync(CATALOG_PATH, 'utf8'));
+  const acetaminophen = file.medications.find((m) => m.key === 'acetaminophen')!;
+  const suspension = acetaminophen.embodiments.find((e) => e.key === 'suspension-160mg-5ml')!;
+  const bands = suspension.guidelines.filter((g) => g.type === 'age_band');
+  const bandFor = (months: number) =>
+    bands.filter((g) => months >= (g.ageMinMonths as number) && months <= (g.ageMaxMonths as number));
+
+  it('covers 2 through 11 years exactly once per month, and nothing under 2 or from 12', () => {
+    expect(bands).toHaveLength(5);
+    for (let months = 0; months < 200; months++) {
+      expect([months, bandFor(months).length]).toEqual([months, months >= 24 && months <= 143 ? 1 : 0]);
+    }
+  });
+
+  it('a 7-year-old resolves to the 10 mL (320 mg) row', () => {
+    expect(bandFor(7 * 12)).toEqual([expect.objectContaining({ doseMl: 10, doseMg: 320 })]);
+  });
+
+  it('every row is the label concentration, at most 5 doses a day', () => {
+    for (const g of bands) {
+      expect(g.doseMg).toBeCloseTo((g.doseMl as number) * (160 / 5));
+      expect(g.frequencyPerDay).toBe(5);
+      expect(g.maxMgPerDay).toBe((g.doseMg as number) * 5);
+    }
+  });
+
+  // Guideline identity is (embodiment, type, source): one shared source would make the five rows a
+  // single guideline to the reconcile. Naming the row in each source keeps them five.
+  it('a chart with one shared source fails validation rather than merging its rows', () => {
+    const shared = bands.map((g) => ({ ...g, source: 'Manufacturer label' }));
+    const problems = problemsOf({
+      version: 1,
+      medications: [{ ...acetaminophen, embodiments: [{ ...suspension, guidelines: shared }] }],
+    });
+    expect(problems.filter((p) => /same embodiment, type and source/.test(p))).toHaveLength(4);
+  });
+
+  it('reconciles as five separate guidelines against none, some and all of them', () => {
+    const med = { id: 'm1', name: 'Acetaminophen', brandNames: null, tags: null };
+    const emb = { id: 'e1', medicationId: 'm1', label: suspension.label, unitType: 'ml' };
+    const row = (g: (typeof bands)[number]) => ({ ...g, medicationId: 'm1', medicationEmbodimentId: 'e1' });
+    const offered = (guidelines: any[]) =>
+      reconcileCatalog(file, { medications: [med], embodiments: [emb], guidelines })
+        .newGuidelines.filter((g) => g.selectionId.startsWith('acetaminophen/suspension-160mg-5ml/label-'))
+        .map((g) => g.selectionId);
+
+    expect(offered([])).toHaveLength(5);
+    expect(offered([row(bands[0]), row(bands[2])])).toEqual([
+      'acetaminophen/suspension-160mg-5ml/label-age-band-48-71mo',
+      'acetaminophen/suspension-160mg-5ml/label-age-band-108-131mo',
+      'acetaminophen/suspension-160mg-5ml/label-age-band-132-143mo',
+    ]);
+    expect(offered(bands.map(row))).toEqual([]);
+  });
+});
+
+// Same inclusive-at-both-ends rule as above, for the other two label charts in the file.
+describe('checked-in diphenhydramine and dextromethorphan label charts', () => {
+  const file = parseCatalogFile(fs.readFileSync(CATALOG_PATH, 'utf8'));
+  const bandsOf = (medKey: string) => {
+    const [form] = file.medications.find((m) => m.key === medKey)!.embodiments;
+    return form.guidelines.filter((g) => g.type === 'age_band');
+  };
+  const bandFor = (medKey: string, months: number) =>
+    bandsOf(medKey).filter((g) => months >= (g.ageMinMonths as number) && months <= (g.ageMaxMonths as number));
+
+  it('diphenhydramine: 6–11 years only, the top of the 5–10 mL range, smaller doses allowed', () => {
+    expect(bandFor('diphenhydramine', 7 * 12)).toEqual([
+      expect.objectContaining({ doseMg: 25, doseMl: 10, frequencyPerDay: 6, maxMgPerDay: 150, underDose: 'allowed' }),
+    ]);
+    expect(bandFor('diphenhydramine', 4 * 12)).toEqual([]);
+    expect(bandFor('diphenhydramine', 12 * 12)).toEqual([]);
+  });
+
+  it('dextromethorphan: 1 tablet at 6–11, 2 tablets from 12, nothing under 6', () => {
+    expect(bandFor('dextromethorphan', 7 * 12)).toEqual([
+      expect.objectContaining({ doseMg: 10, pillCount: 1, frequencyPerDay: 6, maxMgPerDay: 60 }),
+    ]);
+    expect(bandFor('dextromethorphan', 13 * 12)).toEqual([
+      expect.objectContaining({ doseMg: 20, pillCount: 2, frequencyPerDay: 6, maxMgPerDay: 120 }),
+    ]);
+    expect(bandFor('dextromethorphan', 4 * 12)).toEqual([]);
+    for (let months = 0; months <= 1500; months++) {
+      expect([months, bandFor('dextromethorphan', months).length]).toEqual([months, months >= 72 ? 1 : 0]);
+    }
+  });
+});
