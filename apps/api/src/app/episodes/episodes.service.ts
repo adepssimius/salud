@@ -15,7 +15,7 @@ import {
 } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
 import { ActiveEpisodeSummary, Episode, EpisodeMedicationRef, InterventionSchedule } from '@salud/shared/types';
-import { toScheduleView } from '../schedules/schedule-view';
+import { episodeIdsBySchedule, scheduleIdsForEpisode, toScheduleView } from '../schedules/schedule-view';
 
 type EpisodeEndType = 'observation' | 'intervention';
 export type EpisodeEventType = EpisodeEndType;
@@ -643,11 +643,14 @@ export class EpisodesService {
     return episode;
   }
 
-  /** The schedules filed under this episode, oldest first, in the schedules routes' own shape. */
+  /** The schedules attached to this episode, oldest first, in the schedules routes' own shape. */
   private async episodeSchedules(episodeId: string): Promise<InterventionSchedule[]> {
     const db = this.db.db as any;
-    const rows: any[] = await db.select().from(interventionSchedules).where(eq(interventionSchedules.episodeId, episodeId));
-    const views = await Promise.all(rows.map((r) => toScheduleView(db, r)));
+    const ids = await scheduleIdsForEpisode(db, episodeId);
+    if (!ids.length) return [];
+    const rows: any[] = await db.select().from(interventionSchedules).where(inArray(interventionSchedules.id, ids));
+    const episodeIds = await episodeIdsBySchedule(db, ids);
+    const views = await Promise.all(rows.map((r) => toScheduleView(db, r, episodeIds.get(r.id))));
     return views.sort((a, b) => a.startAt - b.startAt || a.createdAt - b.createdAt);
   }
 

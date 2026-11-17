@@ -214,7 +214,8 @@ is load-bearing — membership is checked first, so a non-member still gets 404 
   - Includes derived `startedAt`/`endedAt` (epoch seconds, resolved from the linked event's own
     timestamp; `endedAt` is `null` while active) — same resolution `GET .../episodes` already does,
     now consistent between the list and single-item routes.
-  - Includes **`schedules`**: every `InterventionSchedule` whose `episodeId` is this episode,
+  - Includes **`schedules`**: every `InterventionSchedule` attached to this episode (its `episodeIds`
+    name it — a schedule can treat several episodes at once),
     oldest `startAt` first, each in exactly the `GET /api/schedules/:id` shape (computed
     `ScheduleAdherence` included). `[]` when none. The episode page's "Keeping up" section reads
     these rather than a second request per schedule.
@@ -766,7 +767,7 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     {
       "type": "medication_dose|dressing_change",
       "label": "Amoxicillin q8h",
-      "episodeId": "uuid",
+      "episodeIds": ["uuid"],
       "conditionId": "uuid",
       "medicationId": "uuid",
       "medicationEmbodimentId": "uuid",
@@ -795,8 +796,11 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     on `PATCH` too.
   - Validate required fields per type (medication vs dressing change); exactly one of
     `frequencyHours` / `explicitTimes` is required — without one, `nextDueAt` has nothing to
-    compute from. `episodeId` and `conditionId` are mutually exclusive — 400
-    `SCHEDULE_EPISODE_CONDITION_CONFLICT` if both are set.
+    compute from.
+  - `episodeIds` (optional, default `[]`) are the episodes the schedule treats — any number,
+    alongside a `conditionId` or not (data-model.md → `ScheduleEpisode`). Every one must be this
+    patient's episode, active or resolved — 404 `EPISODE_NOT_FOUND` otherwise; `conditionId` must be
+    this patient's condition — 404 `CONDITION_NOT_FOUND`. Duplicates are ignored.
   - `timeZone` is the IANA zone the `explicitTimes` are read in (data-model.md →
     `InterventionSchedule.timeZone`); the web always sends the browser's zone. Optional — omitted,
     it is stored as `null` and the times fall back to the server's zone. An unknown zone is 400
@@ -806,7 +810,8 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     fixed-time schedules.
   - Response: `InterventionSchedule` (201) with computed `nextDueAt`.
 - `GET /api/patients/:patientId/schedules`
-  - Filters: `type`, `status`, `episodeId`.
+  - Filters: `type`, `status`, `episodeId` (schedules attached to that episode).
+  - Each item carries `episodeIds` — a set, sorted by id only so that it is stable.
   - Each item includes computed **`ScheduleAdherence`**: `expectedCount` (how many occurrences
     should have happened by now, derived from `frequencyHours`/`explicitTimes` since `startAt`,
     and **capped at the course's end** — no slot after `endAt` counts, and never more than
@@ -826,6 +831,8 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
     Body: `{ performedAt?, notes?, double? }` (all optional; `performedAt` defaults to now).
     `double: true` logs the prescribed double: the schedule's amounts doubled, sent as
     `prescribedDouble` (400 `DOUBLE_DOSE_NOT_DUE` unless in force — see `POST .../interventions`).
+  - The dose joins **every episode the schedule is attached to that is still active**; a resolved
+    episode is left alone. With none, it joins none.
   - Advances `nextDueAt` forward from the logged dose's time using the schedule's interval.
     When `endAfterOccurrences` is reached, or the next `nextDueAt` would fall after `endAt`, the
     schedule's `status` becomes `completed` and `nextDueAt` becomes `null`.
@@ -844,17 +851,23 @@ back to the reason it was prescribed (F-4.2), and intended-vs-actual is comparab
 plus `status` (`active`, `paused`, `completed`). Returns the `InterventionSchedule`.
 
 - `null` clears an optional field (amounts, dressing fields, `endAfterOccurrences`, `endAt`,
-  `notes`, the missed-dose fields, `episodeId`/`conditionId`); a required one (`type`, `label`,
+  `notes`, the missed-dose fields, `conditionId`); a required one (`type`, `label`,
   `startAt`, `status`, `timeZone`) ignores `null`. Setting `frequencyHours` clears `explicitTimes`
   and vice versa, unless the body sends both.
 - **Checked on the merged result** exactly as create checks its body: `MEDICATION_ID_REQUIRED`,
   `BODY_LOCATION_REQUIRED`, `FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED`,
-  `SCHEDULE_EPISODE_CONDITION_CONFLICT`, `INVALID_TIME_ZONE`, `MISSED_DOSE_INSTRUCTION_INVALID`.
+  `INVALID_TIME_ZONE`, `MISSED_DOSE_INSTRUCTION_INVALID`, and the same-patient checks on
+  `episodeIds`/`conditionId` (404 `EPISODE_NOT_FOUND` / `CONDITION_NOT_FOUND`).
   Changing `type` clears the other type's fields.
 - **`type` and `medicationId` cannot change once any dose is linked** — 409 `SCHEDULE_HAS_DOSES`. A
   dose of one medicine must never count toward a schedule for another; a different medicine is a
   different schedule. The patient never changes. Everything else (embodiment, amounts, timing,
-  start, end, episode/condition, instruction, notes, name) stays editable.
+  start, end, episodes/condition, instruction, notes, name) stays editable.
+- **`episodeIds` replaces the list whole** (`[]` or `null` detaches every episode). This is how a
+  schedule is attached to an existing episode, or detached from one, from either side — the
+  episode page sends the schedule's list with its own id added or removed. Detaching removes the
+  link only: the schedule keeps running, and no dose leaves or joins any episode. Changing
+  `episodeIds` alone does not move `nextDueAt`.
 - **An edit replaces the plan as if it had always been so.** There is no plan history: `nextDueAt`,
   `status`, `adherence` and `missedDose` are recomputed over the whole course from the new timing
   ("Missed doses" below), so changing q8h to q6h recounts expected-by-now from `startAt` on.
@@ -1074,7 +1087,7 @@ is defined on linked doses only, everywhere it is shown.
       the two arrays and either can win the merge, so both must carry the prefill.
       `canGiveAt` / `limitedBy` are computed over **all** of the patient's doses of that
       medication, not just the episode's — the daily window does not stop at an episode boundary.
-    - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeId, nextDueAt, overdue: boolean, missedDose: MissedDoseState | null, missedDoseNote } ]`
+    - `upcomingSchedules`: `[ { scheduleId, patientId, label, type, episodeIds, nextDueAt, overdue: boolean, missedDose: MissedDoseState | null, missedDoseNote } ]`
       — `nextDueAt`, `overdue` and `missedDose` from the schedule's computed state ("Missed doses"),
       the same reading the schedule page and the dose form show.
     - `shoppingList`: `[ { embodimentId, medicationId, medicationName, label, runningLowFlaggedAt } ]`
@@ -1786,10 +1799,10 @@ sentence silently falls back to that call site's generic message rather than rea
 | --- | --- | --- |
 | `PATIENT_NOT_FOUND` | 404 | any patient-scoped route, non-member or unknown id |
 | `USER_NOT_FOUND` | 400 / 404 / 401 | 400 adding a caregiver with a `userId` that no longer resolves (stale search result); 404 transferring patient ownership to an unknown user; 401 `GET /users/me` when the account no longer exists; 401 `POST /api/auth/oidc/exchange` if the account vanished mid-login (defensive — the `oidc_handoffs` foreign key prevents it) |
-| `EPISODE_NOT_FOUND` | 404 | episode routes, and episode ids referenced from observations/interventions |
+| `EPISODE_NOT_FOUND` | 404 | episode routes, and episode ids referenced from observations/interventions/schedules (`episodeIds`) that are not this patient's |
 | `OBSERVATION_NOT_FOUND` | 404 | observation get/update |
 | `INTERVENTION_NOT_FOUND` | 404 | intervention get/update; `POST /schedules/:id/doses` naming a dose that is not this schedule's patient's (body carries `interventionIds`) |
-| `CONDITION_NOT_FOUND` | 404 | condition get/update |
+| `CONDITION_NOT_FOUND` | 404 | condition get/update, and a schedule's `conditionId` that is not this patient's |
 | `PROTOCOL_NOT_FOUND` | 404 | protocol get/update |
 | `SCHEDULE_NOT_FOUND` | 404 | intervention schedule get/update/delete; an intervention create whose `interventionScheduleId` is not this patient's schedule |
 | `MISSED_DOSE_INSTRUCTION_INVALID` | 400 | schedule create/update (checked on the merged result) with `missedDoseCutoffHours` but no take-late `missedDoseAction`, or a `missedDoseCourseEffect` on a schedule with neither `endAt` nor `endAfterOccurrences` |
@@ -1819,7 +1832,6 @@ sentence silently falls back to that call site's generic message rather than rea
 | `SCHEDULE_DOSES_INVALID` | 400 | `POST /schedules/:id/doses` with neither `link` nor `unlink`, or the same dose in both |
 | `DOSE_NOT_LINKABLE` | 400 | `POST /schedules/:id/doses` `link` names a dose that is not a candidate (already on a schedule, another medicine or embodiment, another type, or outside `startAt`–`endAt`); body carries `interventionIds` |
 | `DOSE_NOT_UNLINKABLE` | 400 | `POST /schedules/:id/doses` `unlink` names a dose logged *from* the schedule rather than linked afterwards; body carries `interventionIds` |
-| `SCHEDULE_EPISODE_CONDITION_CONFLICT` | 400 | an `InterventionSchedule` create/update with both `episodeId` and `conditionId` set |
 | `MEDICATION_ID_REQUIRED` | 400 | intervention or schedule create/update of type `medication_dose` missing `medicationId` |
 | `BODY_LOCATION_REQUIRED` | 400 | intervention or schedule create/update of type `dressing_change` missing `bodyLocation` |
 | `RESERVED_METADATA_KEY` | 400 | intervention create/update whose `metadata` names a key the service owns (the dosing engine's resolved fields, or a validated top-level field); body carries `keys` |

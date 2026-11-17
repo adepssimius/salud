@@ -28,6 +28,7 @@ import {
   whatsNewSince,
 } from '../whats-new/whats-new-window';
 import { scheduleStateFor } from '../schedules/schedule-state';
+import { episodeIdsBySchedule } from '../schedules/schedule-view';
 import { normalizeTs } from '../persistence/time';
 import { resolveAccentColor } from '../patients/accent-colors';
 import {
@@ -739,6 +740,7 @@ export class TimelineService {
         .where(and(inArray(interventionSchedules.patientId, patientIds), eq(interventionSchedules.status, 'active')));
       // The schedule's live state (schedule-state.ts) — the same next due, overdue and missed-dose
       // reading the schedule page and the dose form show, so Home never disagrees with them.
+      const episodeIds = await episodeIdsBySchedule(db, scheduleRows.map((r: any) => r.id));
       upcomingSchedules = await Promise.all(
         scheduleRows.map(async (r: any) => {
           const state = await scheduleStateFor(db, r, nowTs);
@@ -747,7 +749,7 @@ export class TimelineService {
             patientId: r.patientId,
             label: r.label,
             type: r.type,
-            episodeId: r.episodeId ?? null,
+            episodeIds: episodeIds.get(r.id)!,
             nextDueAt: state.nextDueAt,
             overdue: state.overdue,
             missedDose: state.missedDose,

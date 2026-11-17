@@ -1,0 +1,46 @@
+meta {
+  name: Attach Schedule to Episodes
+  type: http
+  seq: 16
+}
+
+patch {
+  url: {{protocol}}://{{host}}:{{port}}/{{apiPrefix}}schedules/{{scheduleId}}
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  // The patient's first episode, if none was picked yet — the same lookup episodes/get uses.
+  let eid = bru.getVar('episodeId');
+  if (!eid) {
+    const listReq = await bru.runRequest('episodes/list');
+    const list = listReq.data;
+    if (Array.isArray(list) && list.length) eid = list[0].id;
+  }
+  bru.setVar('episodeId', eid);
+}
+
+body:json {
+  {
+    "episodeIds": ["{{episodeId}}"]
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.episodeIds: contains {{episodeId}}
+}
+
+docs {
+  Attach or detach a schedule's episodes: `episodeIds` replaces the list whole (data-model.md →
+  ScheduleEpisode). Any number of episodes, active or resolved, alongside a conditionId or not.
+  To attach one more, send the schedule's current list with it added; to detach, send it
+  removed; [] or null detaches all. Each must be this patient's episode — 404 EPISODE_NOT_FOUND
+  otherwise. No dose joins or leaves an episode, and nextDueAt does not move.
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

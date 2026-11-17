@@ -141,8 +141,6 @@ export const ERROR_SENTENCES = {
     "One of those doses can't be linked to this schedule — it's already on a schedule, is a different medicine or bottle, or falls outside the schedule's dates. Reload the list and try again.",
   DOSE_NOT_UNLINKABLE:
     'Only doses linked to this schedule after they were logged can be unlinked. A dose logged from the schedule stays with it.',
-  SCHEDULE_EPISODE_CONDITION_CONFLICT:
-    'A schedule can be linked to an episode or a condition, not both. Clear one of them.',
   MISSED_DOSE_INSTRUCTION_INVALID:
     'A cutoff only goes with "take it late", and a course effect only with a course that ends. Adjust the missed-dose instruction and try again.',
   SCHEDULE_SLOT_NOT_SKIPPABLE: 'There is no missed dose to skip right now. Reload the schedule to see where it stands.',

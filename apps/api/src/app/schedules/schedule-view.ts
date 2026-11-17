@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { randomUUID } from 'crypto';
+import { and, eq, inArray } from 'drizzle-orm';
 import { InterventionSchedule } from '@salud/shared/types';
 import { scheduleStateFor } from './schedule-state';
-import { interventions } from '../../db/schema';
+import { interventions, scheduleEpisodes } from '../../db/schema';
 import { normalizeTs } from '../persistence/time';
 import { serverTimeZone, zonedDate, zonedWallTimeToInstant } from './zoned-time';
 
@@ -36,20 +37,58 @@ export function nextExplicitTime(times: string[], from: Date, strictlyAfter: boo
   return new Date(fromMs + 24 * 60 * 60 * 1000);
 }
 
+// ── Which episodes a schedule treats (data-model.md → ScheduleEpisode) ─────────────────────────
+
+/**
+ * Each schedule's episode ids, sorted by id; every schedule asked for has an entry. A set, so the
+ * order means nothing — sorting only makes it stable (attachments written in the same second tie on
+ * `createdAt`, so that cannot order them).
+ */
+export async function episodeIdsBySchedule(db: any, scheduleIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>(scheduleIds.map((id) => [id, []]));
+  if (!scheduleIds.length) return out;
+  const rows: any[] = await db.select().from(scheduleEpisodes).where(inArray(scheduleEpisodes.scheduleId, scheduleIds));
+  for (const r of rows) out.get(r.scheduleId)?.push(r.episodeId);
+  for (const ids of out.values()) ids.sort();
+  return out;
+}
+
+/** The ids of the schedules attached to an episode. */
+export async function scheduleIdsForEpisode(db: any, episodeId: string): Promise<string[]> {
+  const rows: any[] = await db.select().from(scheduleEpisodes).where(eq(scheduleEpisodes.episodeId, episodeId));
+  return rows.map((r) => r.scheduleId);
+}
+
+/**
+ * Make a schedule's episodes exactly `episodeIds` (already validated as the patient's own). Rows
+ * that stay are left alone; only the difference is written.
+ */
+export async function setScheduleEpisodes(db: any, scheduleId: string, episodeIds: string[]): Promise<void> {
+  const want = new Set(episodeIds);
+  const rows: any[] = await db.select().from(scheduleEpisodes).where(eq(scheduleEpisodes.scheduleId, scheduleId));
+  const have = new Set(rows.map((r) => r.episodeId));
+  const drop = rows.filter((r) => !want.has(r.episodeId)).map((r) => r.id);
+  if (drop.length) await db.delete(scheduleEpisodes).where(and(eq(scheduleEpisodes.scheduleId, scheduleId), inArray(scheduleEpisodes.id, drop)));
+  for (const episodeId of want) {
+    if (!have.has(episodeId)) await db.insert(scheduleEpisodes).values({ id: randomUUID(), scheduleId, episodeId });
+  }
+}
+
 export async function scheduleLoggedCount(db: any, scheduleId: string): Promise<number> {
   const rows = await db.select().from(interventions).where(eq(interventions.scheduleId, scheduleId));
   return rows.length;
 }
 
-export async function toScheduleView(db: any, row: any): Promise<InterventionSchedule> {
+export async function toScheduleView(db: any, row: any, episodeIds?: string[]): Promise<InterventionSchedule> {
   const state = await scheduleStateFor(db, row);
+  const episodes = episodeIds ?? (await episodeIdsBySchedule(db, [row.id])).get(row.id)!;
   return {
     id: row.id,
     patientId: row.patientId,
     type: row.type,
     medicationId: row.medicationId ?? null,
     medicationEmbodimentId: row.medicationEmbodimentId ?? null,
-    episodeId: row.episodeId ?? null,
+    episodeIds: episodes,
     conditionId: row.conditionId ?? null,
     label: row.label,
     doseMg: row.doseMg ?? null,

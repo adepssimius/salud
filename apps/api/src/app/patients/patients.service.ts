@@ -15,6 +15,7 @@ import {
   fileAssets,
   interventions,
   interventionSchedules,
+  scheduleEpisodes,
   observationEntries,
   observations,
   patients,
@@ -173,6 +174,9 @@ export class PatientsService {
     await tx.delete(adverseReactions).where(eq(adverseReactions.patientId, id));
     await tx.delete(observations).where(eq(observations.patientId, id));
     await tx.delete(interventions).where(eq(interventions.patientId, id));
+    // Before both schedules and episodes: a schedule's episode links reference each.
+    const scheduleIds = (await tx.select({ id: interventionSchedules.id }).from(interventionSchedules).where(eq(interventionSchedules.patientId, id))).map((r: any) => r.id);
+    if (scheduleIds.length) await tx.delete(scheduleEpisodes).where(inArray(scheduleEpisodes.scheduleId, scheduleIds));
     await tx.delete(interventionSchedules).where(eq(interventionSchedules.patientId, id));
     await tx.delete(episodes).where(eq(episodes.patientId, id));
     await tx.delete(protocols).where(inArray(protocols.conditionId, conditionIds));

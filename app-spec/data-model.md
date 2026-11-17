@@ -574,10 +574,12 @@ episodes.
   - `type: enum('medication_dose','dressing_change')`
   - `medicationId: uuid | null` (required when type = medication)
   - `medicationEmbodimentId: uuid | null`
-  - `episodeId: uuid | null`
-  - `conditionId: uuid | null` — at most one of `episodeId`/`conditionId` is set (service-validated,
-    see "Data integrity rules"): a standing regimen belongs to a Condition directly, while an
-    acute course belongs to the Episode it was prescribed for.
+  - `episodeIds: uuid[]` — the episodes this schedule treats, held in `ScheduleEpisode` (below),
+    not a column. Zero, one or several: one course of ibuprofen can treat a swollen knee and a
+    fever that happen to run at the same time, and it belongs on both episodes' pages.
+  - `conditionId: uuid | null` — the standing Condition this schedule is a regimen of. Independent
+    of `episodeIds`: a condition's standing regimen can also be attached to an episode it treats
+    (the asthma inhaler on "Asthma flare, Nov"), so a schedule may carry both.
   - `label: string` (e.g., "Amoxicillin q8h", "Nightly dressing")
   - Medication fields — all optional; a cream, ointment or gel course has no amount to schedule
     (`MedicationEmbodiment.dosageForm`), so a schedule may carry none of them:
@@ -663,6 +665,17 @@ its own.
 - `recordedByUserId: uuid`
 - `createdAt`
 - One row per (schedule, slot), checked by the service.
+
+### ScheduleEpisode
+Which episodes an `InterventionSchedule` treats — a plain link, many to many. It replaced the
+schedule's single `episodeId` column; the migration carried every existing link over.
+- `id: uuid`
+- `scheduleId: uuid`
+- `episodeId: uuid`
+- `createdAt`
+- One row per (schedule, episode), checked by the service. Deleted with the schedule (it is plan
+  bookkeeping, like a `ScheduleSkip`) and with the patient. Detaching deletes the row and nothing
+  else: the schedule, its doses, and the doses' own episode memberships stay as they were.
 
 ### FileAsset
 - `id: uuid`
@@ -952,7 +965,11 @@ the snapshot's contents do.
   an earlier entry and removing the old start in one request is one move. Removing the entry that
   resolved an episode drops both its links and reopens the episode. Adding an entry earlier than
   the start makes it the start; removing the start promotes the next-earliest member.
-- `episodeId` on `InterventionSchedule` optional; when provided, schedule should tag interventions to same episode.
+- An `InterventionSchedule`'s episodes (`ScheduleEpisode`) and its `conditionId` must belong to the
+  schedule's own patient — 404 `EPISODE_NOT_FOUND` / `CONDITION_NOT_FOUND` otherwise, as for an
+  entry's episodes. A dose logged from a schedule (`POST /api/schedules/:id/log`) joins **every
+  attached episode that is still active**; a resolved one is left alone. Attaching or detaching
+  a schedule never adds or removes a dose from an episode.
 - Enforce canonical units at persistence boundary; convert in API/UI.
 - `MedicationGuideline.source` is required — never persist a guideline without provenance (N-4).
 - On an `age_band` `MedicationGuideline`, `ageMinMonths <= ageMaxMonths` — checked against the merged
@@ -971,8 +988,6 @@ the snapshot's contents do.
 - `AdverseReaction`: exactly one of `medicationId`/`embodimentId`/`tag` must be set, and it must
   match `scopeType` — any other combination is rejected with 400 `INVALID_REACTION_SCOPE`. The app
   never infers cross-reactivity from the scope a caregiver chose (P6).
-- `InterventionSchedule`: `episodeId` and `conditionId` are mutually exclusive — setting both is
-  rejected with 400 `SCHEDULE_EPISODE_CONDITION_CONFLICT`.
 - Reaction matching (dose-checks and the dose save path) is **exact, never inferred**: a `medication`-
   scoped reaction matches only on `medicationId` equality, an `embodiment`-scoped reaction only on
   `embodimentId` equality, and a `tag`-scoped reaction only when the tag is present in the selected

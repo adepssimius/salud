@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { randomUUID } from 'crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../persistence/database.service';
-import { careTeamMemberships, interventionSchedules, interventions, scheduleSkips } from '../../db/schema';
+import { careTeamMemberships, conditions, episodes, interventionSchedules, interventions, scheduleEpisodes, scheduleSkips } from '../../db/schema';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { LogScheduleDto } from './dto/log-schedule.dto';
@@ -14,7 +14,7 @@ import { persistScheduleState, scheduleStateFor } from './schedule-state';
 import { InterventionsService } from '../interventions/interventions.service';
 import { CreateInterventionDto } from '../interventions/dto/create-intervention.dto';
 import { normalizeTs } from '../persistence/time';
-import { toScheduleView } from './schedule-view';
+import { episodeIdsBySchedule, scheduleIdsForEpisode, setScheduleEpisodes, toScheduleView } from './schedule-view';
 import { isValidTimeZone } from './zoned-time';
 
 @Injectable()
@@ -37,8 +37,29 @@ export class SchedulesService {
     }
   }
 
-  private async pickSchedule(row: any) {
-    return toScheduleView(this.db.db as any, row);
+  private async pickSchedule(row: any, episodeIds?: string[]) {
+    return toScheduleView(this.db.db as any, row, episodeIds);
+  }
+
+  /**
+   * A schedule's episodes and condition must be its own patient's (data-model.md → "Data integrity
+   * rules"): another child's episode is "not found", never linked. Episodes may be active or
+   * resolved — a past course can be filed under the episode it treated. Returns the ids deduped,
+   * in the order sent.
+   */
+  private async assertOwnEpisodesAndCondition(patientId: string, episodeIds: string[] | null | undefined, conditionId: string | null | undefined) {
+    const db = this.db.db as any;
+    const ids = [...new Set(episodeIds ?? [])];
+    if (ids.length) {
+      const rows: any[] = await db.select({ id: episodes.id, patientId: episodes.patientId }).from(episodes).where(inArray(episodes.id, ids));
+      const own = new Set(rows.filter((r) => r.patientId === patientId).map((r) => r.id));
+      if (ids.some((id) => !own.has(id))) throw new NotFoundException('EPISODE_NOT_FOUND');
+    }
+    if (conditionId) {
+      const rows: any[] = await db.select({ patientId: conditions.patientId }).from(conditions).where(eq(conditions.id, conditionId)).limit(1);
+      if (!rows.length || rows[0].patientId !== patientId) throw new NotFoundException('CONDITION_NOT_FOUND');
+    }
+    return ids;
   }
 
   async create(patientId: string, userId: string, dto: CreateScheduleDto) {
@@ -53,12 +74,10 @@ export class SchedulesService {
     if (!dto.frequencyHours && !dto.explicitTimes) {
       throw new BadRequestException('FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED');
     }
-    if (dto.episodeId && dto.conditionId) {
-      throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
-    }
     if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
       throw new BadRequestException('INVALID_TIME_ZONE');
     }
+    const episodeIds = await this.assertOwnEpisodesAndCondition(patientId, dto.episodeIds, dto.conditionId);
     this.assertMissedDoseInstruction({
       action: dto.missedDoseAction ?? null,
       cutoffHours: dto.missedDoseCutoffHours ?? null,
@@ -70,35 +89,37 @@ export class SchedulesService {
     const id = randomUUID();
     const startAtDate = new Date(dto.startAt);
 
-    await db.insert(interventionSchedules).values({
-      id,
-      patientId,
-      type: dto.type,
-      medicationId: dto.medicationId ?? null,
-      medicationEmbodimentId: dto.medicationEmbodimentId ?? null,
-      episodeId: dto.episodeId ?? null,
-      conditionId: dto.conditionId ?? null,
-      label: dto.label,
-      doseMg: dto.doseMg ?? null,
-      doseMl: dto.doseMl ?? null,
-      pillCount: dto.pillCount ?? null,
-      bodyLocation: dto.bodyLocation ?? null,
-      side: dto.side ?? null,
-      dressingType: dto.dressingType ?? null,
-      frequencyHours: dto.frequencyHours ?? null,
-      explicitTimes: dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null,
-      timeZone: dto.timeZone ?? null,
-      missedDoseAction: dto.missedDoseAction ?? null,
-      missedDoseCutoffHours: dto.missedDoseCutoffHours ?? null,
-      missedDoseCourseEffect: dto.missedDoseCourseEffect ?? null,
-      missedDoseNote: dto.missedDoseNote?.trim() || null,
-      startAt: startAtDate,
-      endAfterOccurrences: dto.endAfterOccurrences ?? null,
-      endAt: dto.endAt ? new Date(dto.endAt) : null,
-      notes: dto.notes ?? null,
-      status: 'active',
-      nextDueAt: null,
-      createdByUserId: userId,
+    await this.db.withTransaction(async (tx: any) => {
+      await tx.insert(interventionSchedules).values({
+        id,
+        patientId,
+        type: dto.type,
+        medicationId: dto.medicationId ?? null,
+        medicationEmbodimentId: dto.medicationEmbodimentId ?? null,
+        conditionId: dto.conditionId ?? null,
+        label: dto.label,
+        doseMg: dto.doseMg ?? null,
+        doseMl: dto.doseMl ?? null,
+        pillCount: dto.pillCount ?? null,
+        bodyLocation: dto.bodyLocation ?? null,
+        side: dto.side ?? null,
+        dressingType: dto.dressingType ?? null,
+        frequencyHours: dto.frequencyHours ?? null,
+        explicitTimes: dto.explicitTimes ? JSON.stringify(dto.explicitTimes) : null,
+        timeZone: dto.timeZone ?? null,
+        missedDoseAction: dto.missedDoseAction ?? null,
+        missedDoseCutoffHours: dto.missedDoseCutoffHours ?? null,
+        missedDoseCourseEffect: dto.missedDoseCourseEffect ?? null,
+        missedDoseNote: dto.missedDoseNote?.trim() || null,
+        startAt: startAtDate,
+        endAfterOccurrences: dto.endAfterOccurrences ?? null,
+        endAt: dto.endAt ? new Date(dto.endAt) : null,
+        notes: dto.notes ?? null,
+        status: 'active',
+        nextDueAt: null,
+        createdByUserId: userId,
+      });
+      await setScheduleEpisodes(tx, id, episodeIds);
     });
     // The first due moment comes from the same state every later write uses.
     await persistScheduleState(db, id);
@@ -120,9 +141,13 @@ export class SchedulesService {
 
     if (params.type) rows = rows.filter((r: any) => r.type === params.type);
     if (params.status) rows = rows.filter((r: any) => r.status === params.status);
-    if (params.episodeId) rows = rows.filter((r: any) => r.episodeId === params.episodeId);
+    if (params.episodeId) {
+      const attached = new Set(await scheduleIdsForEpisode(db, params.episodeId));
+      rows = rows.filter((r: any) => attached.has(r.id));
+    }
 
-    return Promise.all(rows.map((r: any) => this.pickSchedule(r)));
+    const episodeIds = await episodeIdsBySchedule(db, rows.map((r: any) => r.id));
+    return Promise.all(rows.map((r: any) => this.pickSchedule(r, episodeIds.get(r.id))));
   }
 
   private async getRow(id: string, userId: string) {
@@ -191,12 +216,14 @@ export class SchedulesService {
     if (merged('frequencyHours') == null && merged('explicitTimes') == null) {
       throw new BadRequestException('FREQUENCY_OR_EXPLICIT_TIMES_REQUIRED');
     }
-    if (merged('episodeId') && merged('conditionId')) {
-      throw new BadRequestException('SCHEDULE_EPISODE_CONDITION_CONFLICT');
-    }
     if (dto.timeZone !== undefined && !isValidTimeZone(dto.timeZone)) {
       throw new BadRequestException('INVALID_TIME_ZONE');
     }
+    // Only what was sent is checked: a list or condition already stored stays as it is.
+    const episodeIds =
+      dto.episodeIds !== undefined || dto.conditionId
+        ? await this.assertOwnEpisodesAndCondition(row.patientId, dto.episodeIds, dto.conditionId)
+        : [];
     // Checked against the merged result, as a correction is.
     this.assertMissedDoseInstruction({
       action: (merged('missedDoseAction') as any) ?? null,
@@ -209,7 +236,6 @@ export class SchedulesService {
     const directFields = [
       'type',
       'label',
-      'episodeId',
       'conditionId',
       'medicationId',
       'medicationEmbodimentId',
@@ -236,9 +262,13 @@ export class SchedulesService {
     if (dto.endAt !== undefined) updates.endAt = dto.endAt ? new Date(dto.endAt) : null;
     if (dto.missedDoseNote !== undefined) updates.missedDoseNote = dto.missedDoseNote?.trim() || null;
 
-    if (Object.keys(updates).length) {
-      await db.update(interventionSchedules).set({ ...updates, updatedAt: new Date() }).where(eq(interventionSchedules.id, id));
-    }
+    await this.db.withTransaction(async (tx: any) => {
+      if (Object.keys(updates).length || dto.episodeIds !== undefined) {
+        await tx.update(interventionSchedules).set({ ...updates, updatedAt: new Date() }).where(eq(interventionSchedules.id, id));
+      }
+      // Attach/detach: the list replaces the stored one whole. No dose joins or leaves an episode.
+      if (dto.episodeIds !== undefined) await setScheduleEpisodes(tx, id, episodeIds);
+    });
     // Timing, status, end and instruction all move the next due moment; recompute from the result.
     await persistScheduleState(db, id);
 
@@ -274,6 +304,8 @@ export class SchedulesService {
           .where(eq(interventions.id, d.id));
       }
       await tx.delete(scheduleSkips).where(eq(scheduleSkips.scheduleId, id));
+      // Its episode links are plan bookkeeping too; the episodes and their doses stay.
+      await tx.delete(scheduleEpisodes).where(eq(scheduleEpisodes.scheduleId, id));
       await tx.delete(interventionSchedules).where(eq(interventionSchedules.id, id));
     });
 
@@ -289,10 +321,19 @@ export class SchedulesService {
     const factor = dto.double ? 2 : 1;
     const times = (v: number | null) => (v != null ? v * factor : undefined);
 
+    // The dose joins every attached episode that is still active; a resolved one is left alone
+    // (api.md → Intervention schedules → POST .../log).
+    const db = this.db.db as any;
+    const attached = (await episodeIdsBySchedule(db, [id])).get(id)!;
+    const activeEpisodeIds = attached.length
+      ? ((await db.select({ id: episodes.id, status: episodes.status }).from(episodes).where(inArray(episodes.id, attached))) as any[])
+          .filter((e) => e.status === 'active')
+          .map((e) => e.id)
+      : [];
     const interventionDto: CreateInterventionDto = {
       performedAt: performedAtDate.toISOString(),
       type: row.type,
-      episodeIds: row.episodeId ? [row.episodeId] : undefined,
+      episodeIds: activeEpisodeIds.length ? attached.filter((e) => activeEpisodeIds.includes(e)) : undefined,
       notes: dto.notes,
       interventionScheduleId: id,
       ...(dto.double ? { prescribedDouble: true } : {}),

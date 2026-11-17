@@ -20,9 +20,11 @@ export class UpdateScheduleDto implements UpdateScheduleShape {
   @IsDateString()
   startAt?: string;
 
+  // The episodes the schedule treats (data-model.md → ScheduleEpisode); replaces the list whole.
   @IsOptional()
-  @IsString()
-  episodeId?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  episodeIds?: string[] | null;
 
   @IsOptional()
   @IsString()

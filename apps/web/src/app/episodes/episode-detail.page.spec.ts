@@ -361,7 +361,7 @@ describe('EpisodeDetailPage course view', () => {
     type: 'medication_dose',
     medicationId: 'cream',
     medicationEmbodimentId: 'emb',
-    episodeId: 'ep1',
+    episodeIds: ['ep1'],
     label: 'Clotrimazole twice daily',
     frequencyHours: null,
     explicitTimes: ['08:00', '20:00'],
@@ -379,21 +379,32 @@ describe('EpisodeDetailPage course view', () => {
     lesion('obs2', at(1, 9), true),
   ];
   let routerMock: any;
+  let api: any;
 
-  const build = async (episodeOver: any) => {
+  const build = async (episodeOver: any, patientSchedules: any[] = [], patientEpisodes: any[] = []) => {
     routerMock = { navigate: jest.fn() };
     const episode = { ...baseEpisode, startedAt: at(3, 7), observationIds: ['obs1', 'obs2'], medications, schedules: [], ...episodeOver };
+    api = {
+      get: jest.fn((path: string) =>
+        path === '/episodes/ep1'
+          ? of(episode)
+          : path.includes('/timeline')
+            ? of({ patient: { id: 'p1' }, entries })
+            : path === '/patients/p1/schedules'
+              ? of(patientSchedules)
+              : path === '/patients/p1/episodes'
+                ? of(patientEpisodes)
+                : of(null),
+      ),
+      patch: jest.fn(() => of({})),
+      getBlob: jest.fn(() => of(new Blob())),
+    };
     await TestBed.configureTestingModule({
       imports: [EpisodeDetailPage],
       providers: [
         {
           provide: ApiClientService,
-          useValue: {
-            get: jest.fn((path: string) =>
-              path === '/episodes/ep1' ? of(episode) : path.includes('/timeline') ? of({ patient: { id: 'p1' }, entries }) : of(null),
-            ),
-            getBlob: jest.fn(() => of(new Blob())),
-          },
+          useValue: api,
         },
         { provide: AuthService, useValue: { user: () => null } },
         { provide: Router, useValue: routerMock },
@@ -439,6 +450,44 @@ describe('EpisodeDetailPage course view', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/schedules', 's1'], { queryParams: { link: '1' } });
     const short = fixture.nativeElement.querySelectorAll('.strip .cell.short');
     expect(short.length).toBeGreaterThan(0);
+  });
+
+  // frontend.md → Episode detail → "Keeping up": attach an existing schedule (any of the patient's
+  // not already here), detach one after a confirm — both by PATCHing the schedule's episodeIds.
+  it('attaches one of the patient\'s existing schedules, saying what else it is on', async () => {
+    const shared = { ...schedule, id: 's2', label: 'Ibuprofen q8h', episodeIds: ['fever'] };
+    const done = { ...schedule, id: 's3', label: 'Old cream', episodeIds: [], status: 'completed' };
+    const fixture = await build({ schedules: [schedule] }, [done, schedule, shared], [{ id: 'fever', name: 'Fever' }, { id: 'ep1', name: 'Ringworm' }]);
+    (fixture.nativeElement.querySelector('.section-actions button:last-child') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    const rows = [...fixture.nativeElement.querySelectorAll('.attach-row')] as HTMLElement[];
+    // Not the one already here; the active one first.
+    const text = (r: HTMLElement) => r.querySelector('.attach-text')!.textContent!.replace(/\s+/g, ' ').trim();
+    expect(rows.map(text)).toEqual(['Ibuprofen q8h · also on Fever', 'Old creamcompleted']); // the pill sits beside the label
+    (rows[0].querySelector('button') as HTMLButtonElement).click();
+    expect(api.patch).toHaveBeenCalledWith('/schedules/s2', { episodeIds: ['fever', 'ep1'] });
+    expect(api.get.mock.calls.filter((c: any[]) => c[0] === '/episodes/ep1')).toHaveLength(2); // re-read after
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.attach')).toBeNull();
+  });
+
+  it('offers Attach a schedule on a resolved episode too, where Add a schedule is not offered', async () => {
+    const fixture = await build({ status: 'resolved', endedAt: at(1, 9) });
+    const labels = [...fixture.nativeElement.querySelectorAll('.section-actions button')].map((b: any) => b.textContent.trim());
+    expect(labels).toEqual(['Attach a schedule']);
+  });
+
+  it('detaches a schedule after a confirm, leaving its other episodes', async () => {
+    const both = { ...schedule, episodeIds: ['ep1', 'fever'] };
+    const fixture = await build({ schedules: [both] });
+    const confirm = jest.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const button = fixture.nativeElement.querySelector('.detach') as HTMLButtonElement;
+    button.click();
+    expect(api.patch).not.toHaveBeenCalled();
+    button.click();
+    expect(confirm.mock.calls[1][0]).toContain('The schedule keeps running and its logged doses stay where they are');
+    expect(api.patch).toHaveBeenCalledWith('/schedules/s1', { episodeIds: ['fever'] });
+    confirm.mockRestore();
   });
 
   it('puts the photos and sizes side by side, oldest first, saying when one has no photo', async () => {
