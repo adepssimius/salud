@@ -132,7 +132,7 @@ describe('InterventionDetailPage', () => {
     expect(apiMock.get).toHaveBeenCalledWith('/schedules/s1');
   });
 
-  it('shows the dose provenance — amounts, source, inputs, guideline and countdown', () => {
+  it('shows the dose provenance — amounts, source, inputs, guideline and next-allowed time', () => {
     const fixture = render();
     const facts = fixture.componentInstance.facts();
     const labels = facts.map((f) => f.label);
@@ -142,7 +142,7 @@ describe('InterventionDetailPage', () => {
       'Dose source',
       'Weight used',
       'Guideline',
-      'Next dose allowed',
+      'Next dose allowed from',
     ]);
     expect(facts[0].value).toBe('240 mg');
     expect(facts[1].value).toBe('7.5 mL');
@@ -150,7 +150,40 @@ describe('InterventionDetailPage', () => {
     // Canonical kg converted to the reader's preferred weight unit.
     expect(facts[3].value).toBe('35.3 lb');
     expect(facts[4].value).toBe('AAP 2023 (weight-based)');
-    expect(facts[5].value).toContain('can give now');
+    expect(facts[5].value).toBe(`${new Date(1700014400 * 1000).toLocaleString()} · set when this dose was logged`);
+  });
+
+  // A history page has no basis for a present-tense verdict: it cannot know whether a later dose of
+  // this medication was given since, and the stored time was only ever the interval check
+  // (frontend.md → "Intervention detail").
+  describe('next-allowed time is a frozen fact, never a verdict', () => {
+    const nextAllowedFact = (nextAllowedAt: number | null) => {
+      entity = { ...dose, metadata: { ...dose.metadata, nextAllowedAt } };
+      const fixture = render();
+      return {
+        fact: fixture.componentInstance.facts().find((f) => f.label.startsWith('Next dose')),
+        text: fixture.nativeElement.textContent as string,
+      };
+    };
+    const nowS = () => Math.floor(Date.now() / 1000);
+
+    it('an elapsed next-allowed time does not say "can give now"', () => {
+      const { fact, text } = nextAllowedFact(nowS() - 3600 * 40);
+      expect(fact?.value).toContain('set when this dose was logged');
+      expect(text).not.toMatch(/can give/i);
+    });
+
+    it('a next-allowed time still ahead gets no countdown', () => {
+      const { fact, text } = nextAllowedFact(nowS() + 3600 * 3);
+      expect(fact?.value).toContain('set when this dose was logged');
+      expect(text).not.toMatch(/next dose in|in \d+h/i);
+    });
+
+    it('a dose with no next-allowed time shows no row at all', () => {
+      const { fact, text } = nextAllowedFact(null);
+      expect(fact).toBeUndefined();
+      expect(text).not.toMatch(/next dose/i);
+    });
   });
 
   it('names the medication and its embodiment', () => {

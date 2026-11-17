@@ -774,8 +774,14 @@ recorded can be read back.
     (N-4, P2);
   - `isAtypical` as a warning pill spelling out `atypicalReason` in the same words the advisory
     banner uses, so a dose flagged at entry reads the same way when it is read back;
-  - `nextAllowedAt` as an absolute time with its countdown ("can give now" / "in 1h 40m"), labeled
-    as frozen at log time — this page never recomputes it.
+  - `nextAllowedAt` as an absolute time only, labeled "Next dose allowed from" and marked as set
+    when this dose was logged — this page never recomputes it. **No countdown and no "can give
+    now"**: this is a history page, and a present-tense verdict read off one dose's frozen
+    interval is wrong as soon as a later dose of the same medication exists, and was never a
+    daily-total check. "Can I give it now?" is answered only on the actionable surfaces — Home's
+    sick card and night board, and the quick-log sheet — which read the patient's latest dose of
+    each medication. A dose with no `nextAllowedAt` (no guideline supplied an interval) shows no
+    row.
 - **A dressing change shows** `bodyLocation`, `side` and `dressingType`.
 - `scheduleId`, when set, links to `/schedules/:id`: "this dose came from a plan" is provenance too.
 
