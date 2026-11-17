@@ -1028,10 +1028,59 @@ describe('Correcting an observation (e2e)', () => {
     expect(ep.endedAtId ?? null).toBeNull();
   });
 
-  it('refuses to unlink the episode an observation started', async () => {
+  it('refuses to unlink the last entry of an episode', async () => {
     const start = await observe({ startEpisodeName: 'Started here' });
     const res = await patch(start.id, { episodeIds: [] }).expect(400);
-    expect(res.body.message).toBe('CANNOT_UNLINK_STARTED_EPISODE');
+    expect(res.body.message).toBe('EPISODE_LAST_ENTRY');
+  });
+
+  it('moves the start with membership and with corrected times, never out of step with the pivot', async () => {
+    const t0 = nowSec();
+    const first = await observe({ observedAt: iso(t0 - 3 * HOUR), startEpisodeName: 'Moving start' });
+    const episodeId = first.episodeIds[0];
+    const second = await observe({ observedAt: iso(t0 - 2 * HOUR), episodeIds: [episodeId] });
+    expect((await episode(episodeId)).startedAtId).toBe(first.id);
+
+    // Unlinking the start promotes the next-earliest member.
+    await patch(first.id, { episodeIds: [] }).expect(200);
+    let ep = await episode(episodeId);
+    expect(ep.startedAtId).toBe(second.id);
+    expect(ep.startedAt).toBe(t0 - 2 * HOUR);
+
+    // Re-linking it makes it the start again: it is the earliest.
+    await patch(first.id, { episodeIds: [episodeId] }).expect(200);
+    expect((await episode(episodeId)).startedAtId).toBe(first.id);
+
+    // Correcting the start's time past the other member hands the start over…
+    await patch(first.id, { observedAt: iso(t0 - HOUR) }).expect(200);
+    expect((await episode(episodeId)).startedAtId).toBe(second.id);
+    // …and correcting a member's time before the start takes it.
+    await patch(first.id, { observedAt: iso(t0 - 4 * HOUR) }).expect(200);
+    ep = await episode(episodeId);
+    expect(ep.startedAtId).toBe(first.id);
+    expect(ep.startedAt).toBe(t0 - 4 * HOUR);
+
+    // A back-dated entry logged into the episode becomes its start at create.
+    const backdated = await observe({ observedAt: iso(t0 - 6 * HOUR), episodeIds: [episodeId] });
+    expect((await episode(episodeId)).startedAtId).toBe(backdated.id);
+  });
+
+  it('refuses to log a resolving entry earlier than every member of the episode', async () => {
+    const t0 = nowSec();
+    const start = await observe({ observedAt: iso(t0 - 3 * HOUR), startEpisodeName: 'Too early' });
+    const episodeId = start.episodeIds[0];
+    const res = await request(server())
+      .post(`/api/patients/${patientId}/observations`)
+      .set(auth())
+      .send({
+        observedAt: iso(t0 - 4 * HOUR),
+        episodeIds: [episodeId],
+        resolvesEpisodeIds: [episodeId],
+        entries: [{ type: 'note', metadata: { text: 'over' } }],
+      })
+      .expect(400);
+    expect(res.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
+    expect((await episode(episodeId)).status).toBe('active');
   });
 
   it('refuses a time that would end an episode before it starts, and writes nothing', async () => {

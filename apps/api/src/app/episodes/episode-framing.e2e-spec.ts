@@ -84,16 +84,18 @@ describe('Episode framing (e2e)', () => {
       expect(res.body.observationIds).toEqual([later.id]);
       expect(res.body.interventionIds).toEqual([earlier.id]);
 
-      // Each entry now reports the membership, and the start carries the started flag through the
-      // same correction rules the entry PATCH enforces.
+      // Each entry now reports the membership, and unlinking the start through the entry PATCH
+      // hands the start to the next-earliest member, as Remove on the episode side does.
       const obs = await http().get(`/api/observations/${later.id}`).set('Authorization', `Bearer ${token}`).expect(200);
       expect(obs.body.episodeIds).toEqual([res.body.id]);
-      const unlink = await http()
+      await http()
         .patch(`/api/interventions/${earlier.id}`)
         .set('Authorization', `Bearer ${token}`)
         .send({ episodeIds: [] })
-        .expect(400);
-      expect(unlink.body.message).toBe('CANNOT_UNLINK_STARTED_EPISODE');
+        .expect(200);
+      const moved = await http().get(`/api/episodes/${res.body.id}`).set('Authorization', `Bearer ${token}`).expect(200);
+      expect(moved.body.startedAtId).toBe(later.id);
+      expect(moved.body.startedAt).toBe(later.observedAt);
 
       const revs = await http()
         .get(`/api/observations/${later.id}/revisions`)
@@ -251,7 +253,7 @@ describe('Episode framing (e2e)', () => {
       const { token } = await registerAndLogin(app);
       const { patientId, start, episodeId } = await framed(token);
       const dose = await logDressing(app, token, patientId, hoursAgo(4));
-      // Earlier than the start: a member, but the start stays put.
+      // Earlier than the start: a member, and the start moves to it.
       const before = await logObservation(app, token, patientId, hoursAgo(20));
 
       const res = await http()
@@ -267,7 +269,8 @@ describe('Episode framing (e2e)', () => {
         .expect(200);
       expect(res.body.interventionIds).toEqual([dose.id]);
       expect(new Set(res.body.observationIds)).toEqual(new Set([start.id, before.id]));
-      expect(res.body.startedAtId).toBe(start.id);
+      expect(res.body.startedAtId).toBe(before.id);
+      expect(res.body.startedAt).toBe(before.observedAt);
 
       // Revisions only for entries whose links changed.
       const startRevs = await http()
@@ -289,16 +292,16 @@ describe('Episode framing (e2e)', () => {
       expect(intervention.body.episodeIds).toEqual([episodeId]);
     });
 
-    it('removes entries but never the start, and reopens the episode when its resolving entry is removed', async () => {
+    it('removes entries but never the last one, and reopens the episode when its resolving entry is removed', async () => {
       const { token } = await registerAndLogin(app);
       const { patientId, start, episodeId } = await framed(token);
 
-      const unlinkStart = await http()
+      const unlinkLast = await http()
         .post(`/api/episodes/${episodeId}/events`)
         .set('Authorization', `Bearer ${token}`)
         .send({ remove: [{ type: 'observation', id: start.id }] })
         .expect(400);
-      expect(unlinkStart.body.message).toBe('CANNOT_UNLINK_STARTED_EPISODE');
+      expect(unlinkLast.body.message).toBe('EPISODE_LAST_ENTRY');
 
       // Resolve it the normal way: a logged observation.
       const resolving = await http()
@@ -329,6 +332,141 @@ describe('Episode framing (e2e)', () => {
         .expect(200);
       expect(obs.body.episodeIds).toEqual([]);
       expect(obs.body.resolvesEpisodeIds).toEqual([]);
+    });
+
+    it('promotes the next-earliest entry when the start is removed, and plans one move per request', async () => {
+      const { token } = await registerAndLogin(app);
+      const { patientId, start, episodeId } = await framed(token);
+      const next = await logObservation(app, token, patientId, hoursAgo(8));
+      const later = await logDressing(app, token, patientId, hoursAgo(6));
+      await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ add: [{ type: 'observation', id: next.id }, { type: 'intervention', id: later.id }] })
+        .expect(200);
+
+      const res = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remove: [{ type: 'observation', id: start.id }] })
+        .expect(200);
+      expect(res.body.startedAtType).toBe('observation');
+      expect(res.body.startedAtId).toBe(next.id);
+      expect(res.body.startedAt).toBe(next.observedAt);
+
+      // Adding an earlier entry and removing the current start in one request: one move.
+      const earliest = await logObservation(app, token, patientId, hoursAgo(30));
+      const swap = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ add: [{ type: 'observation', id: earliest.id }], remove: [{ type: 'observation', id: next.id }] })
+        .expect(200);
+      expect(swap.body.startedAtId).toBe(earliest.id);
+
+      // Removing every member at once is refused, and writes nothing.
+      const all = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remove: [{ type: 'observation', id: earliest.id }, { type: 'intervention', id: later.id }] })
+        .expect(400);
+      expect(all.body.message).toBe('EPISODE_LAST_ENTRY');
+      const after = await http().get(`/api/episodes/${episodeId}`).set('Authorization', `Bearer ${token}`).expect(200);
+      expect(after.body.startedAtId).toBe(earliest.id);
+      expect(after.body.interventionIds).toEqual([later.id]);
+    });
+
+    it('breaks a tie on identical times observation-first, with the resolving entry last', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const at = hoursAgo(5);
+      const dressing = await logDressing(app, token, patientId, at);
+      const obs = await logObservation(app, token, patientId, at);
+      const res = await http()
+        .post(`/api/patients/${patientId}/episodes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Tie', events: [{ type: 'intervention', id: dressing.id }, { type: 'observation', id: obs.id }] })
+        .expect(201);
+      expect(res.body.startedAtId).toBe(obs.id);
+
+      // With the observation resolving it, the tie goes to the other entry: a valid frame rather
+      // than one that ends at its own start.
+      const resolved = await http()
+        .post(`/api/patients/${patientId}/episodes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Tie resolved',
+          events: [{ type: 'intervention', id: dressing.id }, { type: 'observation', id: obs.id }],
+          resolvedBy: { type: 'observation', id: obs.id },
+        })
+        .expect(201);
+      expect(resolved.body.startedAtId).toBe(dressing.id);
+      expect(resolved.body.endedAtId).toBe(obs.id);
+    });
+
+    it('keeps the end on the resolving entry, and refuses a result that ends at its own start', async () => {
+      const { token } = await registerAndLogin(app);
+      const patientId = await createPatient(app, token);
+      const first = await logObservation(app, token, patientId, hoursAgo(10));
+      const middle = await logObservation(app, token, patientId, hoursAgo(8));
+      const resolving = await logObservation(app, token, patientId, hoursAgo(6));
+      const created = await http()
+        .post(`/api/patients/${patientId}/episodes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Resolved',
+          events: [first, middle, resolving].map((e) => ({ type: 'observation', id: e.id })),
+          resolvedBy: { type: 'observation', id: resolving.id },
+        })
+        .expect(201);
+      const episodeId = created.body.id;
+
+      // A follow-up after the resolving entry joins without moving the end.
+      const followUp = await logObservation(app, token, patientId, hoursAgo(2));
+      const added = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ add: [{ type: 'observation', id: followUp.id }] })
+        .expect(200);
+      expect(added.body.status).toBe('resolved');
+      expect(added.body.endedAtId).toBe(resolving.id);
+      expect(added.body.startedAtId).toBe(first.id);
+
+      // Removing every entry before the resolving one would leave it ending at its own start.
+      const inverted = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remove: [{ type: 'observation', id: first.id }, { type: 'observation', id: middle.id }] })
+        .expect(400);
+      expect(inverted.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
+      // Removing just the start is fine: the middle entry takes it.
+      const promoted = await http()
+        .post(`/api/episodes/${episodeId}/events`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remove: [{ type: 'observation', id: first.id }] })
+        .expect(200);
+      expect(promoted.body.startedAtId).toBe(middle.id);
+      expect(promoted.body.endedAtId).toBe(resolving.id);
+
+      // Correcting the resolving entry's time before every other member is refused on the entry
+      // route too.
+      const corrected = await http()
+        .patch(`/api/observations/${resolving.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ observedAt: hoursAgo(12) })
+        .expect(400);
+      expect(corrected.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
+
+      // A direct create whose resolving entry is strictly the earliest is refused as well.
+      const bad = await http()
+        .post(`/api/patients/${patientId}/episodes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Backwards',
+          events: [first, middle].map((e) => ({ type: 'observation', id: e.id })),
+          resolvedBy: { type: 'observation', id: first.id },
+        })
+        .expect(400);
+      expect(bad.body.message).toBe('EPISODE_TIME_ORDER_INVALID');
     });
 
     it('is atomic, rejects empty bodies and foreign entries, and hides the episode from strangers', async () => {

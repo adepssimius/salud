@@ -30,9 +30,13 @@ export interface EpisodeOption {
  * - `allowCreateNew = false` drops "Start a new episode" — a correction fixes what was recorded,
  *   it does not open a frame. With nothing else to disclose, "this resolves…" then renders inline
  *   rather than behind a More that would open onto a single checkbox (or onto nothing).
- * - `lockedIds` are episodes the entry must stay part of — the one it started, which the API
- *   refuses to unlink (CANNOT_UNLINK_STARTED_EPISODE). They render selected, can't be toggled, are
- *   never emitted as deselected, and are left out of what "this resolves…" counts.
+ * - `unresolvableIds` are episodes this entry is the earliest entry of. They select and deselect
+ *   like any other — unlinking the start just moves it to the next-earliest entry (data-model.md →
+ *   "An episode starts at its earliest entry") — but are left out of what "this resolves…" counts:
+ *   the earliest entry resolving its own episode would end it at its start.
+ *
+ * `lockedIds` (selected, not toggleable, never emitted as deselected, not resolvable) is the
+ * general form; nothing passes it since an entry may leave the episode it started.
  */
 @Component({
   selector: 'app-episode-attachment',
@@ -183,6 +187,8 @@ export class EpisodeAttachmentComponent {
   @Input() allowCreateNew = true;
   /** Episodes that stay selected whatever the caregiver taps — on a correction, the one it started. */
   @Input() lockedIds: string[] = [];
+  /** Selectable, but never counted by "this resolves…" — see the class comment. */
+  @Input() unresolvableIds: string[] = [];
 
   @Output() selectedIdsChange = new EventEmitter<string[]>();
   @Output() createNewChange = new EventEmitter<boolean>();
@@ -209,9 +215,13 @@ export class EpisodeAttachmentComponent {
     return this.episodes.some((ep) => this.isLocked(ep.id));
   }
 
-  /** Selected episodes "this resolves…" applies to — never a locked one. */
+  /** Selected episodes "this resolves…" applies to — never a locked or unresolvable one. */
   resolvableIds(): string[] {
-    return this.selectedIds.filter((id) => !this.isLocked(id));
+    return this.selectedIds.filter((id) => this.isResolvable(id));
+  }
+
+  private isResolvable(id: string): boolean {
+    return !this.isLocked(id) && !this.unresolvableIds.includes(id);
   }
 
   toggle(id: string) {
@@ -222,7 +232,7 @@ export class EpisodeAttachmentComponent {
     this.selectedIdsChange.emit(next);
     // `resolvesEpisodeIds ⊆ episodeIds` is a service-side invariant; detaching the last episode
     // while "this resolves…" is still ticked would post a body that violates it.
-    if (!next.some((x) => !this.isLocked(x)) && this.resolveSelected) this.resolveSelectedChange.emit(false);
+    if (!next.some((x) => this.isResolvable(x)) && this.resolveSelected) this.resolveSelectedChange.emit(false);
   }
 
   onCreateNewToggle(event: Event) {

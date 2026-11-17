@@ -67,7 +67,7 @@ export class App implements OnInit {
     // succeeded. There is nothing to bootstrap on that route anyway: it establishes the session
     // itself, and the `effect` in the constructor picks the user up the moment it lands.
     const signInInFlight = (this.router.url ?? '').startsWith('/oidc-complete');
-    if (this.auth.token && !this.user() && !signInInFlight) {
+    if (!signInInFlight && this.auth.hasSession() && !this.user()) {
       this.auth.me().subscribe({
         // The effect above picks the patient list up once `user` lands.
         error: () => {

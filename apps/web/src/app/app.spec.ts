@@ -16,6 +16,7 @@ function configure(token: string | null = null) {
         provide: AuthService,
         useValue: {
           token,
+          hasSession: () => !!token,
           user,
           me: () => ({ subscribe: () => ({}) }),
           logout: jest.fn(),

@@ -158,6 +158,9 @@ export class InterventionsService {
     const id = randomUUID();
     const performedAtDate = new Date(dto.performedAt);
     const performedAtTs = Math.floor(performedAtDate.getTime() / 1000);
+    // Read-only and before the entry exists: a resolving entry may not land before every member
+    // of the episode it resolves (data-model.md → "An episode may not end at its start…").
+    await this.episodesService.assertResolvingTimeOrder(patientId, dto.resolvesEpisodeIds, performedAtTs);
 
     let doseEvaluation: DoseEvaluation | null = null;
     if (dto.type === 'medication_dose' && dto.medicationId) {
@@ -274,6 +277,10 @@ export class InterventionsService {
         });
       }
     }
+
+    // A back-dated entry filed into an existing episode becomes its start when it is the earliest
+    // member (data-model.md → "An episode starts at its earliest entry").
+    await this.episodesService.reconcileEpisodeStartsById(patientId, Array.from(episodeIds));
 
     if (doseEvaluation) {
       await this.persistDoseAdvisories(

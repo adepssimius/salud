@@ -173,10 +173,15 @@ Episodes are manual frames over the timeline, e.g. "Fever Jan 2025".
 
 - An episode is **started** by an observation/intervention (`startEpisodeName` in the create body) and
   **resolved** by one (`resolvesEpisodeIds`). It can also be drawn afterward from existing entries
-  (`POST /api/patients/:id/episodes`; the earliest selected entry becomes its start, so the start
-  anchor is always an event) and its members edited from the episode side
+  (`POST /api/patients/:id/episodes`) and its members edited from the episode side
   (`POST /api/episodes/:id/events`, which reuses the entry-correction plan). There is no direct
   resolve/reopen endpoint.
+- **The start is always the earliest member** (data-model.md → "An episode starts at its earliest
+  entry"). `started_at_*` and the `starts_episode` flag are stored, but recomputed on every
+  membership change and member-time correction (`EpisodesService.planEpisodeAnchors` /
+  `applyEpisodeAnchors`) and healed on read (`reconcileEpisodeStarts`). Don't write `started_at_*`
+  or `starts_episode` by hand in a new path — go through those. The end does *not* follow: it stays
+  the resolving entry. An episode can't lose its last member (`EPISODE_LAST_ENTRY`).
 - `episodes.started_at_type|started_at_id` and `ended_at_type|ended_at_id` point at either an
   observation or an intervention — that polymorphic `id` is deliberately **not** a foreign key.
 - Membership lives in `episodes_events_pivot` (`episode_id`, `event_type`, `event_id`,

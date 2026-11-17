@@ -90,7 +90,7 @@ describe('ERROR_SENTENCES catalog invariants', () => {
   // string `message` from being read.
   it.each([
     'FIELD_NOT_CORRECTABLE',
-    'CANNOT_UNLINK_STARTED_EPISODE',
+    'EPISODE_LAST_ENTRY',
     'EPISODE_TIME_ORDER_INVALID',
   ] as ApiErrorCode[])('maps %s to its own sentence rather than the fallback', (code) => {
     const err = { status: 400, error: { message: code, fields: ['type'] } };
